@@ -132,6 +132,26 @@ h2 { font-size: 1.05rem; }
 .stat-row .count { font-size: .82rem; color: var(--muted); width: 3.5rem; }
 .stat-empty { color: var(--muted); font-style: italic; }
 
+/* Tipy — dzienny cel + karta błędu */
+.goal-progress { font-size: 1.05rem; }
+.goal-progress strong { color: var(--accent); font-size: 1.3rem; }
+.goal-set { margin: 0; }
+.goal-set input { width: 5rem; }
+#tips-goal-save, #tips-new {
+  background: transparent; border: 1px solid var(--line); border-radius: 8px;
+  padding: .5rem .95rem; cursor: pointer; font: inherit;
+}
+#tips-goal-save:hover, #tips-new:hover { border-color: var(--accent); color: var(--accent); }
+.goal-bar { height: 10px; background: var(--line); border-radius: 5px; overflow: hidden; margin-top: .9rem; }
+.goal-bar > span { display: block; height: 100%; width: 0; background: var(--accent); transition: width .35s ease; }
+
+.focus-card { border-left: 3px solid var(--accent); }
+.focus-card .topic { font-size: .75rem; text-transform: uppercase; letter-spacing: .5px; color: var(--accent); font-weight: 700; margin-bottom: .5rem; }
+.focus-card .diff { font-size: 1.2rem; margin: .3rem 0; }
+.focus-card .from { color: var(--bad); text-decoration: line-through; }
+.focus-card .to { color: var(--good); font-weight: 600; }
+.focus-card .why { color: var(--muted); margin: .55rem 0 1.1rem; }
+
 /* Loader */
 .loader { position: fixed; inset: 0; background: rgba(245,243,238,.75); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .8rem; z-index: 50; backdrop-filter: blur(2px); }
 .spinner { width: 34px; height: 34px; border: 3px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; }

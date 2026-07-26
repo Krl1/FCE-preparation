@@ -93,3 +93,16 @@ class GradeRequest(BaseModel):
     question_text: Optional[str] = None
     key_word: Optional[str] = None
     lang: str = "pl"  # język wyjaśnień/feedbacku ('pl' | 'en')
+
+
+class TipExerciseRequest(BaseModel):
+    error_id: int
+    lang: str = "pl"
+
+
+class CompleteRequest(BaseModel):
+    error_id: int
+
+
+class GoalRequest(BaseModel):
+    goal: int

@@ -6,6 +6,7 @@ Następnie:     http://localhost:8000
 
 from __future__ import annotations
 
+import random
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query
@@ -14,12 +15,30 @@ from fastapi.staticfiles import StaticFiles
 from . import db
 from . import fce_taxonomy as tax
 from . import llm_client, srs
-from .models import ExercisePublic, GenerateRequest, GradeRequest
+from .models import (
+    CompleteRequest,
+    ExercisePublic,
+    GenerateRequest,
+    GoalRequest,
+    GradeRequest,
+    TipExerciseRequest,
+)
+
+DEFAULT_DAILY_GOAL = 5
 
 app = FastAPI(title="FCE Preparation")
 conn = db.get_connection()
 
 _STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
+
+
+@app.middleware("http")
+async def no_cache(request, call_next):
+    """Wymusza rewalidację zasobów statycznych — zapobiega serwowaniu starego
+    app.js/index.html z pamięci podręcznej przeglądarki po aktualizacji aplikacji."""
+    response = await call_next(request)
+    response.headers["Cache-Control"] = "no-cache, must-revalidate"
+    return response
 
 
 @app.get("/api/taxonomy")
@@ -130,6 +149,82 @@ def get_stats(lang: str = Query(default="pl")) -> list[dict]:
     for row in rows:
         row["topic_label"] = tax.topic_label(row["topic"], lang)
     return rows
+
+
+# --- Zakładka Tipy (tryb skupienia na pojedynczym błędzie) -------------------
+
+def _progress() -> dict:
+    goal = int(db.get_setting(conn, "daily_goal", str(DEFAULT_DAILY_GOAL)))
+    return {"done": db.reviews_done_today(conn), "goal": goal}
+
+
+def _choose_focus_error(exclude_id: int | None = None) -> dict | None:
+    """Losuje błąd ważony częstością tematów (srs) + losowość w obrębie tematu."""
+    counts = db.topic_error_counts(conn)
+    if not counts:
+        return None
+    candidates = [c["topic"] for c in counts]
+    topic = srs.choose_topic(candidates, counts) or candidates[0]
+    errs = db.list_errors(conn, topic=topic, limit=500)
+    if exclude_id is not None:
+        errs = [e for e in errs if e["id"] != exclude_id] or errs
+    return random.choice(errs) if errs else None
+
+
+@app.get("/api/tips/focus")
+def tips_focus(lang: str = Query(default="pl"),
+               exclude: int | None = Query(default=None)) -> dict:
+    err = _choose_focus_error(exclude)
+    if err is None:
+        return {"error": None, "progress": _progress()}
+    err["topic_label"] = tax.topic_label(err["topic"], lang)
+    return {"error": err, "progress": _progress()}
+
+
+@app.post("/api/tips/exercise", response_model=ExercisePublic)
+def tips_exercise(req: TipExerciseRequest) -> ExercisePublic:
+    err = db.get_error(conn, req.error_id)
+    if err is None:
+        raise HTTPException(status_code=404, detail="Nie znaleziono błędu o tym id.")
+    try:
+        ex_type, generated = llm_client.generate_drill(
+            err["topic"], err["student_text"], err["correct_text"], err["explanation"], lang=req.lang
+        )
+    except llm_client.LLMError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    exercise_id = db.insert_exercise(
+        conn, type=ex_type, topic=err["topic"], prompt=generated.model_dump(), source="drill"
+    )
+    return ExercisePublic(
+        id=exercise_id,
+        type=ex_type,
+        topic=err["topic"],
+        instructions=generated.instructions,
+        question_text=generated.question_text,
+        options=generated.options,
+        key_word=generated.key_word,
+    )
+
+
+@app.post("/api/tips/complete")
+def tips_complete(req: CompleteRequest) -> dict:
+    if db.get_error(conn, req.error_id) is None:
+        raise HTTPException(status_code=404, detail="Nie znaleziono błędu o tym id.")
+    db.insert_review(conn, req.error_id)
+    return _progress()
+
+
+@app.get("/api/tips/progress")
+def tips_progress() -> dict:
+    return _progress()
+
+
+@app.post("/api/tips/goal")
+def tips_goal(req: GoalRequest) -> dict:
+    goal = max(1, min(50, req.goal))
+    db.set_setting(conn, "daily_goal", str(goal))
+    return _progress()
 
 
 # Frontend statyczny — montowany na końcu, po trasach /api/*.

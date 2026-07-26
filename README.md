@@ -43,6 +43,11 @@ Następnie otwórz **http://localhost:8000**.
 
 - **Ćwicz** — wybierz typ zadania (np. *open cloze*, *key word transformation*, *essay*), opcjonalnie
   temat (albo zostaw dobór automatyczny wg Twoich błędów), wygeneruj i rozwiąż. Aplikacja oceni i zapisze błędy.
+- **Tipy** — tryb skupienia: aplikacja pokazuje jeden Twój błąd (dobierany losowo, ważony częstością
+  Twoich słabych tematów) wraz z wyjaśnieniem i generuje do niego ćwiczenia. Przyciski: *Ćwiczenie*
+  (kolejne ćwiczenie do tego samego błędu), *Inny błąd* (zmiana na nowy). U góry **dzienny cel** —
+  ustalasz, ile błędów chcesz dziennie przerobić; błąd liczy się po sprawdzeniu przynajmniej jednego
+  ćwiczenia do niego.
 - **Sprawdź z zewnątrz** — wklej zadanie z książki i swoją odpowiedź; aplikacja sprawdzi je i zaloguje błędy.
 - **Moje błędy** — przegląd słabych punktów i pełny dziennik błędów.
 

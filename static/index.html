@@ -11,6 +11,7 @@
     <h1 data-i18n="app.title">FCE&nbsp;Trener</h1>
     <nav class="tabs">
       <button class="tab is-active" data-view="practice" data-i18n="tab.practice">Ćwicz</button>
+      <button class="tab" data-view="tips" data-i18n="tab.tips">Tipy</button>
       <button class="tab" data-view="external" data-i18n="tab.external">Sprawdź z zewnątrz</button>
       <button class="tab" data-view="errors" data-i18n="tab.errors">Moje błędy</button>
     </nav>
@@ -44,6 +45,43 @@
       </div>
 
       <div id="practice-result" class="card result hidden"></div>
+    </section>
+
+    <!-- WIDOK: TIPY (tryb skupienia) -->
+    <section id="view-tips" class="view">
+      <div class="card goal-card">
+        <div class="row">
+          <span class="goal-progress"><strong id="tips-done">0</strong> / <strong id="tips-goal">5</strong>&nbsp;<span data-i18n="tips.today">dzisiaj</span></span>
+          <label class="goal-set"><span data-i18n="tips.goalLabel">Dzienny cel</span>
+            <input id="tips-goal-input" type="number" min="1" max="50" />
+          </label>
+          <button id="tips-goal-save" data-i18n="tips.goalSave">Zapisz cel</button>
+        </div>
+        <div class="goal-bar"><span id="tips-goal-bar"></span></div>
+      </div>
+
+      <div id="tips-empty" class="card hidden">
+        <p class="stat-empty" data-i18n="tips.empty">Dziennik błędów jest pusty — rozwiąż lub wklej kilka zadań, a tu pojawią się tipy.</p>
+      </div>
+
+      <div id="tips-focus" class="card focus-card hidden">
+        <div class="topic" id="tips-topic"></div>
+        <div class="diff"><span class="from" id="tips-from"></span> → <span class="to" id="tips-to"></span></div>
+        <p class="why" id="tips-why"></p>
+        <div class="row">
+          <button id="tips-new" data-i18n="tips.newError">Inny błąd</button>
+          <button id="tips-generate" class="primary" data-i18n="tips.generate">Ćwiczenie</button>
+        </div>
+      </div>
+
+      <div id="tips-exercise-area" class="card hidden">
+        <p class="instructions" id="tips-instructions"></p>
+        <div class="question" id="tips-question"></div>
+        <div id="tips-answer-area"></div>
+        <button id="tips-grade" class="primary" data-i18n="btn.grade">Sprawdź odpowiedź</button>
+      </div>
+
+      <div id="tips-result" class="card result hidden"></div>
     </section>
 
     <!-- WIDOK: SPRAWDŹ Z ZEWNĄTRZ -->

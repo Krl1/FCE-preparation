@@ -48,3 +48,29 @@ def test_errors_insert_list_and_counts(conn):
     counts = {row["topic"]: row["count"] for row in db.topic_error_counts(conn)}
     assert counts["tenses"] == 2
     assert counts["collocations"] == 1
+
+
+def test_settings_default_and_roundtrip(conn):
+    assert db.get_setting(conn, "daily_goal", "5") == "5"  # brak → default
+    db.set_setting(conn, "daily_goal", "8")
+    assert db.get_setting(conn, "daily_goal", "5") == "8"
+    db.set_setting(conn, "daily_goal", "3")  # nadpisanie
+    assert db.get_setting(conn, "daily_goal", "5") == "3"
+
+
+def test_reviews_count_distinct_and_idempotent_per_day(conn):
+    assert db.reviews_done_today(conn) == 0
+    db.insert_review(conn, 1)
+    db.insert_review(conn, 1)  # ten sam błąd tego samego dnia — bez podwójnego liczenia
+    assert db.reviews_done_today(conn) == 1
+    db.insert_review(conn, 2)
+    assert db.reviews_done_today(conn) == 2
+    assert db.reviewed_today(conn, 1) is True
+    assert db.reviewed_today(conn, 99) is False
+
+
+def test_get_error_returns_row_or_none(conn):
+    eid = db.insert_error(conn, source="s", exercise_type="t", topic="tenses",
+                          student_text="a", correct_text="b", explanation="e")
+    assert db.get_error(conn, eid)["topic"] == "tenses"
+    assert db.get_error(conn, 9999) is None

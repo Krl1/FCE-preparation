@@ -6,8 +6,16 @@ const I18N = {
   pl: {
     "app.title": "FCE Trener",
     "tab.practice": "Ćwicz",
+    "tab.tips": "Tipy",
     "tab.external": "Sprawdź z zewnątrz",
     "tab.errors": "Moje błędy",
+    "tips.today": "dzisiaj",
+    "tips.goalLabel": "Dzienny cel",
+    "tips.goalSave": "Zapisz cel",
+    "tips.newError": "Inny błąd",
+    "tips.generate": "Ćwiczenie",
+    "tips.more": "Kolejne ćwiczenie",
+    "tips.empty": "Dziennik błędów jest pusty — rozwiąż lub wklej kilka zadań, a tu pojawią się tipy.",
     "practice.type": "Typ ćwiczenia",
     "practice.topic": "Temat (opcjonalnie)",
     "practice.topic.auto": "— dobierz automatycznie (wg moich błędów) —",
@@ -49,8 +57,16 @@ const I18N = {
   en: {
     "app.title": "FCE Trainer",
     "tab.practice": "Practice",
+    "tab.tips": "Tips",
     "tab.external": "Check external",
     "tab.errors": "My mistakes",
+    "tips.today": "today",
+    "tips.goalLabel": "Daily goal",
+    "tips.goalSave": "Save goal",
+    "tips.newError": "Another mistake",
+    "tips.generate": "Exercise",
+    "tips.more": "Another exercise",
+    "tips.empty": "Your mistake log is empty — do or paste a few exercises and tips will appear here.",
     "practice.type": "Exercise type",
     "practice.topic": "Topic (optional)",
     "practice.topic.auto": "— auto-select (by my mistakes) —",
@@ -147,6 +163,7 @@ function setLang(lang) {
   fillTypeSelects();
   populateTopics();
   if ($("#view-errors").classList.contains("is-active")) loadErrors();
+  if ($("#view-tips").classList.contains("is-active")) loadTips();
 }
 
 document.querySelectorAll(".lang").forEach((b) => b.addEventListener("click", () => setLang(b.dataset.lang)));
@@ -160,6 +177,7 @@ document.querySelectorAll(".tab").forEach((tab) => {
     tab.classList.add("is-active");
     $("#view-" + tab.dataset.view).classList.add("is-active");
     if (tab.dataset.view === "errors") loadErrors();
+    if (tab.dataset.view === "tips") loadTips();
   });
 });
 
@@ -411,5 +429,126 @@ function renderErrorsList(errors) {
     box.appendChild(item);
   });
 }
+
+// --- Tipy (tryb skupienia) ---------------------------------------------------
+
+let tipsError = null;
+let tipsExercise = null;
+
+async function loadTips(exclude) {
+  showLoader("loader.loading");
+  try {
+    const url = "/api/tips/focus?lang=" + LANG + (exclude ? "&exclude=" + exclude : "");
+    const data = await api(url);
+    renderGoal(data.progress);
+    setFocus(data.error);
+  } catch (e) {
+    showError("#tips-result", e.message);
+  } finally { hideLoader(); }
+}
+
+function renderGoal(progress) {
+  $("#tips-done").textContent = progress.done;
+  $("#tips-goal").textContent = progress.goal;
+  $("#tips-goal-input").value = progress.goal;
+  const pct = progress.goal ? Math.min(100, (progress.done / progress.goal) * 100) : 0;
+  $("#tips-goal-bar").style.width = pct + "%";
+}
+
+function setFocus(err) {
+  tipsError = err;
+  tipsExercise = null;
+  $("#tips-exercise-area").classList.add("hidden");
+  $("#tips-result").classList.add("hidden");
+  $("#tips-generate").textContent = t("tips.generate");
+  if (!err) {
+    $("#tips-focus").classList.add("hidden");
+    $("#tips-empty").classList.remove("hidden");
+    return;
+  }
+  $("#tips-empty").classList.add("hidden");
+  $("#tips-topic").textContent = err.topic_label || topicLabel(err.topic);
+  $("#tips-from").textContent = err.student_text;
+  $("#tips-to").textContent = err.correct_text;
+  $("#tips-why").textContent = err.explanation || "";
+  $("#tips-focus").classList.remove("hidden");
+}
+
+function renderTipsExercise(ex) {
+  $("#tips-result").classList.add("hidden");
+  $("#tips-instructions").textContent = ex.instructions || "";
+  let q = esc(ex.question_text || "");
+  if (ex.key_word) q += `\n\n${esc(t("kw.label"))}<span class="kw">${esc(ex.key_word)}</span>`;
+  $("#tips-question").innerHTML = q;
+
+  const area = $("#tips-answer-area");
+  area.innerHTML = "";
+  if (ex.options && ex.options.length) {
+    const wrap = el("div", "options");
+    ex.options.forEach((opt) => {
+      const lbl = el("label");
+      lbl.innerHTML = `<input type="radio" name="tips-mcq" value="${esc(opt)}"> ${esc(opt)}`;
+      wrap.appendChild(lbl);
+    });
+    area.appendChild(wrap);
+  } else {
+    const input = el("input");
+    input.id = "tips-answer"; input.type = "text"; input.placeholder = t("answer.ph");
+    area.appendChild(input);
+  }
+  $("#tips-exercise-area").classList.remove("hidden");
+}
+
+$("#tips-new").addEventListener("click", () => loadTips(tipsError ? tipsError.id : undefined));
+
+$("#tips-goal-save").addEventListener("click", async () => {
+  const goal = parseInt($("#tips-goal-input").value, 10) || 1;
+  try {
+    const progress = await api("/api/tips/goal", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ goal }),
+    });
+    renderGoal(progress);
+  } catch (e) { showError("#tips-result", e.message); }
+});
+
+$("#tips-generate").addEventListener("click", async () => {
+  if (!tipsError) return;
+  showLoader("loader.generating");
+  try {
+    tipsExercise = await api("/api/tips/exercise", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ error_id: tipsError.id, lang: LANG }),
+    });
+    renderTipsExercise(tipsExercise);
+  } catch (e) { showError("#tips-result", e.message); }
+  finally { hideLoader(); }
+});
+
+$("#tips-grade").addEventListener("click", async () => {
+  if (!tipsExercise) return;
+  let answer;
+  const checked = document.querySelector('input[name="tips-mcq"]:checked');
+  if (checked) answer = checked.value;
+  else { const inp = $("#tips-answer"); answer = inp ? inp.value.trim() : ""; }
+  if (!answer) { alert(t("alert.answer")); return; }
+
+  showLoader("loader.grading");
+  try {
+    const result = await api("/api/grade", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: tipsExercise.type, exercise_id: tipsExercise.id, student_answer: answer, lang: LANG }),
+    });
+    renderResult("#tips-result", result);
+    // Błąd liczy się do dziennego celu po zrobieniu ćwiczenia.
+    const progress = await api("/api/tips/complete", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ error_id: tipsError.id }),
+    });
+    renderGoal(progress);
+    $("#tips-generate").textContent = t("tips.more");
+  } catch (e) { showError("#tips-result", e.message); }
+  finally { hideLoader(); }
+});
 
 init();

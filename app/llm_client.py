@@ -153,6 +153,46 @@ def generate_exercise(exercise_type: str, topic: str, weak_points: list[str] | N
     return GeneratedExercise.model_validate(data)
 
 
+_DRILL_TYPES = [
+    "uoe_part1_mcq_cloze",
+    "uoe_part2_open_cloze",
+    "uoe_part3_word_formation",
+    "uoe_part4_key_word_transformation",
+]
+
+
+def generate_drill(topic: str, student_text: str, correct_text: str, explanation: str,
+                   lang: str = "pl") -> tuple[str, GeneratedExercise]:
+    """Generuje krótkie ćwiczenie celowane w KONKRETNY błąd ucznia.
+    Zwraca (exercise_type, GeneratedExercise) — typ wybiera model spośród części Use of English."""
+    lang_name = _lang_name(lang)
+    topic_lbl = tax.topic_label(topic, "en")
+    types = ", ".join(_DRILL_TYPES)
+    shape = (
+        '{"exercise_type": str, "instructions": str, "question_text": str, '
+        '"options": [str]|null, "key_word": str|null, "answer": str, "answer_notes": str}'
+    )
+    prompt = (
+        "Uczeń przygotowujący się do FCE popełnił konkretny błąd. Ułóż JEDNO krótkie ćwiczenie, "
+        "które ćwiczy DOKŁADNIE ten punkt gramatyczny/leksykalny w NOWYM kontekście "
+        "(nie powielaj zdania z błędu). Wybierz najlepiej pasujący typ ćwiczenia.\n\n"
+        f"Błąd — temat: {topic_lbl}\n"
+        f"Wersja błędna: {student_text}\n"
+        f"Wersja poprawna: {correct_text}\n"
+        f"Wyjaśnienie: {explanation}\n\n"
+        f"Pole 'exercise_type' MUSI być jednym z: {types}. "
+        "Dla multiple-choice podaj dokładnie 4 'options'; dla key word transformation podaj 'key_word'; "
+        "w pozostałych ustaw je na null.\n"
+        f"Treść zadania po angielsku; pole 'instructions' w języku: {lang_name}.\n"
+        f"Zwróć TYLKO obiekt JSON o kształcie: {shape}"
+    )
+    data = _call_json(prompt)
+    ex_type = data.get("exercise_type")
+    if ex_type not in _DRILL_TYPES:
+        ex_type = "uoe_part2_open_cloze"
+    return ex_type, GeneratedExercise.model_validate(data)
+
+
 def grade_answer(exercise_type: str, question_text: str, student_answer: str,
                  model_answer: str | None = None, key_word: str | None = None,
                  lang: str = "pl") -> GradingResult:

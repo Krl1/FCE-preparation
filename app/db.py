@@ -51,6 +51,19 @@ CREATE TABLE IF NOT EXISTS errors (
 
 CREATE INDEX IF NOT EXISTS idx_errors_topic ON errors(topic);
 CREATE INDEX IF NOT EXISTS idx_errors_created ON errors(created_at);
+
+CREATE TABLE IF NOT EXISTS settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS reviews (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    error_id   INTEGER NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_reviews_created ON reviews(created_at);
 """
 
 
@@ -148,6 +161,58 @@ def list_errors(conn: sqlite3.Connection, *, topic: Optional[str] = None,
     query += " ORDER BY created_at DESC LIMIT ?"
     params.append(limit)
     return [dict(r) for r in conn.execute(query, params).fetchall()]
+
+
+def get_error(conn: sqlite3.Connection, error_id: int) -> Optional[dict]:
+    row = conn.execute("SELECT * FROM errors WHERE id = ?", (error_id,)).fetchone()
+    return dict(row) if row else None
+
+
+# --- Settings (klucz-wartość) ------------------------------------------------
+
+def get_setting(conn: sqlite3.Connection, key: str, default: str) -> str:
+    row = conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+    return row["value"] if row else default
+
+
+def set_setting(conn: sqlite3.Connection, key: str, value: str) -> None:
+    conn.execute(
+        "INSERT INTO settings (key, value) VALUES (?, ?) "
+        "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        (key, str(value)),
+    )
+    conn.commit()
+
+
+# --- Reviews (dziennik powtórek do dziennego celu) ---------------------------
+
+def _today() -> str:
+    return datetime.now(timezone.utc).date().isoformat()
+
+
+def reviewed_today(conn: sqlite3.Connection, error_id: int) -> bool:
+    row = conn.execute(
+        "SELECT 1 FROM reviews WHERE error_id = ? AND substr(created_at, 1, 10) = ? LIMIT 1",
+        (error_id, _today()),
+    ).fetchone()
+    return row is not None
+
+
+def insert_review(conn: sqlite3.Connection, error_id: int) -> None:
+    """Zapisuje przerobienie błędu. Idempotentne w obrębie dnia (jeden wpis na błąd/dzień)."""
+    if reviewed_today(conn, error_id):
+        return
+    conn.execute("INSERT INTO reviews (error_id, created_at) VALUES (?, ?)", (error_id, _now()))
+    conn.commit()
+
+
+def reviews_done_today(conn: sqlite3.Connection) -> int:
+    """Liczba różnych błędów przerobionych dzisiaj (postęp dziennego celu)."""
+    row = conn.execute(
+        "SELECT COUNT(DISTINCT error_id) AS n FROM reviews WHERE substr(created_at, 1, 10) = ?",
+        (_today(),),
+    ).fetchone()
+    return int(row["n"])
 
 
 def topic_error_counts(conn: sqlite3.Connection) -> list[dict]:
