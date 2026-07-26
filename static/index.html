@@ -14,6 +14,7 @@
       <button class="tab" data-view="tips" data-i18n="tab.tips">Tipy</button>
       <button class="tab" data-view="external" data-i18n="tab.external">Sprawdź z zewnątrz</button>
       <button class="tab" data-view="errors" data-i18n="tab.errors">Moje błędy</button>
+      <button class="tab" data-view="stats" data-i18n="tab.stats">Statystyki</button>
     </nav>
     <div class="lang-switch" role="group" aria-label="Language">
       <button class="lang is-active" data-lang="pl">PL</button>
@@ -118,6 +119,18 @@
           <button id="btn-refresh-errors" data-i18n="btn.refresh">Odśwież</button>
         </div>
         <div id="errors-list"></div>
+      </div>
+    </section>
+    <!-- WIDOK: STATYSTYKI -->
+    <section id="view-stats" class="view">
+      <div class="card">
+        <h2 data-i18n="stats.learning">Nauka</h2>
+        <div id="stats-learning"></div>
+      </div>
+      <div class="card">
+        <h2 data-i18n="stats.usage">Zużycie Claude</h2>
+        <p class="muted" data-i18n="stats.usageNote">Koszt liczony wg stawek API. Tryb headless niesie narzut systemowego promptu Claude Code, więc to górna granica — aplikacja na API zużyłaby mniej.</p>
+        <div id="stats-usage"></div>
       </div>
     </section>
   </main>

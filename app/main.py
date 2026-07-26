@@ -29,6 +29,9 @@ DEFAULT_DAILY_GOAL = 5
 app = FastAPI(title="FCE Preparation")
 conn = db.get_connection()
 
+# Rejestruj zużycie Claude (tokeny/koszt) z każdego wywołania do bazy.
+llm_client.set_usage_recorder(lambda rec: db.insert_usage_event(conn, **rec))
+
 _STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 
 
@@ -225,6 +228,22 @@ def tips_goal(req: GoalRequest) -> dict:
     goal = max(1, min(50, req.goal))
     db.set_setting(conn, "daily_goal", str(goal))
     return _progress()
+
+
+# --- Statystyki (nauka + zużycie Claude) -------------------------------------
+
+@app.get("/api/stats/learning")
+def stats_learning(lang: str = Query(default="pl")) -> dict:
+    data = db.learning_stats(conn)
+    for row in data["by_type"]:
+        meta = tax.EXERCISE_TYPES.get(row["type"], {})
+        row["label"] = (meta.get("label_en") if lang == "en" else meta.get("label")) or row["type"]
+    return data
+
+
+@app.get("/api/stats/usage")
+def stats_usage() -> dict:
+    return db.usage_stats(conn)
 
 
 # Frontend statyczny — montowany na końcu, po trasach /api/*.

@@ -101,3 +101,36 @@ def test_get_error_returns_row_or_none(conn):
                           student_text="a", correct_text="b", explanation="e")
     assert db.get_error(conn, eid)["topic"] == "tenses"
     assert db.get_error(conn, 9999) is None
+
+
+def test_usage_stats_aggregates_tokens_and_cost(conn):
+    db.insert_usage_event(conn, kind="generate", model="claude-opus-4-8", input_tokens=10,
+                          output_tokens=100, cache_creation_input_tokens=500,
+                          cache_read_input_tokens=1000, cost_usd=0.05, duration_ms=3000)
+    db.insert_usage_event(conn, kind="grade", model="claude-opus-4-8", input_tokens=5,
+                          output_tokens=50, cache_creation_input_tokens=0,
+                          cache_read_input_tokens=2000, cost_usd=0.03, duration_ms=2000)
+    stats = db.usage_stats(conn)
+    assert stats["total"]["calls"] == 2
+    assert stats["total"]["output_tokens"] == 150
+    assert abs(stats["total"]["cost_usd"] - 0.08) < 1e-9
+    kinds = {r["kind"]: r for r in stats["by_kind"]}
+    assert kinds["generate"]["calls"] == 1 and kinds["grade"]["calls"] == 1
+
+
+def test_learning_stats_accuracy_and_totals(conn):
+    db.insert_exercise(conn, type="uoe_part2_open_cloze", topic="tenses", prompt={})
+    db.insert_attempt(conn, exercise_id=None, type="uoe_part2_open_cloze",
+                      student_answer="x", is_correct=True, grading={})
+    db.insert_attempt(conn, exercise_id=None, type="uoe_part2_open_cloze",
+                      student_answer="y", is_correct=False, grading={})
+    stats = db.learning_stats(conn)
+    assert stats["exercises_generated"] == 1
+    assert stats["attempts_total"] == 2
+    assert stats["attempts_graded"] == 2
+    assert stats["attempts_correct"] == 1
+    assert abs(stats["accuracy"] - 0.5) < 1e-9
+
+
+def test_learning_stats_accuracy_none_when_no_graded(conn):
+    assert db.learning_stats(conn)["accuracy"] is None

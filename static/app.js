@@ -18,6 +18,31 @@ const I18N = {
     "tips.streakDays": "dni w serii",
     "tips.empty": "Dziennik błędów jest pusty — rozwiąż lub wklej kilka zadań, a tu pojawią się tipy.",
     "errors.practiceThis": "Ćwicz ten błąd",
+    "tab.stats": "Statystyki",
+    "stats.learning": "Nauka",
+    "stats.usage": "Zużycie Claude",
+    "stats.usageNote": "Koszt liczony wg stawek API. Tryb headless niesie narzut systemowego promptu Claude Code, więc to górna granica — aplikacja na API zużyłaby mniej.",
+    "stats.empty": "Brak danych — zacznij korzystać z aplikacji.",
+    "stats.exercisesGenerated": "Wygenerowane ćwiczenia",
+    "stats.attempts": "Sprawdzone odpowiedzi",
+    "stats.accuracy": "Skuteczność",
+    "stats.reviews": "Przerobione powtórki",
+    "stats.errorsLogged": "Błędy w dzienniku",
+    "stats.byType": "Wg typu zadania",
+    "stats.calls": "Wywołania modelu",
+    "stats.tokensIn": "Tokeny wejściowe",
+    "stats.tokensOut": "Tokeny wyjściowe",
+    "stats.tokensCacheWrite": "Tokeny cache (zapis)",
+    "stats.tokensCacheRead": "Tokeny cache (odczyt)",
+    "stats.cost": "Szacowany koszt (API)",
+    "stats.avgTime": "Średni czas odpowiedzi",
+    "stats.byKind": "Wg rodzaju wywołania",
+    "kind.generate": "Generowanie zadań",
+    "kind.grade": "Sprawdzanie",
+    "kind.drill": "Ćwiczenia do błędów (Tipy)",
+    "kind.explain": "Wyjaśnienia",
+    "kind.extract": "Import (ekstrakcja)",
+    "kind.other": "Inne",
     "practice.type": "Typ ćwiczenia",
     "practice.topic": "Temat (opcjonalnie)",
     "practice.topic.auto": "— dobierz automatycznie (wg moich błędów) —",
@@ -71,6 +96,31 @@ const I18N = {
     "tips.streakDays": "day streak",
     "tips.empty": "Your mistake log is empty — do or paste a few exercises and tips will appear here.",
     "errors.practiceThis": "Practice this mistake",
+    "tab.stats": "Statistics",
+    "stats.learning": "Learning",
+    "stats.usage": "Claude usage",
+    "stats.usageNote": "Cost is at API rates. Headless mode carries Claude Code's system-prompt overhead, so this is an upper bound — an API app would use less.",
+    "stats.empty": "No data yet — start using the app.",
+    "stats.exercisesGenerated": "Exercises generated",
+    "stats.attempts": "Answers checked",
+    "stats.accuracy": "Accuracy",
+    "stats.reviews": "Reviews completed",
+    "stats.errorsLogged": "Mistakes logged",
+    "stats.byType": "By exercise type",
+    "stats.calls": "Model calls",
+    "stats.tokensIn": "Input tokens",
+    "stats.tokensOut": "Output tokens",
+    "stats.tokensCacheWrite": "Cache tokens (write)",
+    "stats.tokensCacheRead": "Cache tokens (read)",
+    "stats.cost": "Estimated cost (API)",
+    "stats.avgTime": "Avg response time",
+    "stats.byKind": "By call type",
+    "kind.generate": "Exercise generation",
+    "kind.grade": "Grading",
+    "kind.drill": "Mistake drills (Tips)",
+    "kind.explain": "Explanations",
+    "kind.extract": "Import (extraction)",
+    "kind.other": "Other",
     "practice.type": "Exercise type",
     "practice.topic": "Topic (optional)",
     "practice.topic.auto": "— auto-select (by my mistakes) —",
@@ -168,6 +218,7 @@ function setLang(lang) {
   populateTopics();
   if ($("#view-errors").classList.contains("is-active")) loadErrors();
   if ($("#view-tips").classList.contains("is-active")) loadTips();
+  if ($("#view-stats").classList.contains("is-active")) loadStats();
 }
 
 document.querySelectorAll(".lang").forEach((b) => b.addEventListener("click", () => setLang(b.dataset.lang)));
@@ -185,6 +236,7 @@ document.querySelectorAll(".tab").forEach((tab) => {
     activateTab(tab.dataset.view);
     if (tab.dataset.view === "errors") loadErrors();
     if (tab.dataset.view === "tips") loadTips();
+    if (tab.dataset.view === "stats") loadStats();
   });
 });
 
@@ -576,5 +628,82 @@ $("#tips-grade").addEventListener("click", async () => {
   } catch (e) { showError("#tips-result", e.message); }
   finally { hideLoader(); }
 });
+
+// --- Statystyki --------------------------------------------------------------
+
+const kindLabel = (k) => t("kind." + k) !== "kind." + k ? t("kind." + k) : k;
+const fmtNum = (n) => Number(n || 0).toLocaleString(LANG === "en" ? "en-US" : "pl-PL");
+const fmtCost = (c) => "$" + Number(c || 0).toFixed(Number(c) < 1 ? 4 : 2);
+
+function statLine(label, value) {
+  const row = el("div", "stat-line");
+  row.innerHTML = `<span class="sl-label">${esc(label)}</span><span class="sl-value">${esc(value)}</span>`;
+  return row;
+}
+
+async function loadStats() {
+  showLoader("loader.loading");
+  try {
+    const [learning, usage] = await Promise.all([
+      api("/api/stats/learning?lang=" + LANG),
+      api("/api/stats/usage"),
+    ]);
+    renderLearning(learning);
+    renderUsage(usage);
+  } catch (e) {
+    showError("#stats-usage", e.message);
+  } finally { hideLoader(); }
+}
+
+function renderLearning(d) {
+  const box = $("#stats-learning");
+  box.innerHTML = "";
+  const acc = d.accuracy == null ? "—" : Math.round(d.accuracy * 100) + "%";
+  box.appendChild(statLine(t("stats.exercisesGenerated"), fmtNum(d.exercises_generated)));
+  box.appendChild(statLine(t("stats.attempts"), fmtNum(d.attempts_total)));
+  box.appendChild(statLine(t("stats.accuracy"),
+    acc + (d.attempts_graded ? ` (${d.attempts_correct}/${d.attempts_graded})` : "")));
+  box.appendChild(statLine(t("stats.reviews"), fmtNum(d.reviews_total)));
+  box.appendChild(statLine(t("stats.errorsLogged"), fmtNum(d.errors_logged)));
+
+  if (d.by_type && d.by_type.length) {
+    box.appendChild(el("h3", "stat-sub", t("stats.byType")));
+    const max = Math.max(...d.by_type.map((r) => r.attempts));
+    d.by_type.forEach((r) => {
+      const row = el("div", "stat-row");
+      row.innerHTML =
+        `<span class="name">${esc(r.label || r.type)}</span>` +
+        `<span class="bar"><span style="width:${(r.attempts / max) * 100}%"></span></span>` +
+        `<span class="count">${r.correct}/${r.attempts}</span>`;
+      box.appendChild(row);
+    });
+  }
+}
+
+function renderUsage(d) {
+  const box = $("#stats-usage");
+  box.innerHTML = "";
+  const total = d.total || {};
+  if (!total.calls) {
+    box.appendChild(el("p", "stat-empty", t("stats.empty")));
+    return;
+  }
+  box.appendChild(statLine(t("stats.calls"), fmtNum(total.calls)));
+  const costLine = statLine(t("stats.cost"), fmtCost(total.cost_usd));
+  costLine.classList.add("cost-highlight");
+  box.appendChild(costLine);
+  box.appendChild(statLine(t("stats.tokensIn"), fmtNum(total.input_tokens)));
+  box.appendChild(statLine(t("stats.tokensOut"), fmtNum(total.output_tokens)));
+  box.appendChild(statLine(t("stats.tokensCacheWrite"), fmtNum(total.cache_creation_input_tokens)));
+  box.appendChild(statLine(t("stats.tokensCacheRead"), fmtNum(total.cache_read_input_tokens)));
+  box.appendChild(statLine(t("stats.avgTime"), Math.round(total.avg_duration_ms) + " ms"));
+
+  if (d.by_kind && d.by_kind.length) {
+    box.appendChild(el("h3", "stat-sub", t("stats.byKind")));
+    d.by_kind.forEach((r) => {
+      box.appendChild(statLine(`${kindLabel(r.kind)} (${r.calls}×)`, fmtCost(r.cost_usd)));
+    });
+  }
+}
 
 init();

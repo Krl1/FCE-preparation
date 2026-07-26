@@ -37,7 +37,40 @@ class LLMError(RuntimeError):
     """Błąd wywołania lub parsowania odpowiedzi Claude."""
 
 
-def _invoke(prompt: str) -> str:
+# Hook do rejestrowania zużycia (tokeny/koszt). main.py ustawia go na zapis do bazy;
+# domyślnie no-op, dzięki czemu llm_client pozostaje niezależny od warstwy trwałości.
+_usage_recorder = None
+
+
+def set_usage_recorder(fn) -> None:
+    global _usage_recorder
+    _usage_recorder = fn
+
+
+def _record_usage(kind: str, envelope: dict) -> None:
+    if _usage_recorder is None:
+        return
+    usage = envelope.get("usage") or {}
+    model = ""
+    for meta in (envelope.get("modelUsage") or {}).values():
+        model = meta.get("canonicalModel") or ""
+        break
+    try:
+        _usage_recorder({
+            "kind": kind,
+            "model": model,
+            "input_tokens": int(usage.get("input_tokens", 0) or 0),
+            "output_tokens": int(usage.get("output_tokens", 0) or 0),
+            "cache_creation_input_tokens": int(usage.get("cache_creation_input_tokens", 0) or 0),
+            "cache_read_input_tokens": int(usage.get("cache_read_input_tokens", 0) or 0),
+            "cost_usd": float(envelope.get("total_cost_usd", 0.0) or 0.0),
+            "duration_ms": int(envelope.get("duration_ms", 0) or 0),
+        })
+    except Exception:
+        pass  # logowanie użycia nigdy nie może przerwać właściwego działania
+
+
+def _invoke(prompt: str, kind: str = "other") -> str:
     """Wywołuje Claude headless i zwraca surową treść odpowiedzi modelu (pole `result`).
 
     Seam do testów i do ewentualnej podmiany na inny backend (klucz API / SDK).
@@ -70,6 +103,8 @@ def _invoke(prompt: str) -> str:
     except json.JSONDecodeError as exc:
         raise LLMError(f"Nie udało się sparsować koperty JSON z Claude: {proc.stdout[:300]}") from exc
 
+    _record_usage(kind, envelope)  # rejestruj zużycie także przy błędzie (koszt mógł powstać)
+
     if envelope.get("is_error"):
         raise LLMError(f"Claude zwrócił błąd: {envelope.get('result', '')[:500]}")
 
@@ -93,9 +128,9 @@ def _extract_json(text: str) -> dict:
     return json.loads(cleaned)
 
 
-def _call_json(prompt: str) -> dict:
+def _call_json(prompt: str, kind: str = "other") -> dict:
     """Wywołuje model i zwraca sparsowany JSON. Jedna ponowna próba przy błędzie parsowania."""
-    raw = _invoke(prompt)
+    raw = _invoke(prompt, kind)
     try:
         return _extract_json(raw)
     except (json.JSONDecodeError, ValueError):
@@ -104,7 +139,7 @@ def _call_json(prompt: str) -> dict:
             + "\n\nWAŻNE: Poprzednia odpowiedź nie była poprawnym JSON. "
             "Zwróć TYLKO poprawny obiekt JSON, bez żadnego dodatkowego tekstu ani znaczników."
         )
-        raw2 = _invoke(retry_prompt)
+        raw2 = _invoke(retry_prompt, kind)
         try:
             return _extract_json(raw2)
         except (json.JSONDecodeError, ValueError) as exc:
@@ -149,7 +184,7 @@ def generate_exercise(exercise_type: str, topic: str, weak_points: list[str] | N
         f"Pola z treścią zadania (question_text, options, key_word, answer) po angielsku; "
         f"pole 'instructions' napisz w języku: {lang_name}."
     )
-    data = _call_json(prompt)
+    data = _call_json(prompt, kind="generate")
     return GeneratedExercise.model_validate(data)
 
 
@@ -186,7 +221,7 @@ def generate_drill(topic: str, student_text: str, correct_text: str, explanation
         f"Treść zadania po angielsku; pole 'instructions' w języku: {lang_name}.\n"
         f"Zwróć TYLKO obiekt JSON o kształcie: {shape}"
     )
-    data = _call_json(prompt)
+    data = _call_json(prompt, kind="drill")
     ex_type = data.get("exercise_type")
     if ex_type not in _DRILL_TYPES:
         ex_type = "uoe_part2_open_cloze"
@@ -235,7 +270,7 @@ def grade_answer(exercise_type: str, question_text: str, student_answer: str,
         "poprawki (corrected, correct_text) po angielsku.\n"
         f"Zwróć TYLKO obiekt JSON o kształcie: {shape}"
     )
-    data = _call_json(prompt)
+    data = _call_json(prompt, kind="grade")
     return GradingResult.model_validate(data)
 
 
@@ -254,7 +289,7 @@ def extract_errors_from_text(text: str) -> list[ErrorItem]:
         'Zwróć TYLKO obiekt JSON: {"errors": [{"topic": str, "student_text": str, '
         '"correct_text": str, "explanation": str, "severity": "minor"|"major"}]}'
     )
-    data = _call_json(prompt)
+    data = _call_json(prompt, kind="extract")
     return [ErrorItem.model_validate(e) for e in data.get("errors", [])]
 
 
@@ -270,5 +305,5 @@ def explain_error(topic: str, student_text: str, correct_text: str, lang: str = 
         f"Wersja poprawna: {correct_text}\n"
         'Zwróć TYLKO obiekt JSON: {"explanation": str}'
     )
-    data = _call_json(prompt)
+    data = _call_json(prompt, kind="explain")
     return str(data.get("explanation", "")).strip()

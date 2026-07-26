@@ -22,7 +22,7 @@ def test_extract_json_from_surrounding_prose():
 def test_call_json_retries_once_then_succeeds(monkeypatch):
     calls = {"n": 0}
 
-    def fake_invoke(prompt: str) -> str:
+    def fake_invoke(prompt, kind="other") -> str:
         calls["n"] += 1
         return "to nie jest JSON" if calls["n"] == 1 else '{"ok": true}'
 
@@ -32,7 +32,7 @@ def test_call_json_retries_once_then_succeeds(monkeypatch):
 
 
 def test_call_json_raises_after_second_failure(monkeypatch):
-    monkeypatch.setattr(llm_client, "_invoke", lambda prompt: "wciąż nie JSON")
+    monkeypatch.setattr(llm_client, "_invoke", lambda prompt, kind="other": "wciąż nie JSON")
     with pytest.raises(llm_client.LLMError):
         llm_client._call_json("prompt")
 
@@ -52,7 +52,7 @@ def test_grade_answer_parses_into_model(monkeypatch):
             }
         ],
     }
-    monkeypatch.setattr(llm_client, "_invoke", lambda prompt: json.dumps(payload))
+    monkeypatch.setattr(llm_client, "_invoke", lambda prompt, kind="other": json.dumps(payload))
     result = llm_client.grade_answer(
         "uoe_part4_key_word_transformation", "…", "The film was such boring…", key_word="SO"
     )
