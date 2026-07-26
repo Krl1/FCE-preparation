@@ -41,7 +41,7 @@ def create_exercise(req: GenerateRequest) -> ExercisePublic:
     weak_points = [row["topic"] for row in db.topic_error_counts(conn)[:5]]
 
     try:
-        generated = llm_client.generate_exercise(req.type, topic, weak_points)
+        generated = llm_client.generate_exercise(req.type, topic, weak_points, lang=req.lang)
     except llm_client.LLMError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
@@ -85,7 +85,7 @@ def grade(req: GradeRequest) -> dict:
     try:
         result = llm_client.grade_answer(
             req.type, question_text, req.student_answer,
-            model_answer=model_answer, key_word=key_word,
+            model_answer=model_answer, key_word=key_word, lang=req.lang,
         )
     except llm_client.LLMError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
@@ -116,18 +116,19 @@ def grade(req: GradeRequest) -> dict:
 
 @app.get("/api/errors")
 def get_errors(topic: str | None = Query(default=None),
-               type: str | None = Query(default=None)) -> list[dict]:
+               type: str | None = Query(default=None),
+               lang: str = Query(default="pl")) -> list[dict]:
     rows = db.list_errors(conn, topic=topic, exercise_type=type)
     for row in rows:
-        row["topic_label"] = tax.topic_label(row["topic"])
+        row["topic_label"] = tax.topic_label(row["topic"], lang)
     return rows
 
 
 @app.get("/api/stats")
-def get_stats() -> list[dict]:
+def get_stats(lang: str = Query(default="pl")) -> list[dict]:
     rows = db.topic_error_counts(conn)
     for row in rows:
-        row["topic_label"] = tax.topic_label(row["topic"])
+        row["topic_label"] = tax.topic_label(row["topic"], lang)
     return rows
 
 

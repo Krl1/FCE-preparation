@@ -22,9 +22,15 @@ _DISALLOWED_TOOLS = ["Bash", "Read", "Write", "Edit", "Glob", "Grep", "WebSearch
 _EXAMINER_SYSTEM = (
     "You are an experienced Cambridge B2 First (FCE) examiner and English teacher. "
     "You reply with ONLY the requested JSON object — no prose, no explanations outside "
-    "the JSON, no markdown code fences. All Polish-language fields (explanations, feedback) "
-    "must be written in natural Polish; English content (exercises, corrected sentences) in English."
+    "the JSON, no markdown code fences. Write feedback, explanations and instructions in the "
+    "language requested in the user message; keep exercise content and corrected sentences in English."
 )
+
+_LANG_NAME = {"pl": "Polish", "en": "English"}
+
+
+def _lang_name(lang: str) -> str:
+    return _LANG_NAME.get(lang, "Polish")
 
 
 class LLMError(RuntimeError):
@@ -107,8 +113,10 @@ def _call_json(prompt: str) -> dict:
 
 # --- Funkcje domenowe --------------------------------------------------------
 
-def generate_exercise(exercise_type: str, topic: str, weak_points: list[str] | None = None) -> GeneratedExercise:
+def generate_exercise(exercise_type: str, topic: str, weak_points: list[str] | None = None,
+                      lang: str = "pl") -> GeneratedExercise:
     """Generuje jedno zadanie danego typu, ukierunkowane na wskazany temat."""
+    lang_name = _lang_name(lang)
     type_label = tax.EXERCISE_TYPES.get(exercise_type, {}).get("label", exercise_type)
     topic_label = tax.topic_label(topic)
     weak = ", ".join(tax.topic_label(t) for t in (weak_points or []) if t != topic)
@@ -138,15 +146,18 @@ def generate_exercise(exercise_type: str, topic: str, weak_points: list[str] | N
         f"Wygeneruj JEDNO zadanie egzaminacyjne FCE typu: {type_label}.\n"
         f"{focus}{weak_line}\n"
         f"Zwróć TYLKO obiekt JSON o kształcie: {shape}\n"
-        "Pola z treścią zadania po angielsku; instructions po polsku."
+        f"Pola z treścią zadania (question_text, options, key_word, answer) po angielsku; "
+        f"pole 'instructions' napisz w języku: {lang_name}."
     )
     data = _call_json(prompt)
     return GeneratedExercise.model_validate(data)
 
 
 def grade_answer(exercise_type: str, question_text: str, student_answer: str,
-                 model_answer: str | None = None, key_word: str | None = None) -> GradingResult:
+                 model_answer: str | None = None, key_word: str | None = None,
+                 lang: str = "pl") -> GradingResult:
     """Ocenia odpowiedź ucznia; klasyfikuje błędy wg taksonomii FCE."""
+    lang_name = _lang_name(lang)
     valid_topics = ", ".join(tax.topics_for_type(exercise_type)) or ", ".join(tax.TOPICS.keys())
     kw_line = f"\nSłowo-klucz (key word): {key_word}" if key_word else ""
     ref_line = f"\nWzorcowa odpowiedź: {model_answer}" if model_answer else ""
@@ -180,7 +191,8 @@ def grade_answer(exercise_type: str, question_text: str, student_answer: str,
         f"Treść zadania:\n{question_text}{kw_line}{ref_line}\n\n"
         f"Odpowiedź ucznia:\n{student_answer}\n\n"
         f"Pole 'topic' każdego błędu MUSI być jednym z: {valid_topics}.\n"
-        "Wyjaśnienia i feedback pisz po polsku, poprawki po angielsku.\n"
+        f"Pola tekstowe 'feedback', 'explanation' i 'comment' napisz w języku: {lang_name}; "
+        "poprawki (corrected, correct_text) po angielsku.\n"
         f"Zwróć TYLKO obiekt JSON o kształcie: {shape}"
     )
     data = _call_json(prompt)
@@ -206,12 +218,14 @@ def extract_errors_from_text(text: str) -> list[ErrorItem]:
     return [ErrorItem.model_validate(e) for e in data.get("errors", [])]
 
 
-def explain_error(topic: str, student_text: str, correct_text: str) -> str:
+def explain_error(topic: str, student_text: str, correct_text: str, lang: str = "pl") -> str:
     """Rozszerzone wyjaśnienie pojedynczego błędu na żądanie (zwraca zwykły tekst)."""
+    lang_name = _lang_name(lang)
     prompt = (
-        "Wyjaśnij szczegółowo po polsku poniższy błąd językowy ucznia przygotowującego się do FCE. "
-        "Podaj regułę, 1–2 przykłady poprawnego użycia i wskazówkę, jak go unikać.\n"
-        f"Temat: {tax.topic_label(topic)}\n"
+        f"Wyjaśnij szczegółowo (w języku: {lang_name}) poniższy błąd językowy ucznia "
+        "przygotowującego się do FCE. Podaj regułę, 1–2 przykłady poprawnego użycia po angielsku "
+        "i wskazówkę, jak go unikać.\n"
+        f"Temat: {tax.topic_label(topic, lang)}\n"
         f"Wersja ucznia: {student_text}\n"
         f"Wersja poprawna: {correct_text}\n"
         'Zwróć TYLKO obiekt JSON: {"explanation": str}'

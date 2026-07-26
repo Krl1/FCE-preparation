@@ -82,6 +82,7 @@ class GradingResult(BaseModel):
 class GenerateRequest(BaseModel):
     type: str
     topic: Optional[str] = None  # jeśli None → dobór ważony przez srs.py
+    lang: str = "pl"  # język poleceń/treści generowanych ('pl' | 'en')
 
 
 class GradeRequest(BaseModel):
@@ -91,3 +92,4 @@ class GradeRequest(BaseModel):
     # Dla zadań z zewnątrz klient podaje treść bezpośrednio:
     question_text: Optional[str] = None
     key_word: Optional[str] = None
+    lang: str = "pl"  # język wyjaśnień/feedbacku ('pl' | 'en')

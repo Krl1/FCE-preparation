@@ -12,6 +12,10 @@ doborem kolejnych zadań, żebyś oduczał się powtarzanych pomyłek.
   i korzysta z Twojego **logowania z subskrypcji** (`~/.claude/.credentials.json`) — **bez klucza API**.
   Cała ta zależność jest w jednym pliku: `app/llm_client.py`.
 - **Frontend:** statyczna strona (HTML/JS/CSS) z trzema widokami: *Ćwicz*, *Sprawdź z zewnątrz*, *Moje błędy*.
+- **Język:** przełącznik **PL / EN** w prawym górnym rogu zmienia zarówno interfejs, jak i język
+  treści generowanych przez model (polecenia, wyjaśnienia, feedback) — przydatne, gdy pokazujesz
+  aplikację osobie anglojęzycznej. Wybór jest zapamiętywany (localStorage), domyślnie polski.
+  Uwaga: wcześniej zapisane błędy zachowują język, w jakim powstały.
 
 ## Wymagania
 

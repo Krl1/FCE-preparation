@@ -35,6 +35,15 @@ body {
 .topbar h1 { font-size: 1.25rem; margin: 0; letter-spacing: .5px; }
 .topbar h1::after { content: ""; }
 
+.lang-switch { margin-left: auto; display: flex; gap: .2rem; }
+.lang {
+  border: 1px solid var(--line); background: transparent; color: var(--muted);
+  font: inherit; font-size: .8rem; font-weight: 700; letter-spacing: .5px;
+  padding: .3rem .6rem; border-radius: 999px; cursor: pointer; transition: all .15s;
+}
+.lang:hover { color: var(--ink); }
+.lang.is-active { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+
 .tabs { display: flex; gap: .25rem; }
 .tab {
   border: none; background: transparent; color: var(--muted);

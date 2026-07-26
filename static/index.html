@@ -8,12 +8,16 @@
 </head>
 <body>
   <header class="topbar">
-    <h1>FCE&nbsp;Trener</h1>
+    <h1 data-i18n="app.title">FCE&nbsp;Trener</h1>
     <nav class="tabs">
-      <button class="tab is-active" data-view="practice">Ćwicz</button>
-      <button class="tab" data-view="external">Sprawdź z zewnątrz</button>
-      <button class="tab" data-view="errors">Moje błędy</button>
+      <button class="tab is-active" data-view="practice" data-i18n="tab.practice">Ćwicz</button>
+      <button class="tab" data-view="external" data-i18n="tab.external">Sprawdź z zewnątrz</button>
+      <button class="tab" data-view="errors" data-i18n="tab.errors">Moje błędy</button>
     </nav>
+    <div class="lang-switch" role="group" aria-label="Language">
+      <button class="lang is-active" data-lang="pl">PL</button>
+      <button class="lang" data-lang="en">EN</button>
+    </div>
   </header>
 
   <main>
@@ -21,13 +25,13 @@
     <section id="view-practice" class="view is-active">
       <div class="card">
         <div class="row">
-          <label>Typ ćwiczenia
+          <label><span data-i18n="practice.type">Typ ćwiczenia</span>
             <select id="practice-type"></select>
           </label>
-          <label>Temat (opcjonalnie)
-            <select id="practice-topic"><option value="">— dobierz automatycznie (wg moich błędów) —</option></select>
+          <label><span data-i18n="practice.topic">Temat (opcjonalnie)</span>
+            <select id="practice-topic"></select>
           </label>
-          <button id="btn-generate" class="primary">Generuj zadanie</button>
+          <button id="btn-generate" class="primary" data-i18n="btn.generate">Generuj zadanie</button>
         </div>
       </div>
 
@@ -36,7 +40,7 @@
         <p class="instructions" id="exercise-instructions"></p>
         <div class="question" id="exercise-question"></div>
         <div id="answer-area"></div>
-        <button id="btn-grade" class="primary">Sprawdź odpowiedź</button>
+        <button id="btn-grade" class="primary" data-i18n="btn.grade">Sprawdź odpowiedź</button>
       </div>
 
       <div id="practice-result" class="card result hidden"></div>
@@ -45,20 +49,20 @@
     <!-- WIDOK: SPRAWDŹ Z ZEWNĄTRZ -->
     <section id="view-external" class="view">
       <div class="card">
-        <p class="muted">Wklej zadanie z książki lub od korepetytora oraz swoją odpowiedź — sprawdzę je i zapiszę błędy.</p>
-        <label>Typ ćwiczenia
+        <p class="muted" data-i18n="external.intro">Wklej zadanie z książki lub od korepetytora oraz swoją odpowiedź — sprawdzę je i zapiszę błędy.</p>
+        <label><span data-i18n="external.type">Typ ćwiczenia</span>
           <select id="external-type"></select>
         </label>
-        <label>Treść zadania
-          <textarea id="external-question" rows="4" placeholder="Wklej treść / polecenie zadania…"></textarea>
-        </label>
-        <label id="external-keyword-wrap" class="hidden">Słowo-klucz (key word)
+        <label id="external-keyword-wrap" class="hidden"><span data-i18n="external.keyword">Słowo-klucz (key word)</span>
           <input id="external-keyword" type="text" />
         </label>
-        <label>Twoja odpowiedź
-          <textarea id="external-answer" rows="4" placeholder="Wpisz swoją odpowiedź…"></textarea>
+        <label><span data-i18n="external.question">Treść zadania</span>
+          <textarea id="external-question" rows="4" data-i18n-ph="external.question.ph" placeholder="Wklej treść / polecenie zadania…"></textarea>
         </label>
-        <button id="btn-grade-external" class="primary">Sprawdź</button>
+        <label><span data-i18n="external.answer">Twoja odpowiedź</span>
+          <textarea id="external-answer" rows="4" data-i18n-ph="external.answer.ph" placeholder="Wpisz swoją odpowiedź…"></textarea>
+        </label>
+        <button id="btn-grade-external" class="primary" data-i18n="btn.gradeExternal">Sprawdź</button>
       </div>
       <div id="external-result" class="card result hidden"></div>
     </section>
@@ -66,13 +70,13 @@
     <!-- WIDOK: MOJE BŁĘDY -->
     <section id="view-errors" class="view">
       <div class="card">
-        <h2>Słabe punkty</h2>
+        <h2 data-i18n="errors.weak">Słabe punkty</h2>
         <div id="stats" class="stats"></div>
       </div>
       <div class="card">
         <div class="row">
-          <h2>Dziennik błędów</h2>
-          <button id="btn-refresh-errors">Odśwież</button>
+          <h2 data-i18n="errors.journal">Dziennik błędów</h2>
+          <button id="btn-refresh-errors" data-i18n="btn.refresh">Odśwież</button>
         </div>
         <div id="errors-list"></div>
       </div>
