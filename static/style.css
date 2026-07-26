@@ -118,6 +118,15 @@ h2 { font-size: 1.05rem; }
 .badge.major { background: var(--bad-bg); color: var(--bad); }
 .badge.minor { background: var(--bg); color: var(--muted); }
 
+.opt-notes { display: grid; gap: .35rem; margin: .5rem 0; }
+.opt-note { display: flex; gap: .6rem; align-items: baseline; padding: .45rem .65rem; border-radius: 6px; }
+.opt-note.ok { background: var(--good-bg); }
+.opt-note.bad { background: var(--bad-bg); }
+.opt-note .opt { font-weight: 700; white-space: nowrap; }
+.opt-note.ok .opt { color: var(--good); }
+.opt-note.bad .opt { color: var(--bad); }
+.opt-note .opt-why { font-size: .9rem; }
+
 .scores { display: grid; gap: .4rem; margin: .6rem 0; }
 .score-row { display: flex; align-items: center; gap: .6rem; }
 .score-row .name { flex: 0 0 42%; font-size: .9rem; }

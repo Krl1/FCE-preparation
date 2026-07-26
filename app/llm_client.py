@@ -230,12 +230,17 @@ def generate_drill(topic: str, student_text: str, correct_text: str, explanation
 
 def grade_answer(exercise_type: str, question_text: str, student_answer: str,
                  model_answer: str | None = None, key_word: str | None = None,
-                 lang: str = "pl") -> GradingResult:
-    """Ocenia odpowiedź ucznia; klasyfikuje błędy wg taksonomii FCE."""
+                 options: list[str] | None = None, lang: str = "pl") -> GradingResult:
+    """Ocenia odpowiedź ucznia; klasyfikuje błędy wg taksonomii FCE.
+
+    Feedback jest zwięzły. Dla zadań wielokrotnego wyboru dołącza omówienie,
+    dlaczego pozostałe warianty są błędne (`option_notes`)."""
     lang_name = _lang_name(lang)
     valid_topics = ", ".join(tax.topics_for_type(exercise_type)) or ", ".join(tax.TOPICS.keys())
     kw_line = f"\nSłowo-klucz (key word): {key_word}" if key_word else ""
     ref_line = f"\nWzorcowa odpowiedź: {model_answer}" if model_answer else ""
+    is_mcq = bool(options) and not tax.is_writing(exercise_type)
+    opts_line = f"\nWarianty: {options}" if is_mcq else ""
 
     if tax.is_writing(exercise_type):
         shape = (
@@ -250,9 +255,13 @@ def grade_answer(exercise_type: str, question_text: str, student_answer: str,
             "Wypisz konkretne błędy językowe z poprawkami."
         )
     else:
+        option_notes_field = (
+            ', "option_notes": [{"option": str, "is_correct": bool, "comment": str}]' if is_mcq else ""
+        )
         shape = (
             '{"correct": bool, "corrected": str, "feedback": str, '
-            '"errors": [{"topic": str, "student_text": str, "correct_text": str, "explanation": str, "severity": "minor"|"major"}]}'
+            '"errors": [{"topic": str, "student_text": str, "correct_text": str, "explanation": str, "severity": "minor"|"major"}]'
+            + option_notes_field + "}"
         )
         task = (
             "Oceń, czy odpowiedź ucznia jest poprawna dla tego zadania FCE. "
@@ -260,14 +269,22 @@ def grade_answer(exercise_type: str, question_text: str, student_answer: str,
             "Jeśli odpowiedź jest w pełni poprawna, errors ma być pustą listą."
         )
 
+    mcq_line = (
+        "\nW polu 'option_notes' omów KAŻDY podany wariant: 'is_correct' true dla poprawnego, "
+        "a w 'comment' napisz zwięźle (jedno zdanie), dlaczego wariant jest błędny lub dlaczego pasuje."
+        if is_mcq else ""
+    )
+
     prompt = (
         f"{task}\n\n"
         f"Typ zadania: {exercise_type}\n"
-        f"Treść zadania:\n{question_text}{kw_line}{ref_line}\n\n"
+        f"Treść zadania:\n{question_text}{opts_line}{kw_line}{ref_line}\n\n"
         f"Odpowiedź ucznia:\n{student_answer}\n\n"
         f"Pole 'topic' każdego błędu MUSI być jednym z: {valid_topics}.\n"
+        "Pisz ZWIĘŹLE: 'feedback' to maksymalnie 1–2 krótkie zdania, każde 'explanation' i 'comment' "
+        "to jedno zdanie. Bez powtórzeń i wstępów.\n"
         f"Pola tekstowe 'feedback', 'explanation' i 'comment' napisz w języku: {lang_name}; "
-        "poprawki (corrected, correct_text) po angielsku.\n"
+        f"poprawki (corrected, correct_text) po angielsku.{mcq_line}\n"
         f"Zwróć TYLKO obiekt JSON o kształcie: {shape}"
     )
     data = _call_json(prompt, kind="grade")

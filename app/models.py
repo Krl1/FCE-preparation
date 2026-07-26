@@ -61,6 +61,14 @@ class CriterionScore(BaseModel):
     comment: str
 
 
+class OptionNote(BaseModel):
+    """Omówienie pojedynczego wariantu w zadaniu wielokrotnego wyboru."""
+
+    option: str
+    is_correct: bool
+    comment: str = Field(description="Krótko, dlaczego wariant jest poprawny/błędny.")
+
+
 class GradingResult(BaseModel):
     """Wynik oceny zadania (Use of English lub Writing)."""
 
@@ -72,6 +80,8 @@ class GradingResult(BaseModel):
     )
     feedback: str = Field(description="Ogólny komentarz / informacja zwrotna po polsku.")
     errors: list[ErrorItem] = Field(default_factory=list)
+    # Tylko dla zadań wielokrotnego wyboru — dlaczego pozostałe warianty są błędne:
+    option_notes: Optional[list[OptionNote]] = Field(default=None)
     # Tylko dla Writing:
     scores: Optional[list[CriterionScore]] = Field(default=None)
     band: Optional[str] = Field(default=None, description="Orientacyjne pasmo/ocena wypracowania.")

@@ -89,6 +89,7 @@ def grade(req: GradeRequest) -> dict:
     model_answer = None
     key_word = req.key_word
     question_text = req.question_text
+    options = None
     source = "external"
 
     if req.exercise_id is not None:
@@ -99,6 +100,7 @@ def grade(req: GradeRequest) -> dict:
         question_text = prompt.get("question_text", question_text)
         model_answer = prompt.get("answer")
         key_word = prompt.get("key_word", key_word)
+        options = prompt.get("options")
         source = "in_app"
 
     if not question_text:
@@ -107,7 +109,7 @@ def grade(req: GradeRequest) -> dict:
     try:
         result = llm_client.grade_answer(
             req.type, question_text, req.student_answer,
-            model_answer=model_answer, key_word=key_word, lang=req.lang,
+            model_answer=model_answer, key_word=key_word, options=options, lang=req.lang,
         )
     except llm_client.LLMError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc

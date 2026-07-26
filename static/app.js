@@ -74,6 +74,7 @@ const I18N = {
     "verdict.incorrect": "✗ Do poprawy",
     "band.prefix": "Orientacyjna ocena: ",
     "corrected.label": "Poprawna wersja:",
+    "result.optionNotes": "Dlaczego pozostałe warianty",
     "errors.detected": "Wykryte błędy",
     "noErrors": "Brak błędów. Świetna robota!",
     "error.prefix": "Błąd: ",
@@ -152,6 +153,7 @@ const I18N = {
     "verdict.incorrect": "✗ Needs work",
     "band.prefix": "Estimated band: ",
     "corrected.label": "Correct version:",
+    "result.optionNotes": "Why the other options",
     "errors.detected": "Detected mistakes",
     "noErrors": "No mistakes. Great job!",
     "error.prefix": "Error: ",
@@ -415,6 +417,19 @@ function renderResult(sel, r) {
 
   if (r.corrected) box.appendChild(el("div", "corrected", `<strong>${esc(t("corrected.label"))}</strong> ` + esc(r.corrected)));
   if (r.feedback) box.appendChild(el("p", "feedback", esc(r.feedback)));
+
+  if (Array.isArray(r.option_notes) && r.option_notes.length) {
+    box.appendChild(el("h2", null, t("result.optionNotes")));
+    const wrap = el("div", "opt-notes");
+    r.option_notes.forEach((o) => {
+      const item = el("div", "opt-note " + (o.is_correct ? "ok" : "bad"));
+      item.innerHTML =
+        `<span class="opt">${o.is_correct ? "✓" : "✗"} ${esc(o.option)}</span>` +
+        `<span class="opt-why">${esc(o.comment)}</span>`;
+      wrap.appendChild(item);
+    });
+    box.appendChild(wrap);
+  }
 
   if (Array.isArray(r.errors) && r.errors.length) {
     box.appendChild(el("h2", null, t("errors.detected") + " (" + r.errors.length + ")"));
