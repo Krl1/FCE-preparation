@@ -69,6 +69,33 @@ def test_reviews_count_distinct_and_idempotent_per_day(conn):
     assert db.reviewed_today(conn, 99) is False
 
 
+def test_streak_counts_consecutive_met_days_with_grace(conn):
+    from datetime import datetime, timedelta, timezone
+    today = datetime.now(timezone.utc).date()
+
+    def add_day(day, distinct):
+        for i in range(distinct):
+            conn.execute(
+                "INSERT INTO reviews (error_id, created_at) VALUES (?, ?)",
+                (1000 * (today - day).days + i, day.isoformat() + "T12:00:00+00:00"),
+            )
+        conn.commit()
+
+    goal = 2
+    add_day(today - timedelta(days=1), 2)  # wczoraj: cel osiągnięty
+    add_day(today - timedelta(days=2), 3)  # przedwczoraj: osiągnięty
+    add_day(today - timedelta(days=3), 1)  # 3 dni temu: NIE (przerwanie)
+
+    # Dziś jeszcze nic — grace: seria kończy się wczoraj = 2 dni
+    assert db.streak(conn, goal) == 2
+
+    add_day(today, 2)  # dziś osiągnięty → seria 3 dni
+    assert db.streak(conn, goal) == 3
+
+    # Wyższy cel niż liczba przerobionych → brak serii
+    assert db.streak(conn, 5) == 0
+
+
 def test_get_error_returns_row_or_none(conn):
     eid = db.insert_error(conn, source="s", exercise_type="t", topic="tenses",
                           student_text="a", correct_text="b", explanation="e")

@@ -47,9 +47,10 @@ Następnie otwórz **http://localhost:8000**.
   Twoich słabych tematów) wraz z wyjaśnieniem i generuje do niego ćwiczenia. Przyciski: *Ćwiczenie*
   (kolejne ćwiczenie do tego samego błędu), *Inny błąd* (zmiana na nowy). U góry **dzienny cel** —
   ustalasz, ile błędów chcesz dziennie przerobić; błąd liczy się po sprawdzeniu przynajmniej jednego
-  ćwiczenia do niego.
+  ćwiczenia do niego. Obok celu widać **serię** (🔥) — liczbę kolejnych dni z osiągniętym celem.
 - **Sprawdź z zewnątrz** — wklej zadanie z książki i swoją odpowiedź; aplikacja sprawdzi je i zaloguje błędy.
-- **Moje błędy** — przegląd słabych punktów i pełny dziennik błędów.
+- **Moje błędy** — przegląd słabych punktów i pełny dziennik błędów. Przy każdym błędzie przycisk
+  **Ćwicz ten błąd** przenosi do zakładki *Tipy* z tym błędem i od razu generuje do niego ćwiczenie.
 
 ## Testy
 

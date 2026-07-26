@@ -155,7 +155,7 @@ def get_stats(lang: str = Query(default="pl")) -> list[dict]:
 
 def _progress() -> dict:
     goal = int(db.get_setting(conn, "daily_goal", str(DEFAULT_DAILY_GOAL)))
-    return {"done": db.reviews_done_today(conn), "goal": goal}
+    return {"done": db.reviews_done_today(conn), "goal": goal, "streak": db.streak(conn, goal)}
 
 
 def _choose_focus_error(exclude_id: int | None = None) -> dict | None:

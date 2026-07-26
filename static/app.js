@@ -15,7 +15,9 @@ const I18N = {
     "tips.newError": "Inny błąd",
     "tips.generate": "Ćwiczenie",
     "tips.more": "Kolejne ćwiczenie",
+    "tips.streakDays": "dni w serii",
     "tips.empty": "Dziennik błędów jest pusty — rozwiąż lub wklej kilka zadań, a tu pojawią się tipy.",
+    "errors.practiceThis": "Ćwicz ten błąd",
     "practice.type": "Typ ćwiczenia",
     "practice.topic": "Temat (opcjonalnie)",
     "practice.topic.auto": "— dobierz automatycznie (wg moich błędów) —",
@@ -66,7 +68,9 @@ const I18N = {
     "tips.newError": "Another mistake",
     "tips.generate": "Exercise",
     "tips.more": "Another exercise",
+    "tips.streakDays": "day streak",
     "tips.empty": "Your mistake log is empty — do or paste a few exercises and tips will appear here.",
+    "errors.practiceThis": "Practice this mistake",
     "practice.type": "Exercise type",
     "practice.topic": "Topic (optional)",
     "practice.topic.auto": "— auto-select (by my mistakes) —",
@@ -170,12 +174,15 @@ document.querySelectorAll(".lang").forEach((b) => b.addEventListener("click", ()
 
 // --- Nawigacja zakładek ------------------------------------------------------
 
+function activateTab(view) {
+  document.querySelectorAll(".tab").forEach((x) => x.classList.toggle("is-active", x.dataset.view === view));
+  document.querySelectorAll(".view").forEach((v) => v.classList.remove("is-active"));
+  $("#view-" + view).classList.add("is-active");
+}
+
 document.querySelectorAll(".tab").forEach((tab) => {
   tab.addEventListener("click", () => {
-    document.querySelectorAll(".tab").forEach((x) => x.classList.remove("is-active"));
-    document.querySelectorAll(".view").forEach((v) => v.classList.remove("is-active"));
-    tab.classList.add("is-active");
-    $("#view-" + tab.dataset.view).classList.add("is-active");
+    activateTab(tab.dataset.view);
     if (tab.dataset.view === "errors") loadErrors();
     if (tab.dataset.view === "tips") loadTips();
   });
@@ -426,6 +433,9 @@ function renderErrorsList(errors) {
       `<span class="muted" style="float:right;font-weight:400;text-transform:none;letter-spacing:0">${esc(date)}</span></div>` +
       `<div class="diff"><span class="from">${esc(err.student_text)}</span> → <span class="to">${esc(err.correct_text)}</span></div>` +
       `<div class="why">${esc(err.explanation)}</div>`;
+    const btn = el("button", "practice-btn", t("errors.practiceThis"));
+    btn.addEventListener("click", () => focusOnError(err));
+    item.appendChild(btn);
     box.appendChild(item);
   });
 }
@@ -453,6 +463,22 @@ function renderGoal(progress) {
   $("#tips-goal-input").value = progress.goal;
   const pct = progress.goal ? Math.min(100, (progress.done / progress.goal) * 100) : 0;
   $("#tips-goal-bar").style.width = pct + "%";
+  const streak = progress.streak || 0;
+  const streakEl = $("#tips-streak");
+  streakEl.textContent = "🔥 " + streak + " " + t("tips.streakDays");
+  streakEl.classList.toggle("is-zero", streak === 0);
+}
+
+async function refreshProgress() {
+  try { renderGoal(await api("/api/tips/progress")); } catch (_) {}
+}
+
+// Skok z „Moje błędy" do Tipów z konkretnym błędem + automatyczne wygenerowanie ćwiczenia.
+async function focusOnError(err) {
+  activateTab("tips");
+  setFocus(err);
+  await refreshProgress();
+  $("#tips-generate").click();
 }
 
 function setFocus(err) {

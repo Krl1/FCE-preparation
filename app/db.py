@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -213,6 +213,35 @@ def reviews_done_today(conn: sqlite3.Connection) -> int:
         (_today(),),
     ).fetchone()
     return int(row["n"])
+
+
+def _reviews_per_day(conn: sqlite3.Connection) -> dict[str, int]:
+    """Mapa 'YYYY-MM-DD' -> liczba różnych błędów przerobionych tego dnia."""
+    rows = conn.execute(
+        "SELECT substr(created_at, 1, 10) AS day, COUNT(DISTINCT error_id) AS n "
+        "FROM reviews GROUP BY day"
+    ).fetchall()
+    return {r["day"]: int(r["n"]) for r in rows}
+
+
+def streak(conn: sqlite3.Connection, goal: int) -> int:
+    """Liczba kolejnych dni z osiągniętym celem, kończących się dziś lub wczoraj.
+
+    Dzień jest 'zaliczony', gdy liczba różnych przerobionych błędów >= `goal`.
+    Jeśli dzisiejszy cel nie jest jeszcze osiągnięty, seria nie pęka od razu —
+    liczymy ciąg kończący się wczoraj (grace do końca dnia)."""
+    if goal <= 0:
+        return 0
+    per_day = _reviews_per_day(conn)
+    today = datetime.now(timezone.utc).date()
+    day = today
+    if per_day.get(today.isoformat(), 0) < goal:
+        day = today - timedelta(days=1)  # dzisiaj jeszcze nie zrobione → licz od wczoraj
+    count = 0
+    while per_day.get(day.isoformat(), 0) >= goal:
+        count += 1
+        day = day - timedelta(days=1)
+    return count
 
 
 def topic_error_counts(conn: sqlite3.Connection) -> list[dict]:
