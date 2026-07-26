@@ -1,0 +1,17 @@
+# Data
+data/*.db
+data/*.db-journal
+data/*.db-wal
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+*.egg-info/
+
+# Editor
+.vscode/
+.idea/
+.DS_Store

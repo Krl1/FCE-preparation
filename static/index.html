@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FCE Trener</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <h1>FCE&nbsp;Trener</h1>
+    <nav class="tabs">
+      <button class="tab is-active" data-view="practice">Ćwicz</button>
+      <button class="tab" data-view="external">Sprawdź z zewnątrz</button>
+      <button class="tab" data-view="errors">Moje błędy</button>
+    </nav>
+  </header>
+
+  <main>
+    <!-- WIDOK: ĆWICZ -->
+    <section id="view-practice" class="view is-active">
+      <div class="card">
+        <div class="row">
+          <label>Typ ćwiczenia
+            <select id="practice-type"></select>
+          </label>
+          <label>Temat (opcjonalnie)
+            <select id="practice-topic"><option value="">— dobierz automatycznie (wg moich błędów) —</option></select>
+          </label>
+          <button id="btn-generate" class="primary">Generuj zadanie</button>
+        </div>
+      </div>
+
+      <div id="exercise-area" class="card hidden">
+        <p class="muted" id="exercise-topic"></p>
+        <p class="instructions" id="exercise-instructions"></p>
+        <div class="question" id="exercise-question"></div>
+        <div id="answer-area"></div>
+        <button id="btn-grade" class="primary">Sprawdź odpowiedź</button>
+      </div>
+
+      <div id="practice-result" class="card result hidden"></div>
+    </section>
+
+    <!-- WIDOK: SPRAWDŹ Z ZEWNĄTRZ -->
+    <section id="view-external" class="view">
+      <div class="card">
+        <p class="muted">Wklej zadanie z książki lub od korepetytora oraz swoją odpowiedź — sprawdzę je i zapiszę błędy.</p>
+        <label>Typ ćwiczenia
+          <select id="external-type"></select>
+        </label>
+        <label>Treść zadania
+          <textarea id="external-question" rows="4" placeholder="Wklej treść / polecenie zadania…"></textarea>
+        </label>
+        <label id="external-keyword-wrap" class="hidden">Słowo-klucz (key word)
+          <input id="external-keyword" type="text" />
+        </label>
+        <label>Twoja odpowiedź
+          <textarea id="external-answer" rows="4" placeholder="Wpisz swoją odpowiedź…"></textarea>
+        </label>
+        <button id="btn-grade-external" class="primary">Sprawdź</button>
+      </div>
+      <div id="external-result" class="card result hidden"></div>
+    </section>
+
+    <!-- WIDOK: MOJE BŁĘDY -->
+    <section id="view-errors" class="view">
+      <div class="card">
+        <h2>Słabe punkty</h2>
+        <div id="stats" class="stats"></div>
+      </div>
+      <div class="card">
+        <div class="row">
+          <h2>Dziennik błędów</h2>
+          <button id="btn-refresh-errors">Odśwież</button>
+        </div>
+        <div id="errors-list"></div>
+      </div>
+    </section>
+  </main>
+
+  <div id="loader" class="loader hidden"><div class="spinner"></div><span id="loader-text">Pracuję…</span></div>
+
+  <script src="/app.js"></script>
+</body>
+</html>
