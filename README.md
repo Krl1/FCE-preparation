@@ -57,7 +57,10 @@ Następnie otwórz **http://localhost:8000**.
   Statystyki użycia zbierane są **od teraz** (z koperty JSON każdego wywołania `claude`); nie obejmują
   wcześniejszych wywołań (import, testy). **Uwaga:** tryb headless niesie narzut systemowego promptu
   Claude Code (~kilkadziesiąt tys. tokenów cache na wywołanie), więc oszacowany koszt to **górna
-  granica** — aplikacja na kluczu API z lekkim promptem zużyłaby wyraźnie mniej.
+  granica** — aplikacja na kluczu API z lekkim promptem zużyłaby wyraźnie mniej. Dlatego obok
+  pokazywany jest też **szacunek kosztu na API bez narzutu** (tylko realny prompt + odpowiedź,
+  wyceniony po cenniku modelu — Opus oraz taniej: Sonnet 5), który daje realniejszą liczbę do
+  decyzji o migracji na API.
 
 ## Testy
 

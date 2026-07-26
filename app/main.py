@@ -243,9 +243,35 @@ def stats_learning(lang: str = Query(default="pl")) -> dict:
     return data
 
 
+# Cennik API (USD za 1 mln tokenów): (wejście, wyjście).
+_PRICES: dict[str, tuple[float, float]] = {
+    "claude-opus-4-8": (5.0, 25.0),
+    "claude-opus-4-7": (5.0, 25.0),
+    "claude-sonnet-5": (3.0, 15.0),
+    "claude-sonnet-4-6": (3.0, 15.0),
+    "claude-haiku-4-5": (1.0, 5.0),
+}
+_DEFAULT_PRICE = (5.0, 25.0)
+
+
+def _lean_cost(by_model: list[dict], price_override: tuple[float, float] | None = None) -> float:
+    """Szacowany koszt na API bez narzutu Claude Code: tylko realny prompt + odpowiedź."""
+    total = 0.0
+    for m in by_model:
+        rate = price_override or _PRICES.get(m["model"], _DEFAULT_PRICE)
+        total += m["est_input_tokens"] / 1e6 * rate[0] + m["output_tokens"] / 1e6 * rate[1]
+    return total
+
+
 @app.get("/api/stats/usage")
 def stats_usage() -> dict:
-    return db.usage_stats(conn)
+    data = db.usage_stats(conn)
+    by_model = data.get("by_model", [])
+    data["lean"] = {
+        "used_model": _lean_cost(by_model),
+        "sonnet": _lean_cost(by_model, _PRICES["claude-sonnet-5"]),
+    }
+    return data
 
 
 # Frontend statyczny — montowany na końcu, po trasach /api/*.

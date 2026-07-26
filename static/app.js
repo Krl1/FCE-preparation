@@ -34,8 +34,12 @@ const I18N = {
     "stats.tokensOut": "Tokeny wyjściowe",
     "stats.tokensCacheWrite": "Tokeny cache (zapis)",
     "stats.tokensCacheRead": "Tokeny cache (odczyt)",
-    "stats.cost": "Szacowany koszt (API)",
+    "stats.cost": "Koszt trybu headless (górna granica)",
     "stats.avgTime": "Średni czas odpowiedzi",
+    "stats.leanTitle": "Szacunek na API (bez narzutu)",
+    "stats.leanUsed": "Przy tym samym modelu",
+    "stats.leanSonnet": "Na tańszym modelu (Sonnet 5)",
+    "stats.leanNote": "Liczone tylko z realnego promptu i odpowiedzi (bez narzutu Claude Code, ~4 znaki/token). Z cache'owaniem promptu na API będzie jeszcze taniej.",
     "stats.byKind": "Wg rodzaju wywołania",
     "kind.generate": "Generowanie zadań",
     "kind.grade": "Sprawdzanie",
@@ -113,8 +117,12 @@ const I18N = {
     "stats.tokensOut": "Output tokens",
     "stats.tokensCacheWrite": "Cache tokens (write)",
     "stats.tokensCacheRead": "Cache tokens (read)",
-    "stats.cost": "Estimated cost (API)",
+    "stats.cost": "Headless cost (upper bound)",
     "stats.avgTime": "Avg response time",
+    "stats.leanTitle": "API estimate (no overhead)",
+    "stats.leanUsed": "Same model as used",
+    "stats.leanSonnet": "On a cheaper model (Sonnet 5)",
+    "stats.leanNote": "Counted from the real prompt and response only (no Claude Code overhead, ~4 chars/token). With API prompt caching it would be even lower.",
     "stats.byKind": "By call type",
     "kind.generate": "Exercise generation",
     "kind.grade": "Grading",
@@ -712,6 +720,15 @@ function renderUsage(d) {
   box.appendChild(statLine(t("stats.tokensCacheWrite"), fmtNum(total.cache_creation_input_tokens)));
   box.appendChild(statLine(t("stats.tokensCacheRead"), fmtNum(total.cache_read_input_tokens)));
   box.appendChild(statLine(t("stats.avgTime"), Math.round(total.avg_duration_ms) + " ms"));
+
+  if (d.lean) {
+    box.appendChild(el("h3", "stat-sub", t("stats.leanTitle")));
+    const leanUsed = statLine(t("stats.leanUsed"), fmtCost(d.lean.used_model));
+    leanUsed.classList.add("cost-highlight");
+    box.appendChild(leanUsed);
+    box.appendChild(statLine(t("stats.leanSonnet"), fmtCost(d.lean.sonnet)));
+    box.appendChild(el("p", "muted", t("stats.leanNote")));
+  }
 
   if (d.by_kind && d.by_kind.length) {
     box.appendChild(el("h3", "stat-sub", t("stats.byKind")));

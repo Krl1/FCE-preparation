@@ -47,7 +47,7 @@ def set_usage_recorder(fn) -> None:
     _usage_recorder = fn
 
 
-def _record_usage(kind: str, envelope: dict) -> None:
+def _record_usage(kind: str, envelope: dict, est_input_tokens: int = 0) -> None:
     if _usage_recorder is None:
         return
     usage = envelope.get("usage") or {}
@@ -63,6 +63,7 @@ def _record_usage(kind: str, envelope: dict) -> None:
             "output_tokens": int(usage.get("output_tokens", 0) or 0),
             "cache_creation_input_tokens": int(usage.get("cache_creation_input_tokens", 0) or 0),
             "cache_read_input_tokens": int(usage.get("cache_read_input_tokens", 0) or 0),
+            "est_input_tokens": int(est_input_tokens),
             "cost_usd": float(envelope.get("total_cost_usd", 0.0) or 0.0),
             "duration_ms": int(envelope.get("duration_ms", 0) or 0),
         })
@@ -103,7 +104,10 @@ def _invoke(prompt: str, kind: str = "other") -> str:
     except json.JSONDecodeError as exc:
         raise LLMError(f"Nie udało się sparsować koperty JSON z Claude: {proc.stdout[:300]}") from exc
 
-    _record_usage(kind, envelope)  # rejestruj zużycie także przy błędzie (koszt mógł powstać)
+    # Szacunek tokenów wejściowych "lekkiej" wersji na API (system egzaminatora + prompt),
+    # z pominięciem narzutu Claude Code. Przybliżenie ~4 znaki/token.
+    est_input = (len(_EXAMINER_SYSTEM) + len(prompt)) // 4
+    _record_usage(kind, envelope, est_input)  # rejestruj także przy błędzie (koszt mógł powstać)
 
     if envelope.get("is_error"):
         raise LLMError(f"Claude zwrócił błąd: {envelope.get('result', '')[:500]}")

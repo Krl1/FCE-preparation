@@ -74,6 +74,7 @@ CREATE TABLE IF NOT EXISTS usage_events (
     output_tokens               INTEGER NOT NULL DEFAULT 0,
     cache_creation_input_tokens INTEGER NOT NULL DEFAULT 0,
     cache_read_input_tokens     INTEGER NOT NULL DEFAULT 0,
+    est_input_tokens            INTEGER NOT NULL DEFAULT 0,
     cost_usd                    REAL NOT NULL DEFAULT 0,
     duration_ms                 INTEGER NOT NULL DEFAULT 0
 );
@@ -94,7 +95,16 @@ def get_connection(db_path: Optional[Path | str] = None) -> sqlite3.Connection:
     conn = sqlite3.connect(path, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.executescript(_SCHEMA)
+    _migrate(conn)
     return conn
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Lekkie migracje dla istniejących baz (dodawanie brakujących kolumn)."""
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(usage_events)")}
+    if "est_input_tokens" not in cols:
+        conn.execute("ALTER TABLE usage_events ADD COLUMN est_input_tokens INTEGER NOT NULL DEFAULT 0")
+        conn.commit()
 
 
 # --- Exercises ---------------------------------------------------------------
@@ -273,13 +283,13 @@ def topic_error_counts(conn: sqlite3.Connection) -> list[dict]:
 def insert_usage_event(conn: sqlite3.Connection, *, kind: str, model: str,
                        input_tokens: int, output_tokens: int,
                        cache_creation_input_tokens: int, cache_read_input_tokens: int,
-                       cost_usd: float, duration_ms: int) -> None:
+                       cost_usd: float, duration_ms: int, est_input_tokens: int = 0) -> None:
     conn.execute(
         "INSERT INTO usage_events (created_at, kind, model, input_tokens, output_tokens, "
-        "cache_creation_input_tokens, cache_read_input_tokens, cost_usd, duration_ms) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "cache_creation_input_tokens, cache_read_input_tokens, est_input_tokens, cost_usd, duration_ms) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (_now(), kind, model, input_tokens, output_tokens,
-         cache_creation_input_tokens, cache_read_input_tokens, cost_usd, duration_ms),
+         cache_creation_input_tokens, cache_read_input_tokens, est_input_tokens, cost_usd, duration_ms),
     )
     conn.commit()
 
@@ -292,6 +302,7 @@ def usage_stats(conn: sqlite3.Connection) -> dict:
         "COALESCE(SUM(output_tokens),0) AS output_tokens, "
         "COALESCE(SUM(cache_creation_input_tokens),0) AS cache_creation_input_tokens, "
         "COALESCE(SUM(cache_read_input_tokens),0) AS cache_read_input_tokens, "
+        "COALESCE(SUM(est_input_tokens),0) AS est_input_tokens, "
         "COALESCE(SUM(cost_usd),0) AS cost_usd, "
         "COALESCE(AVG(duration_ms),0) AS avg_duration_ms FROM usage_events"
     ).fetchone()
@@ -300,13 +311,19 @@ def usage_stats(conn: sqlite3.Connection) -> dict:
         "COALESCE(SUM(output_tokens),0) AS output_tokens, COALESCE(SUM(cost_usd),0) AS cost_usd "
         "FROM usage_events GROUP BY kind ORDER BY cost_usd DESC"
     ).fetchall()
+    by_model = conn.execute(
+        "SELECT model, COUNT(*) AS calls, "
+        "COALESCE(SUM(est_input_tokens),0) AS est_input_tokens, "
+        "COALESCE(SUM(output_tokens),0) AS output_tokens "
+        "FROM usage_events GROUP BY model"
+    ).fetchall()
     by_day = conn.execute(
         "SELECT substr(created_at,1,10) AS day, COUNT(*) AS calls, "
         "COALESCE(SUM(cost_usd),0) AS cost_usd FROM usage_events "
         "GROUP BY day ORDER BY day DESC LIMIT 30"
     ).fetchall()
     return {"total": dict(total), "by_kind": [dict(r) for r in by_kind],
-            "by_day": [dict(r) for r in by_day]}
+            "by_model": [dict(r) for r in by_model], "by_day": [dict(r) for r in by_day]}
 
 
 # --- Statystyki nauki --------------------------------------------------------
