@@ -10,20 +10,38 @@ from pydantic import BaseModel, Field
 # --- Generowanie zadań -------------------------------------------------------
 
 class ExerciseItem(BaseModel):
-    """Pojedyncza luka w zadaniu wieloczęściowym (multiple-choice cloze).
-    `answer`/`answer_notes` zostają po stronie serwera."""
+    """Jedna pozycja zadania wieloczęściowego. `answer`/`answer_notes` zostają na serwerze.
 
-    number: int = Field(description="Numer luki (1..n), zgodny z oznaczeniem w question_text.")
-    options: list[str] = Field(description="Warianty odpowiedzi (dokładnie 4).")
-    answer: Optional[str] = Field(default=None, description="Poprawny wariant.")
+    Dwa warianty użycia:
+    - Part 1 (multiple-choice cloze): pozycje to luki we WSPÓLNYM tekście zadania,
+      każda z `options`; `question_text` pozycji jest puste.
+    - Part 2/3/4: każda pozycja to osobne mini-zadanie z własnym `question_text`
+      (plus `stem` dla word formation, `key_word` dla przekształceń).
+    """
+
+    number: int = Field(description="Numer pozycji (1..n), zgodny z oznaczeniem w treści.")
+    question_text: Optional[str] = Field(
+        default=None, description="Własne zdanie/kontekst pozycji (części 2–4)."
+    )
+    options: Optional[list[str]] = Field(
+        default=None, description="Warianty odpowiedzi — tylko multiple-choice (dokładnie 4)."
+    )
+    key_word: Optional[str] = Field(default=None, description="Słowo-klucz (part 4).")
+    stem: Optional[str] = Field(
+        default=None, description="Wyraz podstawowy do przekształcenia (part 3, np. CONVENIENT)."
+    )
+    answer: Optional[str] = Field(default=None, description="Poprawna odpowiedź.")
     answer_notes: Optional[str] = Field(default=None)
 
 
 class ExerciseItemPublic(BaseModel):
-    """Luka widziana przez klienta — bez poprawnej odpowiedzi."""
+    """Pozycja widziana przez klienta — bez poprawnej odpowiedzi."""
 
     number: int
-    options: list[str]
+    question_text: Optional[str] = None
+    options: Optional[list[str]] = None
+    key_word: Optional[str] = None
+    stem: Optional[str] = None
 
 
 class GeneratedExercise(BaseModel):
@@ -31,7 +49,11 @@ class GeneratedExercise(BaseModel):
     serwera i NIE wysyłane do klienta przed sprawdzeniem odpowiedzi."""
 
     instructions: str = Field(description="Polecenie dla ucznia.")
-    question_text: str = Field(description="Treść zadania (tekst z luką, zdanie do przekształcenia, temat wypracowania).")
+    question_text: str = Field(
+        default="",
+        description="Wspólna treść zadania: tekst z lukami (part 1), temat wypracowania (Writing). "
+                    "Dla części 2–4 pusty — treść jest w poszczególnych pozycjach `items`.",
+    )
     options: Optional[list[str]] = Field(
         default=None, description="Warianty odpowiedzi dla zadań typu multiple-choice (jedna luka)."
     )
@@ -57,7 +79,7 @@ class ExercisePublic(BaseModel):
     type: str
     topic: str
     instructions: str
-    question_text: str
+    question_text: str = ""
     options: Optional[list[str]] = None
     items: Optional[list[ExerciseItemPublic]] = None
     key_word: Optional[str] = None
@@ -152,6 +174,9 @@ class TipExerciseRequest(BaseModel):
 
 class CompleteRequest(BaseModel):
     error_id: int
+    # Ile ćwiczeń z zestawu uczeń rozwiązał poprawnie (i ile ich było).
+    correct_items: int = 1
+    total_items: int = 1
 
 
 class GoalRequest(BaseModel):

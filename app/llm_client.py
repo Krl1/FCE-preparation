@@ -152,22 +152,38 @@ def _call_json(prompt: str, kind: str = "other") -> dict:
 
 # --- Funkcje domenowe --------------------------------------------------------
 
-# Liczba luk w zadaniu typu multiple-choice cloze (FCE Part 1).
-MCQ_ITEM_COUNT = 5
+# Liczba pozycji w jednym zadaniu Use of English (luki / mini-zadania).
+ITEMS_PER_EXERCISE = 5
 
 
 # Ile zadań generować w JEDNYM wywołaniu. Koszt wywołania jest zdominowany przez stały
 # narzut Claude Code (~23 tys. tokenów niezależnie od treści), więc generowanie wsadowe
 # jest niemal darmowe na sztukę i dodatkowo eliminuje czekanie na kolejne zadania.
-# MCQ cloze to już 5 luk na zadanie, dlatego ma mniejszy wsad.
-# Wsad musi zmieścić się w limicie długości odpowiedzi modelu — przy zbyt dużym
-# JSON zostaje ucięty i potrzebna jest ponowna próba, co niweczy oszczędność.
-_BATCH_SIZES = {"uoe_part1_mcq_cloze": 2}
-_DEFAULT_BATCH = 3
+# Ograniczeniem jest długość odpowiedzi: przy zbyt dużym JSON zostaje on ucięty i trzeba
+# powtarzać wywołanie, co niweczy oszczędność. Każde zadanie Use of English ma teraz
+# 5 pozycji, więc wsad jest mniejszy niż dla krótkich poleceń Writing.
+_UOE_BATCH = 2
+_WRITING_BATCH = 3
 
 
 def batch_size(exercise_type: str) -> int:
-    return _BATCH_SIZES.get(exercise_type, _DEFAULT_BATCH)
+    return _WRITING_BATCH if tax.is_writing(exercise_type) else _UOE_BATCH
+
+
+def _expected_item_count(exercise_type: str) -> int:
+    """Ile pozycji powinno mieć zadanie danego typu (0 = zadanie jednoczęściowe, np. Writing)."""
+    return 0 if tax.is_writing(exercise_type) else ITEMS_PER_EXERCISE
+
+
+def _has_enough_items(exercise: GeneratedExercise, expected: int) -> bool:
+    return expected == 0 or len(exercise.items or []) >= expected
+
+
+# Dopisek do promptu, gdy model zignorował wymaganą liczbę pozycji.
+_STRICT_ITEMS = (
+    "\n\nUWAGA: poprzednia odpowiedź miała ZA MAŁO pozycji. Tablica 'items' MUSI zawierać "
+    "dokładnie {n} elementów o numerach 1–{n}. Nie skracaj jej."
+)
 
 
 def generate_exercises(exercise_type: str, topic: str, weak_points: list[str] | None = None,
@@ -189,21 +205,41 @@ def generate_exercises(exercise_type: str, topic: str, weak_points: list[str] | 
         f"Zadania muszą różnić się tematyką i słownictwem — nie powielaj tego samego kontekstu.\n"
         f"Zwróć TYLKO obiekt JSON postaci {{\"exercises\": [element, element, ...]}} "
         f"z dokładnie {count} elementami, gdzie element = {single['shape']}\n"
+        f"Uwaga na dwie różne liczby: {count} to liczba ZADAŃ w tablicy 'exercises', "
+        f"a każde z nich ma mieć pełną liczbę pozycji w swojej tablicy 'items'.\n"
         f"Pisz zwięźle — pola tekstowe bez zbędnych komentarzy, żeby odpowiedź nie została ucięta.\n"
         f"Pola z treścią zadania po angielsku; pole 'instructions' w języku: {_lang_name(lang)}."
     )
-    data = _call_json(prompt, kind="generate")
-    raw = data.get("exercises") or []
-    out = [GeneratedExercise.model_validate(item) for item in raw[:count]]
-    if not out:
+    expected = _expected_item_count(exercise_type)
+
+    def parse(payload: dict) -> list[GeneratedExercise]:
+        raw = payload.get("exercises") or []
+        return [GeneratedExercise.model_validate(item) for item in raw[:count]]
+
+    out = parse(_call_json(prompt, kind="generate"))
+    good = [e for e in out if _has_enough_items(e, expected)]
+    if not good and expected:
+        # Model zignorował wymaganą liczbę pozycji — jedna ponowna próba z dosłownym
+        # przypomnieniem. Gdy znów nie posłucha, wydajemy to, co jest (lepsze krótsze
+        # zadanie niż błąd), ale kolejki już nie zasilamy skróconymi zadaniami.
+        retry = parse(_call_json(prompt + _STRICT_ITEMS.format(n=expected), kind="generate"))
+        good = [e for e in retry if _has_enough_items(e, expected)] or retry or out
+    if not good:
         raise LLMError("Model nie zwrócił żadnego zadania w odpowiedzi wsadowej.")
-    return out
+    return good
 
 
 def _exercise_shape(exercise_type: str, topic: str, lang: str) -> dict:
     """Kształt JSON i wytyczne merytoryczne dla danego typu zadania (wspólne dla
-    generowania pojedynczego i wsadowego)."""
+    generowania pojedynczego i wsadowego).
+
+    Wszystkie części Use of English są wieloczęściowe — jedno zadanie zawiera
+    `ITEMS_PER_EXERCISE` pozycji. Part 1 dzieli jeden wspólny tekst, części 2–4
+    mają osobne zdanie w każdej pozycji.
+    """
     topic_label = tax.topic_label(topic)
+    n = ITEMS_PER_EXERCISE
+
     if tax.is_writing(exercise_type):
         return {
             "shape": '{"instructions": str, "question_text": str}',
@@ -212,39 +248,64 @@ def _exercise_shape(exercise_type: str, topic: str, lang: str) -> dict:
                 f"~140-190 słów). Zadbaj, by temat naturalnie sprzyjał ćwiczeniu obszaru: {topic_label}."
             ),
         }
+
     if exercise_type == "uoe_part1_mcq_cloze":
         return {
             "shape": ('{"instructions": str, "question_text": str, '
                       '"items": [{"number": int, "options": [str, str, str, str], '
                       '"answer": str, "answer_notes": str}]}'),
             "focus": (
-                f"Ułóż spójny, ciekawy tekst po angielsku (~120–160 słów) z DOKŁADNIE "
-                f"{MCQ_ITEM_COUNT} lukami, oznaczonymi w 'question_text' jako (1) ______ , (2) ______ itd. "
+                f"Ułóż spójny, ciekawy tekst po angielsku (~120–160 słów) z DOKŁADNIE {n} lukami, "
+                f"oznaczonymi w 'question_text' jako (1) ______ , (2) ______ itd. "
                 f"Dla KAŻDEJ luki podaj w 'items' dokładnie 4 warianty (z prefiksami A/B/C/D) i jeden "
                 f"poprawny w polu 'answer' — zapisany identycznie jak w 'options'. Luki mają testować "
                 f"przede wszystkim: {topic_label}; pozostałe mogą sprawdzać inne słownictwo na poziomie B2. "
-                f"Numery w 'items' muszą odpowiadać numerom luk w tekście."
+                f"Numery w 'items' muszą odpowiadać numerom luk w tekście. "
+                f"'answer_notes' to najwyżej jedno krótkie zdanie."
             ),
         }
+
     if exercise_type == "uoe_part4_key_word_transformation":
         return {
-            "shape": ('{"instructions": str, "question_text": str, "key_word": str, '
-                      '"answer": str, "answer_notes": str}'),
+            "shape": ('{"instructions": str, '
+                      '"items": [{"number": int, "question_text": str, "key_word": str, '
+                      '"answer": str, "answer_notes": str}]}'),
             "focus": (
-                f"Przekształcenie ma testować: {topic_label}. question_text zawiera zdanie wyjściowe i "
-                "zdanie z luką do uzupełnienia (2–5 słów, ze słowem-kluczem)."
+                f"Przygotuj DOKŁADNIE {n} niezależnych przekształceń zdań, testujących: {topic_label}. "
+                "W każdej pozycji 'question_text' zawiera zdanie wyjściowe ORAZ zdanie z luką "
+                "(______) do uzupełnienia, 'key_word' to słowo-klucz (WIELKIMI literami), a 'answer' "
+                "to same brakujące słowa (2–5 wyrazów, ze słowem-kluczem) — bez powtarzania reszty "
+                "zdania. Pozostaw 'question_text' zadania puste. "
+                "'answer_notes' to najwyżej jedno krótkie zdanie z dopuszczalnymi wariantami."
             ),
         }
-    # part2 open cloze, part3 word formation — interfejs ma JEDNO pole odpowiedzi,
-    # więc zadanie musi mieć dokładnie jedną lukę (bez instrukcji model układa
-    # autentyczny tekst z 8 lukami, którego nie da się wpisać w jedno pole).
+
+    if exercise_type == "uoe_part3_word_formation":
+        return {
+            "shape": ('{"instructions": str, '
+                      '"items": [{"number": int, "question_text": str, "stem": str, '
+                      '"answer": str, "answer_notes": str}]}'),
+            "focus": (
+                f"Przygotuj DOKŁADNIE {n} niezależnych zadań na słowotwórstwo, testujących: {topic_label}. "
+                "W każdej pozycji 'question_text' to jedno zdanie po angielsku z jedną luką (______), "
+                "'stem' to wyraz podstawowy WIELKIMI literami (np. CONVENIENT), a 'answer' to poprawnie "
+                "utworzona forma wypełniająca lukę (np. inconvenience). Różnicuj typy afiksów "
+                "(przedrostki, przyrostki, formy przeczące, rzeczowniki/przymiotniki/przysłówki). "
+                "Pozostaw 'question_text' zadania puste. 'answer_notes' — najwyżej jedno krótkie zdanie."
+            ),
+        }
+
+    # uoe_part2_open_cloze
     return {
-        "shape": '{"instructions": str, "question_text": str, "answer": str, "answer_notes": str}',
+        "shape": ('{"instructions": str, '
+                  '"items": [{"number": int, "question_text": str, '
+                  '"answer": str, "answer_notes": str}]}'),
         "focus": (
-            f"Zadanie ma testować: {topic_label}. question_text to KRÓTKI fragment (1–2 zdania) "
-            "z DOKŁADNIE JEDNĄ luką oznaczoną jako ______ ; 'answer' to jedno słowo lub "
-            "krótkie wyrażenie wypełniające tę lukę. 'answer_notes' ogranicz do jednego "
-            "krótkiego zdania (dopuszczalne warianty)."
+            f"Przygotuj DOKŁADNIE {n} niezależnych zadań (tablica 'items' musi mieć {n} elementów "
+            f"o numerach 1–{n}), testujących: {topic_label}. W każdej pozycji 'question_text' to "
+            "jedno zdanie po angielsku z JEDNĄ luką (______), a 'answer' to JEDNO słowo wypełniające "
+            "tę lukę (bez wariantów w nawiasach). Każde zdanie w innym kontekście. "
+            "Pozostaw 'question_text' zadania puste. 'answer_notes' — najwyżej jedno krótkie zdanie."
         ),
     }
 
@@ -264,8 +325,13 @@ def generate_exercise(exercise_type: str, topic: str, weak_points: list[str] | N
         f"Pola z treścią zadania (question_text, options, items, key_word, answer) po angielsku; "
         f"pole 'instructions' napisz w języku: {_lang_name(lang)}."
     )
-    data = _call_json(prompt, kind="generate")
-    return GeneratedExercise.model_validate(data)
+    exercise = GeneratedExercise.model_validate(_call_json(prompt, kind="generate"))
+    expected = _expected_item_count(exercise_type)
+    if not _has_enough_items(exercise, expected):
+        exercise = GeneratedExercise.model_validate(
+            _call_json(prompt + _STRICT_ITEMS.format(n=expected), kind="generate")
+        )
+    return exercise
 
 
 _DRILL_TYPES = [
@@ -278,121 +344,185 @@ _DRILL_TYPES = [
 
 def generate_drill(topic: str, student_text: str, correct_text: str, explanation: str,
                    lang: str = "pl") -> tuple[str, GeneratedExercise]:
-    """Generuje krótkie ćwiczenie celowane w KONKRETNY błąd ucznia.
-    Zwraca (exercise_type, GeneratedExercise) — typ wybiera model spośród części Use of English."""
+    """Generuje zestaw ćwiczeń celowanych w KONKRETNY błąd ucznia (jedno wywołanie modelu).
+
+    Zwraca `(exercise_type, GeneratedExercise)` — typ wybiera model spośród części
+    Use of English, a zadanie zawiera `ITEMS_PER_EXERCISE` niezależnych pozycji,
+    każda w innym kontekście.
+    """
     lang_name = _lang_name(lang)
     topic_lbl = tax.topic_label(topic, "en")
     types = ", ".join(_DRILL_TYPES)
+    n = ITEMS_PER_EXERCISE
     shape = (
-        '{"exercise_type": str, "instructions": str, "question_text": str, '
-        '"options": [str]|null, "key_word": str|null, "answer": str, "answer_notes": str}'
+        '{"exercise_type": str, "instructions": str, '
+        '"items": [{"number": int, "question_text": str, "options": [str, str, str, str]|null, '
+        '"key_word": str|null, "stem": str|null, "answer": str, "answer_notes": str}]}'
     )
     prompt = (
-        "Uczeń przygotowujący się do FCE popełnił konkretny błąd. Ułóż JEDNO krótkie ćwiczenie, "
-        "które ćwiczy DOKŁADNIE ten punkt gramatyczny/leksykalny w NOWYM kontekście "
-        "(nie powielaj zdania z błędu). Wybierz najlepiej pasujący typ ćwiczenia.\n\n"
+        f"Uczeń przygotowujący się do FCE popełnił konkretny błąd. Ułóż {n} KRÓTKICH ćwiczeń, "
+        "które ćwiczą DOKŁADNIE ten punkt gramatyczny/leksykalny, każde w INNYM, nowym kontekście "
+        "(nie powielaj zdania z błędu ani kontekstów między pozycjami).\n\n"
         f"Błąd — temat: {topic_lbl}\n"
         f"Wersja błędna: {student_text}\n"
         f"Wersja poprawna: {correct_text}\n"
         f"Wyjaśnienie: {explanation}\n\n"
-        f"Pole 'exercise_type' MUSI być jednym z: {types}. "
-        "Dla multiple-choice podaj dokładnie 4 'options'; dla key word transformation podaj 'key_word'; "
-        "w pozostałych ustaw je na null.\n"
-        f"Treść zadania po angielsku; pole 'instructions' w języku: {lang_name}.\n"
+        f"Pole 'exercise_type' MUSI być jednym z: {types} — wybierz jeden typ dla całego zestawu.\n"
+        "Każda pozycja w 'items' ma własne 'question_text' (jedno zdanie po angielsku z luką ______) "
+        "oraz 'answer'. Dla multiple-choice podaj w pozycji dokładnie 4 'options' (z prefiksami "
+        "A/B/C/D, 'answer' zapisane identycznie jak wybrany wariant); dla key word transformation "
+        "podaj 'key_word'; dla word formation podaj 'stem'. Nieużywane pola ustaw na null.\n"
+        f"Trudność stopniuj rosnąco. 'answer_notes' to najwyżej jedno krótkie zdanie.\n"
+        f"Treść ćwiczeń po angielsku; pole 'instructions' w języku: {lang_name}.\n"
         f"Zwróć TYLKO obiekt JSON o kształcie: {shape}"
     )
     data = _call_json(prompt, kind="drill")
     ex_type = data.get("exercise_type")
     if ex_type not in _DRILL_TYPES:
         ex_type = "uoe_part2_open_cloze"
-    return ex_type, GeneratedExercise.model_validate(data)
+    exercise = GeneratedExercise.model_validate(data)
+    if not exercise.items:
+        raise LLMError("Model nie zwrócił żadnego ćwiczenia do tego błędu.")
+    return ex_type, exercise
+
+
+def _norm_answer(s: str) -> str:
+    """Normalizuje odpowiedź do porównania: ucina prefiks wariantu ('A' / 'A.' / 'A)'),
+    wielkość liter i kropkę na końcu — 'B heat' i 'heat' są równoważne."""
+    s = (s or "").strip().rstrip(".").lower()
+    head, _, rest = s.partition(" ")
+    if rest and len(head.rstrip(").")) == 1 and head.rstrip(").").isalpha():
+        return rest.strip()
+    return s
 
 
 def grade_items(exercise_type: str, question_text: str, items: list[dict],
                 student_answers: list[str], lang: str = "pl") -> GradingResult:
-    """Ocenia zadanie wieloczęściowe (multiple-choice cloze) — wszystkie luki w jednym wywołaniu.
+    """Ocenia zadanie wieloczęściowe — wszystkie pozycje w JEDNYM wywołaniu modelu.
 
-    Poprawność każdej luki jest ustalana deterministycznie po stronie serwera (porównanie
-    z zapisaną odpowiedzią wzorcową); model dostarcza wyłącznie wyjaśnienia."""
+    Dwa tryby oceny, zależnie od pozycji:
+    - pozycja z wariantami (multiple choice) — poprawność ustalana DETERMINISTYCZNIE
+      po stronie serwera; model tylko wyjaśnia,
+    - pozycja z odpowiedzią otwartą (części 2–4) — o poprawności rozstrzyga model,
+      bo równoważne odpowiedzi ('have'/'has', inny szyk) są normalne; ale dokładne
+      trafienie w zapisaną odpowiedź ZAWSZE nadpisuje wynik na poprawny, żeby dobra
+      odpowiedź nigdy nie trafiła do dziennika jako błąd.
+    """
     lang_name = _lang_name(lang)
     valid_topics = ", ".join(tax.topics_for_type(exercise_type)) or ", ".join(tax.TOPICS.keys())
 
-    def norm(s: str) -> str:
-        """Normalizuje wariant do porównania: ucina prefiks 'A' / 'A.' / 'A)',
-        wielkość liter i kropkę na końcu ('B heat' i 'heat' są równoważne)."""
-        s = (s or "").strip().rstrip(".").lower()
-        head, _, rest = s.partition(" ")
-        if rest and len(head.rstrip(").")) == 1 and head.rstrip(").").isalpha():
-            return rest.strip()
-        return s
-
-    # Deterministyczna ocena + materiał dla modelu.
-    verdicts, lines = [], []
+    verdicts, lines, open_numbers = [], [], []
     for idx, item in enumerate(items):
+        number = item.get("number", idx + 1)
         given = student_answers[idx] if idx < len(student_answers) else ""
         answer = item.get("answer") or ""
-        is_ok = bool(given) and norm(given) == norm(answer)
+        options = item.get("options") or None
+        exact = bool(given) and _norm_answer(given) == _norm_answer(answer)
+        if not options:
+            open_numbers.append(number)
         verdicts.append({
-            "number": item.get("number", idx + 1),
-            "correct": is_ok,
+            "number": number,
+            "closed": bool(options),
+            "exact": exact,
+            "correct": exact,  # dla pozycji otwartych może jeszcze zmienić to model
             "student_option": given or None,
             "correct_option": answer,
         })
+        context = item.get("question_text") or ""
+        extra = ""
+        if item.get("stem"):
+            extra += f" [wyraz podstawowy: {item['stem']}]"
+        if item.get("key_word"):
+            extra += f" [słowo-klucz: {item['key_word']}]"
         lines.append(
-            f"Luka {item.get('number', idx + 1)}: warianty={item.get('options')}; "
-            f"poprawny='{answer}'; odpowiedź ucznia='{given or '(brak)'}' → "
-            f"{'POPRAWNA' if is_ok else 'BŁĘDNA'}"
+            f"Pozycja {number}: " + (f"{context}{extra}; " if context or extra else "")
+            + (f"warianty={options}; " if options else "")
+            + f"poprawna='{answer}'; odpowiedź ucznia='{given or '(brak)'}'"
+            + (f" → {'POPRAWNA' if exact else 'BŁĘDNA'}" if options
+               else (" → POPRAWNA (dokładne trafienie)" if exact else " → OCEŃ SAM"))
         )
 
-    wrong_numbers = [v["number"] for v in verdicts if not v["correct"]]
-    correct_count = sum(1 for v in verdicts if v["correct"])
+    closed_wrong = [v["number"] for v in verdicts if v["closed"] and not v["correct"]]
+    to_judge = [n for n in open_numbers
+                if not next(v for v in verdicts if v["number"] == n)["exact"]]
+
+    judge_line = ""
+    if to_judge:
+        judge_line = (
+            f"\nPozycje {to_judge} mają odpowiedź OTWARTĄ i nie trafiają dokładnie we wzorzec — "
+            "dla nich ustaw 'correct' na podstawie własnej oceny: true, jeśli odpowiedź ucznia jest "
+            "poprawna gramatycznie i znaczeniowo równoważna wzorcowej (dopuszczaj sensowne warianty), "
+            "false w przeciwnym razie. Dla pozostałych pozycji pole 'correct' jest ignorowane.\n"
+        )
+
+    notes_line = ""
+    if closed_wrong:
+        notes_line = (
+            f"Dla błędnych pozycji z wariantami ({closed_wrong}) wypełnij 'option_notes' — "
+            "omówienie wszystkich 4 wariantów (is_correct + jedno zdanie). "
+            "W pozostałych ustaw 'option_notes' na null.\n"
+        )
 
     shape = (
         '{"feedback": str, '
-        '"items": [{"number": int, "comment": str, '
+        '"items": [{"number": int, "correct": bool, "comment": str, '
         '"option_notes": [{"option": str, "is_correct": bool, "comment": str}]|null}], '
         '"errors": [{"topic": str, "student_text": str, "correct_text": str, "explanation": str, "severity": "minor"|"major"}]}'
     )
     prompt = (
-        "Uczeń rozwiązał zadanie FCE typu multiple-choice cloze (tekst z lukami). "
-        "Poprawność każdej luki została już ustalona — Twoim zadaniem jest tylko wyjaśnić.\n\n"
-        f"Tekst zadania:\n{question_text}\n\n"
-        "Wyniki poszczególnych luk:\n" + "\n".join(lines) + "\n\n"
-        f"Dla KAŻDEJ luki podaj w 'items' krótki 'comment' (jedno zdanie) uzasadniający poprawny wariant.\n"
-        f"Dla luk BŁĘDNIE rozwiązanych ({wrong_numbers or 'brak'}) wypełnij dodatkowo 'option_notes' — "
-        "omówienie wszystkich 4 wariantów (is_correct + jedno zdanie, dlaczego pasuje/nie pasuje). "
-        "Dla luk poprawnych ustaw 'option_notes' na null.\n"
-        "W 'errors' umieść po jednej pozycji dla każdej BŁĘDNIE rozwiązanej luki "
-        "(student_text = wariant wybrany przez ucznia, correct_text = wariant poprawny). "
+        f"Uczeń rozwiązał zadanie FCE (typ: {exercise_type}) składające się z {len(items)} pozycji.\n"
+        + (f"\nWspólna treść zadania:\n{question_text}\n" if question_text else "")
+        + "\nPozycje i odpowiedzi ucznia:\n" + "\n".join(lines) + "\n\n"
+        + judge_line
+        + "Dla KAŻDEJ pozycji podaj krótki 'comment' (jedno zdanie) uzasadniający poprawną odpowiedź.\n"
+        + notes_line
+        + "W 'errors' umieść po jednej pozycji dla każdej pozycji, którą uznajesz za BŁĘDNĄ "
+        "(student_text = odpowiedź ucznia, correct_text = poprawna). "
         f"Pole 'topic' MUSI być jednym z: {valid_topics}.\n"
-        f"'feedback' to maksymalnie 1–2 krótkie zdania podsumowania (wynik: {correct_count}/{len(items)}).\n"
-        f"Pola 'feedback', 'comment', 'explanation' napisz w języku: {lang_name}; warianty i poprawki po angielsku.\n"
+        "'feedback' to maksymalnie 1–2 krótkie zdania podsumowania.\n"
+        f"Pola 'feedback', 'comment', 'explanation' napisz w języku: {lang_name}; "
+        "treści angielskie i poprawki po angielsku.\n"
         f"Zwróć TYLKO obiekt JSON o kształcie: {shape}"
     )
     data = _call_json(prompt, kind="grade")
 
-    # Scal wyjaśnienia modelu z deterministycznymi werdyktami serwera.
-    notes_by_num = {}
+    # Scal ocenę modelu z werdyktami serwera.
+    by_num = {}
     for entry in data.get("items") or []:
         try:
-            notes_by_num[int(entry.get("number"))] = entry
+            by_num[int(entry.get("number"))] = entry
         except (TypeError, ValueError):
             continue
+
     merged = []
     for verdict in verdicts:
-        entry = notes_by_num.get(verdict["number"], {})
+        entry = by_num.get(verdict["number"], {})
+        if verdict["closed"]:
+            correct = verdict["exact"]           # warianty zamknięte: tylko serwer
+        else:
+            correct = verdict["exact"] or bool(entry.get("correct"))
         merged.append({
-            **verdict,
+            "number": verdict["number"],
+            "correct": correct,
+            "student_option": verdict["student_option"],
+            "correct_option": verdict["correct_option"],
             "comment": str(entry.get("comment") or ""),
-            "option_notes": entry.get("option_notes") if not verdict["correct"] else None,
+            "option_notes": entry.get("option_notes") if not correct else None,
         })
 
+    # Odfiltruj błędy dotyczące pozycji uznanych ostatecznie za poprawne — inaczej
+    # model mógłby zanieczyścić dziennik błędem przy odpowiedzi, którą sami zaliczyliśmy.
+    ok_answers = {_norm_answer(m["student_option"] or "") for m in merged if m["correct"]}
+    errors = [e for e in (data.get("errors") or [])
+              if _norm_answer(str(e.get("student_text", ""))) not in ok_answers]
+
+    correct_count = sum(1 for m in merged if m["correct"])
     return GradingResult.model_validate({
         "correct": correct_count == len(items),
         "score": f"{correct_count}/{len(items)}",
         "items": merged,
         "feedback": str(data.get("feedback") or ""),
-        "errors": data.get("errors") or [],
+        "errors": errors,
     })
 
 

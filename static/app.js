@@ -60,6 +60,7 @@ const I18N = {
     "tips.generate": "Ćwiczenie",
     "tips.more": "Kolejne ćwiczenie",
     "tips.streakDays": "dni w serii",
+    "tips.drillProgress": "Poprawne ćwiczenia do zaliczenia tego błędu:",
     "tips.empty": "Dziennik błędów jest pusty — rozwiąż lub wklej kilka zadań, a tu pojawią się tipy.",
     "stats.learning": "Nauka",
     "stats.usage": "Zużycie Claude",
@@ -149,6 +150,7 @@ const I18N = {
     "tips.generate": "Exercise",
     "tips.more": "Another exercise",
     "tips.streakDays": "day streak",
+    "tips.drillProgress": "Correct exercises needed for this mistake:",
     "tips.empty": "Your mistake log is empty — do or paste a few exercises and tips will appear here.",
     "stats.learning": "Learning",
     "stats.usage": "Claude usage",
@@ -433,19 +435,42 @@ function renderExerciseInto(ui, ex) {
   area.innerHTML = "";
 
   if (ex.items && ex.items.length) {
-    // Zadanie wieloczęściowe: jedna grupa wariantów na każdą lukę.
+    // Zadanie wieloczęściowe. Pozycja ma albo warianty (multiple choice), albo pole
+    // tekstowe; części 2–4 mają dodatkowo własne zdanie, rdzeń lub słowo-klucz.
     const wrap = elem("div", "gap-items");
     ex.items.forEach((item) => {
       const block = elem("div", "gap-item");
       block.appendChild(elem("span", "gap-num", String(item.number)));
-      const opts = elem("div", "options options-inline");
-      item.options.forEach((opt) => {
-        const lbl = elHtml("label", null,
-          `<input type="radio" name="${esc(ui.radio)}-${esc(String(item.number))}" ` +
-          `value="${esc(opt)}"> ${esc(opt)}`);
-        opts.appendChild(lbl);
-      });
-      block.appendChild(opts);
+      const bodyEl = elem("div", "gap-body");
+
+      if (item.question_text) bodyEl.appendChild(elem("div", "gap-text", item.question_text));
+      if (item.stem) bodyEl.appendChild(elem("span", "chip stem", item.stem));
+      if (item.key_word) {
+        bodyEl.appendChild(elem("span", "chip kw", t("kw.label") + item.key_word));
+      }
+
+      if (item.options && item.options.length) {
+        const opts = elem("div", "options options-inline");
+        item.options.forEach((opt) => {
+          const lbl = elHtml("label", null,
+            `<input type="radio" name="${esc(ui.radio)}-${esc(String(item.number))}" ` +
+            `value="${esc(opt)}"> ${esc(opt)}`);
+          opts.appendChild(lbl);
+        });
+        bodyEl.appendChild(opts);
+      } else {
+        const input = elem("input");
+        input.type = "text";
+        input.id = `${ui.inputId}-${item.number}`;
+        input.className = "gap-input";
+        input.placeholder = t("answer.ph");
+        input.setAttribute("aria-label", `${item.number}. ${t("answer.ph")}`);
+        input.addEventListener("keydown", (e) => {
+          if (e.key === "Enter") { e.preventDefault(); $(ui.gradeBtn).click(); }
+        });
+        bodyEl.appendChild(input);
+      }
+      block.appendChild(bodyEl);
       wrap.appendChild(block);
     });
     area.appendChild(wrap);
@@ -486,8 +511,12 @@ function collectGradeBody(ui, ex) {
 
   if (ex.items && ex.items.length) {
     const answers = ex.items.map((item) => {
-      const c = document.querySelector(`input[name="${ui.radio}-${item.number}"]:checked`);
-      return c ? c.value : "";
+      if (item.options && item.options.length) {
+        const c = document.querySelector(`input[name="${ui.radio}-${item.number}"]:checked`);
+        return c ? c.value : "";
+      }
+      const inp = $(`#${ui.inputId}-${item.number}`);
+      return inp ? inp.value.trim() : "";
     });
     if (answers.some((a) => !a)) { fieldError(ui.area, t("alert.answerAll")); return null; }
     body.student_answers = answers;
@@ -743,6 +772,17 @@ function renderGoal(progress) {
   const streakEl = $("#tips-streak");
   streakEl.textContent = "🔥 " + streak + " " + t("tips.streakDays");
   streakEl.classList.toggle("is-zero", streak === 0);
+  renderDrillProgress(progress.drill);
+}
+
+/** Postęp ćwiczeń wymaganych do zaliczenia bieżącego błędu (np. 3/5). */
+function renderDrillProgress(drill) {
+  const box = $("#tips-drill");
+  if (!box) return;
+  if (!drill) { box.textContent = ""; box.classList.add("hidden"); return; }
+  box.classList.remove("hidden");
+  box.textContent = `${t("tips.drillProgress")} ${drill.correct}/${drill.target}`;
+  box.classList.toggle("is-done", drill.correct >= drill.target);
 }
 
 async function refreshProgress() {
@@ -816,16 +856,22 @@ $("#tips-grade").addEventListener("click", async () => {
   }
   if (!result) return;
   $("#tips-generate").textContent = t("tips.more");
-  // Do dziennego celu zaliczamy błąd dopiero po POPRAWNYM rozwiązaniu.
+
+  // Zestaw ćwiczeń dolicza się do progu zaliczenia błędu (narastająco w obrębie dnia).
   // Osobny try — potknięcie księgowe nie może wymazać wyświetlonej oceny.
-  if (result.correct === true) {
-    try {
-      renderGoal(await api("/api/tips/complete", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ error_id: tipsExercise.error_id }),
-      }));
-    } catch (_) { /* ocena jest ważniejsza niż licznik */ }
-  }
+  const total = Array.isArray(result.items) && result.items.length ? result.items.length : 1;
+  const correct = Array.isArray(result.items) && result.items.length
+    ? result.items.filter((i) => i.correct).length
+    : (result.correct === true ? 1 : 0);
+  try {
+    const progress = await api("/api/tips/complete", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        error_id: tipsExercise.error_id, correct_items: correct, total_items: total,
+      }),
+    });
+    renderGoal(progress);
+  } catch (_) { /* ocena jest ważniejsza niż licznik */ }
 });
 
 // --- Statystyki --------------------------------------------------------------

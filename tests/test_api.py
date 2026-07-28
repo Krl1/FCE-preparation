@@ -124,13 +124,23 @@ def test_grade_external_requires_question_text(app_ctx):
 
 # --- /api/exercise: kolejka i generowanie wsadowe ----------------------------
 
-BATCH_REPLY = {
-    "exercises": [
-        {"instructions": "i1", "question_text": "q1 ______", "answer": "a1"},
-        {"instructions": "i2", "question_text": "q2 ______", "answer": "a2"},
-        {"instructions": "i3", "question_text": "q3 ______", "answer": "a3"},
-    ]
-}
+def _batch_reply(exercises: int = 3, items: int = 5) -> dict:
+    """Odpowiedź modelu: `exercises` zadań, każde z `items` pozycjami (jak części 2–4)."""
+    return {
+        "exercises": [
+            {
+                "instructions": f"polecenie {e}",
+                "items": [
+                    {"number": n, "question_text": f"zdanie {e}.{n} ______", "answer": f"odp{n}"}
+                    for n in range(1, items + 1)
+                ],
+            }
+            for e in range(1, exercises + 1)
+        ]
+    }
+
+
+BATCH_REPLY = _batch_reply()
 
 
 def test_exercise_batches_once_then_serves_from_queue(app_ctx, monkeypatch):
@@ -138,26 +148,62 @@ def test_exercise_batches_once_then_serves_from_queue(app_ctx, monkeypatch):
     calls = []
     _stub_llm(main_mod, monkeypatch, BATCH_REPLY, counter=calls)
     body = {"type": "uoe_part2_open_cloze", "topic": "tenses", "lang": "pl"}
+    batch = main_mod.llm_client.batch_size("uoe_part2_open_cloze")
+    assert batch >= 2, "test ma sens tylko przy generowaniu wsadowym"
 
-    first = client.post("/api/exercise", json=body)
-    assert first.status_code == 200
-    assert len(calls) == 1, "pierwsze żądanie generuje wsad"
+    served = [client.post("/api/exercise", json=body) for _ in range(batch)]
+    assert all(r.status_code == 200 for r in served)
+    assert len(calls) == 1, "cały wsad pochodzi z JEDNEGO wywołania modelu"
+    assert len({r.json()["id"] for r in served}) == batch, "każde żądanie wydaje inne zadanie"
 
-    second = client.post("/api/exercise", json=body)
-    third = client.post("/api/exercise", json=body)
-    assert second.status_code == third.status_code == 200
-    assert len(calls) == 1, "kolejne żądania mają iść z kolejki, bez wywołania modelu"
-
-    ids = {first.json()["id"], second.json()["id"], third.json()["id"]}
-    assert len(ids) == 3, "każde żądanie wydaje inne zadanie"
-
-    # Czwarte żądanie wyczerpuje kolejkę → nowy wsad.
+    # Kolejne żądanie wyczerpuje kolejkę → nowy wsad.
     client.post("/api/exercise", json=body)
     assert len(calls) == 2
 
     stats = client.get("/api/stats/learning").json()
-    assert stats["exercises_generated"] == 4  # wydane
-    assert stats["exercises_queued"] == 2     # reszta z drugiego wsadu
+    assert stats["exercises_generated"] == batch + 1        # wydane
+    assert stats["exercises_queued"] == batch - 1           # reszta z drugiego wsadu
+
+
+def test_exercise_has_five_items_for_every_use_of_english_part(app_ctx, monkeypatch):
+    """Każda część Use of English wydaje zadanie z pięcioma pozycjami."""
+    client, main_mod = app_ctx
+    expected = main_mod.llm_client.ITEMS_PER_EXERCISE
+    for typ in ("uoe_part1_mcq_cloze", "uoe_part2_open_cloze",
+                "uoe_part3_word_formation", "uoe_part4_key_word_transformation"):
+        _stub_llm(main_mod, monkeypatch, _batch_reply(items=expected))
+        body = client.post("/api/exercise", json={"type": typ, "topic": None}).json()
+        assert len(body["items"]) == expected, f"{typ} ma {len(body['items'])} pozycji"
+
+
+def test_short_item_list_triggers_one_retry(app_ctx, monkeypatch):
+    """Gdy model zignoruje wymaganą liczbę pozycji, jest jedna ponowna próba
+    z dosłownym przypomnieniem — bez niej użytkownik dostałby 1 zadanie zamiast 5."""
+    client, main_mod = app_ctx
+    prompts = []
+
+    def fake_invoke(prompt, kind="other"):
+        prompts.append(prompt)
+        # Pierwsza odpowiedź skrócona (1 pozycja), druga poprawna (5 pozycji).
+        return json.dumps(_batch_reply(items=1 if len(prompts) == 1 else 5))
+
+    monkeypatch.setattr(main_mod.llm_client, "_invoke", fake_invoke)
+    body = client.post("/api/exercise", json={"type": "uoe_part2_open_cloze", "topic": "tenses"}).json()
+    assert len(prompts) == 2, "powinna nastąpić dokładnie jedna ponowna próba"
+    assert "ZA MAŁO" in prompts[1], "ponowny prompt musi zawierać przypomnienie o liczbie pozycji"
+    assert len(body["items"]) == 5
+
+
+def test_writing_exercise_has_no_items(app_ctx, monkeypatch):
+    """Writing to zadanie jednoczęściowe — kontrola liczby pozycji go nie dotyczy."""
+    client, main_mod = app_ctx
+    _stub_llm(main_mod, monkeypatch, {"exercises": [
+        {"instructions": "Napisz", "question_text": "Temat rozprawki…"},
+        {"instructions": "Napisz", "question_text": "Inny temat…"},
+    ]})
+    body = client.post("/api/exercise", json={"type": "writing_essay", "topic": "content"}).json()
+    assert body["items"] is None
+    assert body["question_text"].startswith("Temat")
 
 
 def test_exercise_never_leaks_model_answer(app_ctx, monkeypatch):
@@ -206,16 +252,65 @@ def test_tips_progress_and_goal_roundtrip(app_ctx):
     # Poza zakresem → przycięcie do dozwolonego przedziału.
     assert client.post("/api/tips/goal", json={"goal": 999}).json()["goal"] == 50
 
+    assert client.post("/api/tips/complete", json={"error_id": 9999}).status_code == 404
+
+
+def test_drill_counts_toward_goal_only_after_five_correct(app_ctx):
+    """Błąd zalicza się do dziennego celu dopiero po 5 poprawnych ćwiczeniach,
+    liczonych NARASTAJĄCO w obrębie dnia (nie trzeba trafić wszystkich od razu)."""
+    client, main_mod = app_ctx
+    target = main_mod.DRILL_CORRECT_TARGET
+    client.post("/api/tips/goal", json={"goal": 1})
     eid = main_mod.db.insert_error(
         main_mod.conn, source="s", exercise_type="t", topic="tenses",
         student_text="a", correct_text="b", explanation="c",
     )
-    client.post("/api/tips/goal", json={"goal": 1})
-    prog = client.post("/api/tips/complete", json={"error_id": eid}).json()
-    assert prog["done"] == 1 and prog["streak"] == 1
-    # Powtórne zaliczenie tego samego błędu nie zawyża licznika.
-    assert client.post("/api/tips/complete", json={"error_id": eid}).json()["done"] == 1
-    assert client.post("/api/tips/complete", json={"error_id": 9999}).status_code == 404
+
+    # Pierwsze podejście: 3 z 5 poprawnych → jeszcze nie zaliczone.
+    prog = client.post("/api/tips/complete", json={
+        "error_id": eid, "correct_items": 3, "total_items": target,
+    }).json()
+    assert prog["done"] == 0
+    assert prog["drill"] == {"correct": 3, "target": target}
+
+    # Drugie podejście dopełnia do progu → błąd zaliczony, seria ruszona.
+    prog = client.post("/api/tips/complete", json={
+        "error_id": eid, "correct_items": 2, "total_items": target,
+    }).json()
+    assert prog["done"] == 1
+    assert prog["streak"] == 1
+    assert prog["drill"]["correct"] == target
+
+    # Dalsze ćwiczenia tego samego błędu nie zawyżają dziennego licznika.
+    prog = client.post("/api/tips/complete", json={
+        "error_id": eid, "correct_items": target, "total_items": target,
+    }).json()
+    assert prog["done"] == 1
+
+
+def test_drill_score_is_clamped_to_total(app_ctx):
+    """Zgłoszona liczba poprawnych nie może przekroczyć liczby ćwiczeń w zestawie."""
+    client, main_mod = app_ctx
+    eid = main_mod.db.insert_error(
+        main_mod.conn, source="s", exercise_type="t", topic="tenses",
+        student_text="a", correct_text="b", explanation="c",
+    )
+    prog = client.post("/api/tips/complete", json={
+        "error_id": eid, "correct_items": 999, "total_items": 2,
+    }).json()
+    assert prog["drill"]["correct"] == 2
+
+
+def test_tips_focus_includes_drill_progress(app_ctx):
+    client, main_mod = app_ctx
+    eid = main_mod.db.insert_error(
+        main_mod.conn, source="s", exercise_type="t", topic="tenses",
+        student_text="a", correct_text="b", explanation="c",
+    )
+    client.post("/api/tips/complete", json={"error_id": eid, "correct_items": 1, "total_items": 5})
+    body = client.get("/api/tips/focus").json()
+    assert body["error"]["id"] == eid
+    assert body["progress"]["drill"]["correct"] == 1
 
 
 def test_tips_focus_empty_when_no_errors(app_ctx):

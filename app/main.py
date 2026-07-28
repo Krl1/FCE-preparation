@@ -28,6 +28,8 @@ from .models import (
 )
 
 DEFAULT_DAILY_GOAL = 5
+# Ile ćwiczeń do danego błędu trzeba rozwiązać POPRAWNIE, by zaliczyć go do dziennego celu.
+DRILL_CORRECT_TARGET = llm_client.ITEMS_PER_EXERCISE
 
 app = FastAPI(title="FCE Preparation")
 conn = db.get_connection()
@@ -60,7 +62,13 @@ def _public_exercise(exercise_id: int, ex_type: str, topic: str, prompt: dict) -
     JEDYNE miejsce budujące `ExercisePublic` — dzięki temu reguła „`answer`/`answer_notes`
     nigdy nie wychodzą do klienta" jest pilnowana w jednym punkcie."""
     items = [
-        {"number": it.get("number", i + 1), "options": it.get("options", [])}
+        {
+            "number": it.get("number", i + 1),
+            "question_text": it.get("question_text"),
+            "options": it.get("options"),
+            "key_word": it.get("key_word"),
+            "stem": it.get("stem"),
+        }
         for i, it in enumerate(prompt.get("items") or [])
     ]
     return ExercisePublic(
@@ -233,8 +241,9 @@ def grade(req: GradeRequest) -> dict:
 @app.get("/api/errors")
 def get_errors(topic: str | None = Query(default=None),
                exercise_type: str | None = Query(default=None, alias="type"),
+               limit: int = Query(default=2000, ge=1, le=100_000),
                lang: str = Query(default="pl")) -> list[dict]:
-    rows = db.list_errors(conn, topic=topic, exercise_type=exercise_type)
+    rows = db.list_errors(conn, topic=topic, exercise_type=exercise_type, limit=limit)
     for row in rows:
         row["topic_label"] = tax.topic_label(row["topic"], lang)
     return rows
@@ -251,9 +260,16 @@ def get_topic_stats(lang: str = Query(default="pl")) -> list[dict]:
 
 # --- Zakładka Tipy (tryb skupienia na pojedynczym błędzie) -------------------
 
-def _progress() -> dict:
+def _progress(error_id: int | None = None) -> dict:
+    """Postęp dziennego celu. Z `error_id` dołącza też postęp ćwiczeń do tego błędu."""
     goal = db.get_int_setting(conn, "daily_goal", DEFAULT_DAILY_GOAL)
-    return {"done": db.reviews_done_today(conn), "goal": goal, "streak": db.streak(conn, goal)}
+    out = {"done": db.reviews_done_today(conn), "goal": goal, "streak": db.streak(conn, goal)}
+    if error_id is not None:
+        out["drill"] = {
+            "correct": db.drill_correct_today(conn, error_id),
+            "target": DRILL_CORRECT_TARGET,
+        }
+    return out
 
 
 def _choose_focus_error(exclude_id: int | None = None) -> dict | None:
@@ -282,7 +298,7 @@ def tips_focus(lang: str = Query(default="pl"),
     if err is None:
         return {"error": None, "progress": _progress()}
     err["topic_label"] = tax.topic_label(err["topic"], lang)
-    return {"error": err, "progress": _progress()}
+    return {"error": err, "progress": _progress(err["id"])}
 
 
 @app.post("/api/tips/exercise", response_model=ExercisePublic)
@@ -301,10 +317,21 @@ def tips_exercise(req: TipExerciseRequest) -> ExercisePublic:
 
 @app.post("/api/tips/complete")
 def tips_complete(req: CompleteRequest) -> dict:
+    """Zapisuje wynik zestawu ćwiczeń do błędu. Błąd liczy się do dziennego celu
+    dopiero po uzbieraniu `DRILL_CORRECT_TARGET` poprawnych ćwiczeń w danym dniu
+    (narastająco — nie trzeba trafić wszystkich w jednym podejściu)."""
     if db.get_error(conn, req.error_id) is None:
         raise HTTPException(status_code=404, detail="Nie znaleziono błędu o tym id.")
-    db.insert_review(conn, req.error_id)
-    return _progress()
+
+    total = max(0, req.total_items)
+    correct = max(0, min(req.correct_items, total))
+    if total:
+        db.insert_drill_score(conn, error_id=req.error_id,
+                              correct_items=correct, total_items=total)
+
+    if db.drill_correct_today(conn, req.error_id) >= DRILL_CORRECT_TARGET:
+        db.insert_review(conn, req.error_id)  # idempotentne w obrębie dnia
+    return _progress(req.error_id)
 
 
 @app.get("/api/tips/progress")

@@ -44,21 +44,34 @@ Następnie otwórz **http://localhost:8000**.
 
 - **Ćwicz** — wybierz typ zadania (np. *open cloze*, *key word transformation*, *essay*), opcjonalnie
   temat (albo zostaw dobór automatyczny wg Twoich błędów), wygeneruj i rozwiąż. Aplikacja oceni i zapisze błędy.
-  *Multiple-choice cloze* działa jak na egzaminie: jedno kliknięcie tworzy **spójny tekst z 5 lukami**
-  (każda z 4 wariantami), sprawdzany jednym przyciskiem — dostajesz wynik punktowy (np. 3/5), a przy
-  błędnych lukach omówienie wszystkich wariantów. Liczbę luk zmienia stała `MCQ_ITEM_COUNT`
-  w `app/llm_client.py`.
+  **Każda część Use of English daje 5 zadań na jedno kliknięcie**, sprawdzanych jednym przyciskiem —
+  dostajesz wynik punktowy (np. 3/5) i omówienie każdej pozycji:
+  - *Part 1 (multiple-choice cloze)* — jeden spójny tekst z 5 lukami, każda z 4 wariantami;
+    przy błędnych lukach omówienie wszystkich wariantów,
+  - *Part 2 (open cloze)* — 5 zdań, w każdym jedna luka na jedno słowo,
+  - *Part 3 (word formation)* — 5 zdań z wyrazem podstawowym do przekształcenia,
+  - *Part 4 (key word transformation)* — 5 przekształceń ze słowem-kluczem.
+
+  Liczbę pozycji zmienia stała `ITEMS_PER_EXERCISE` w `app/llm_client.py`. Odpowiedzi zamknięte
+  (warianty) są oceniane **deterministycznie** przez serwer; przy odpowiedziach otwartych ocenia
+  model, ale dokładne trafienie we wzorzec zawsze liczy się jako poprawne — dobra odpowiedź nie
+  trafi do dziennika jako błąd.
   Zadania powstają **wsadowo**: jedno wywołanie modelu tworzy kilka zadań, pierwsze dostajesz od razu,
   a pozostałe czekają w kolejce w bazie i pojawiają się **natychmiast** przy kolejnych kliknięciach.
   Ponieważ koszt wywołania jest zdominowany przez stały narzut trybu headless (~23 tys. tokenów
-  niezależnie od treści), to kilkukrotnie tańsze i szybsze. Wielkość wsadu: `_BATCH_SIZES`
-  / `_DEFAULT_BATCH` w `app/llm_client.py`.
+  niezależnie od treści), to kilkukrotnie tańsze i szybsze. Wielkość wsadu: `_UOE_BATCH`
+  / `_WRITING_BATCH` w `app/llm_client.py`.
 - **Tipy** — tryb skupienia: aplikacja pokazuje jeden Twój błąd (dobierany losowo, ważony częstością
-  Twoich słabych tematów) wraz z wyjaśnieniem i generuje do niego ćwiczenia. Przyciski: *Ćwiczenie*
-  (kolejne ćwiczenie do tego samego błędu), *Inny błąd* (zmiana na nowy). U góry **dzienny cel** —
-  ustalasz, ile błędów chcesz dziennie przerobić; błąd liczy się (+1) dopiero po **poprawnym**
-  rozwiązaniu przynajmniej jednego ćwiczenia do niego (maks. +1 na błąd dziennie, niezależnie od
-  liczby prób). Obok celu widać **serię** (🔥) — liczbę kolejnych dni z osiągniętym celem.
+  Twoich słabych tematów) wraz z wyjaśnieniem i generuje do niego **zestaw 5 ćwiczeń**. Przyciski:
+  *Ćwiczenie* (kolejny zestaw do tego samego błędu), *Inny błąd* (zmiana na nowy).
+  U góry **dzienny cel** — ustalasz, ile błędów chcesz dziennie przerobić. Błąd zalicza się (+1)
+  dopiero po **5 poprawnie rozwiązanych ćwiczeniach** do niego, liczonych **narastająco w obrębie
+  dnia** — 3/5 w jednym podejściu i 2/5 w kolejnym też wystarczy. Postęp widać pod celem
+  („Poprawne ćwiczenia do zaliczenia tego błędu: 3/5"). Próg zmienia `DRILL_CORRECT_TARGET`
+  w `app/main.py`. Obok celu widać **serię** (🔥) — liczbę kolejnych dni z osiągniętym celem.
+
+  Uwaga na skalę: przy celu 5 błędów dziennie oznacza to 25 poprawnych ćwiczeń — jeśli to za dużo,
+  obniż cel w polu *Dzienny cel*.
 - **Sprawdź z zewnątrz** — wklej zadanie z książki i swoją odpowiedź; aplikacja sprawdzi je i zaloguje błędy.
 - **Moje błędy** — przegląd słabych punktów i pełny dziennik błędów. Przy każdym błędzie przycisk
   **Ćwicz ten błąd** przenosi do zakładki *Tipy* z tym błędem i od razu generuje do niego ćwiczenie.

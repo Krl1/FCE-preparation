@@ -69,6 +69,18 @@ CREATE TABLE IF NOT EXISTS reviews (
 
 CREATE INDEX IF NOT EXISTS idx_reviews_created ON reviews(created_at);
 
+-- Wyniki ćwiczeń do konkretnego błędu (zakładka Tipy). Dzienny cel zalicza błąd
+-- dopiero po uzbieraniu wymaganej liczby POPRAWNYCH ćwiczeń w danym dniu.
+CREATE TABLE IF NOT EXISTS drill_scores (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    error_id      INTEGER NOT NULL,
+    created_at    TEXT NOT NULL,
+    correct_items INTEGER NOT NULL,
+    total_items   INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_drill_error ON drill_scores(error_id, created_at);
+
 CREATE TABLE IF NOT EXISTS usage_events (
     id                          INTEGER PRIMARY KEY AUTOINCREMENT,
     created_at                  TEXT NOT NULL,
@@ -253,7 +265,7 @@ def delete_errors_by_source(conn: sqlite3.Connection, source: str) -> int:
 
 @_synchronized
 def list_errors(conn: sqlite3.Connection, *, topic: Optional[str] = None,
-                exercise_type: Optional[str] = None, limit: int = 200) -> list[dict]:
+                exercise_type: Optional[str] = None, limit: int = 2000) -> list[dict]:
     query = "SELECT * FROM errors"
     clauses, params = [], []
     if topic:
@@ -321,6 +333,29 @@ def insert_review(conn: sqlite3.Connection, error_id: int) -> None:
         return
     conn.execute("INSERT INTO reviews (error_id, created_at) VALUES (?, ?)", (error_id, _now()))
     conn.commit()
+
+
+@_synchronized
+def insert_drill_score(conn: sqlite3.Connection, *, error_id: int,
+                       correct_items: int, total_items: int) -> None:
+    """Zapisuje wynik jednego zestawu ćwiczeń do danego błędu (zakładka Tipy)."""
+    conn.execute(
+        "INSERT INTO drill_scores (error_id, created_at, correct_items, total_items) "
+        "VALUES (?, ?, ?, ?)",
+        (error_id, _now(), max(0, int(correct_items)), max(0, int(total_items))),
+    )
+    conn.commit()
+
+
+@_synchronized
+def drill_correct_today(conn: sqlite3.Connection, error_id: int) -> int:
+    """Liczba poprawnych ćwiczeń do danego błędu uzbierana DZISIAJ (narastająco)."""
+    row = conn.execute(
+        "SELECT COALESCE(SUM(correct_items), 0) AS n FROM drill_scores "
+        "WHERE error_id = ? AND substr(created_at, 1, 10) = ?",
+        (error_id, _today()),
+    ).fetchone()
+    return int(row["n"])
 
 
 @_synchronized

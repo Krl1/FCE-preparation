@@ -219,3 +219,16 @@ h2 { font-size: 1.05rem; }
   float: right; font-weight: 400; text-transform: none; letter-spacing: 0;
   color: var(--muted); font-size: .8rem;
 }
+
+/* Pozycje zadania wieloczęściowego z własnym zdaniem / rdzeniem */
+.gap-item { align-items: flex-start; }
+.gap-body { flex: 1; display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; }
+.gap-text { flex: 1 1 100%; font-size: 1rem; white-space: pre-wrap; }
+.chip { display: inline-block; background: var(--bg); border: 1px solid var(--line);
+        border-radius: 6px; padding: .05rem .5rem; font-size: .82rem; font-weight: 700; }
+.chip.stem { letter-spacing: .5px; color: var(--accent); }
+.gap-input { flex: 1 1 12rem; margin-top: 0 !important; }
+
+/* Postęp ćwiczeń do zaliczenia błędu */
+.drill-progress { margin-top: .35rem; font-size: .9rem; color: var(--muted); }
+.drill-progress.is-done { color: var(--good); font-weight: 700; }
