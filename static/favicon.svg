@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="FCE Trener">
+  <!-- Kolory z palety aplikacji (style.css): akcent #2f6d5b, tło #f5f3ee.
+       Wypełnione tło sprawia, że ikona jest czytelna zarówno na jasnym, jak i ciemnym
+       pasku kart. Litera jest ŚCIEŻKĄ, nie elementem <text> — favicon nie może zależeć
+       od czcionki dostępnej w przeglądarce. -->
+  <rect width="32" height="32" rx="7" fill="#2f6d5b"/>
+  <path d="M9 5.5 H23.5 V11 H14.5 V14 H22 V19.5 H14.5 V26.5 H9 Z" fill="#f5f3ee"/>
+</svg>
