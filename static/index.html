@@ -9,16 +9,16 @@
 <body>
   <header class="topbar">
     <h1 data-i18n="app.title">FCE&nbsp;Trener</h1>
-    <nav class="tabs">
-      <button class="tab is-active" data-view="practice" data-i18n="tab.practice">Ćwicz</button>
-      <button class="tab" data-view="tips" data-i18n="tab.tips">Tipy</button>
-      <button class="tab" data-view="external" data-i18n="tab.external">Sprawdź z zewnątrz</button>
-      <button class="tab" data-view="errors" data-i18n="tab.errors">Moje błędy</button>
-      <button class="tab" data-view="stats" data-i18n="tab.stats">Statystyki</button>
+    <nav class="tabs" role="tablist">
+      <button class="tab is-active" role="tab" aria-selected="true" aria-controls="view-practice" data-view="practice" data-i18n="tab.practice">Ćwicz</button>
+      <button class="tab" role="tab" aria-selected="false" aria-controls="view-tips" data-view="tips" data-i18n="tab.tips">Tipy</button>
+      <button class="tab" role="tab" aria-selected="false" aria-controls="view-external" data-view="external" data-i18n="tab.external">Sprawdź z zewnątrz</button>
+      <button class="tab" role="tab" aria-selected="false" aria-controls="view-errors" data-view="errors" data-i18n="tab.errors">Moje błędy</button>
+      <button class="tab" role="tab" aria-selected="false" aria-controls="view-stats" data-view="stats" data-i18n="tab.stats">Statystyki</button>
     </nav>
     <div class="lang-switch" role="group" aria-label="Language">
-      <button class="lang is-active" data-lang="pl">PL</button>
-      <button class="lang" data-lang="en">EN</button>
+      <button class="lang is-active" data-lang="pl" aria-pressed="true">PL</button>
+      <button class="lang" data-lang="en" aria-pressed="false">EN</button>
     </div>
   </header>
 
@@ -135,7 +135,7 @@
     </section>
   </main>
 
-  <div id="loader" class="loader hidden"><div class="spinner"></div><span id="loader-text">Pracuję…</span></div>
+  <div id="loader" class="loader hidden" role="status" aria-live="polite"><div class="spinner"></div><span id="loader-text">Pracuję…</span></div>
 
   <script src="/app.js"></script>
 </body>

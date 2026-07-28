@@ -2,3 +2,5 @@ fastapi>=0.110
 uvicorn[standard]>=0.29
 pydantic>=2.6
 pytest>=8.0
+# wymagane przez fastapi.testclient (testy endpointów)
+httpx2>=0.1

@@ -9,6 +9,50 @@ const I18N = {
     "tab.tips": "Tipy",
     "tab.external": "Sprawdź z zewnątrz",
     "tab.errors": "Moje błędy",
+    "tab.stats": "Statystyki",
+    "practice.type": "Typ ćwiczenia",
+    "practice.topic": "Temat (opcjonalnie)",
+    "practice.topic.auto": "— dobierz automatycznie (wg moich błędów) —",
+    "btn.generate": "Generuj zadanie",
+    "btn.grade": "Sprawdź odpowiedź",
+    "external.intro": "Wklej zadanie z książki lub od korepetytora oraz swoją odpowiedź — sprawdzę je i zapiszę błędy.",
+    "external.type": "Typ ćwiczenia",
+    "external.keyword": "Słowo-klucz (key word)",
+    "external.question": "Treść zadania",
+    "external.question.ph": "Wklej treść / polecenie zadania…",
+    "external.answer": "Twoja odpowiedź",
+    "external.answer.ph": "Wpisz swoją odpowiedź…",
+    "btn.gradeExternal": "Sprawdź",
+    "errors.weak": "Słabe punkty",
+    "errors.journal": "Dziennik błędów",
+    "errors.practiceThis": "Ćwicz ten błąd",
+    "btn.refresh": "Odśwież",
+    "loader.default": "Pracuję…",
+    "loader.generating": "Generuję zadanie…",
+    "loader.grading": "Sprawdzam odpowiedź…",
+    "loader.gradingExt": "Sprawdzam zadanie…",
+    "loader.loading": "Wczytuję…",
+    "topic.prefix": "Temat: ",
+    "kw.label": "Słowo-klucz: ",
+    "answer.ph": "Twoja odpowiedź…",
+    "writing.ph": "Napisz swój tekst po angielsku…",
+    "alert.answer": "Wpisz lub wybierz odpowiedź.",
+    "alert.answerAll": "Odpowiedz na wszystkie luki.",
+    "alert.fillExternal": "Uzupełnij treść zadania i odpowiedź.",
+    "verdict.score": "Wynik:",
+    "verdict.correct": "✓ Poprawnie",
+    "verdict.incorrect": "✗ Do poprawy",
+    "band.prefix": "Orientacyjna ocena: ",
+    "corrected.label": "Poprawna wersja:",
+    "result.optionNotes": "Dlaczego pozostałe warianty",
+    "errors.detected": "Wykryte błędy",
+    "noErrors": "Brak błędów. Świetna robota!",
+    "error.prefix": "Błąd: ",
+    "severity.minor": "drobny",
+    "severity.major": "poważny",
+    "stats.emptyErrors": "Brak błędów w dzienniku — rozwiąż kilka zadań.",
+    "journal.empty": "Dziennik jest pusty.",
+    "taxonomy.fail": "Nie udało się wczytać taksonomii: ",
     "tips.today": "dzisiaj",
     "tips.goalLabel": "Dzienny cel",
     "tips.goalSave": "Zapisz cel",
@@ -17,13 +61,12 @@ const I18N = {
     "tips.more": "Kolejne ćwiczenie",
     "tips.streakDays": "dni w serii",
     "tips.empty": "Dziennik błędów jest pusty — rozwiąż lub wklej kilka zadań, a tu pojawią się tipy.",
-    "errors.practiceThis": "Ćwicz ten błąd",
-    "tab.stats": "Statystyki",
     "stats.learning": "Nauka",
     "stats.usage": "Zużycie Claude",
     "stats.usageNote": "Koszt liczony wg stawek API. Tryb headless niesie narzut systemowego promptu Claude Code, więc to górna granica — aplikacja na API zużyłaby mniej.",
-    "stats.empty": "Brak danych — zacznij korzystać z aplikacji.",
+    "stats.emptyUsage": "Brak danych — zacznij korzystać z aplikacji.",
     "stats.exercisesGenerated": "Wygenerowane ćwiczenia",
+    "stats.queued": "Gotowe w kolejce",
     "stats.attempts": "Sprawdzone odpowiedzi",
     "stats.accuracy": "Skuteczność",
     "stats.reviews": "Przerobione powtórki",
@@ -40,6 +83,7 @@ const I18N = {
     "stats.leanUsed": "Przy tym samym modelu",
     "stats.leanSonnet": "Na tańszym modelu (Sonnet 5)",
     "stats.leanNote": "Liczone tylko z realnego promptu i odpowiedzi (bez narzutu Claude Code, ~4 znaki/token). Z cache'owaniem promptu na API będzie jeszcze taniej.",
+    "stats.assumedNote": "Uwaga: brak potwierdzonej stawki dla modelu ",
     "stats.byKind": "Wg rodzaju wywołania",
     "kind.generate": "Generowanie zadań",
     "kind.grade": "Sprawdzanie",
@@ -47,46 +91,6 @@ const I18N = {
     "kind.explain": "Wyjaśnienia",
     "kind.extract": "Import (ekstrakcja)",
     "kind.other": "Inne",
-    "practice.type": "Typ ćwiczenia",
-    "practice.topic": "Temat (opcjonalnie)",
-    "practice.topic.auto": "— dobierz automatycznie (wg moich błędów) —",
-    "btn.generate": "Generuj zadanie",
-    "btn.grade": "Sprawdź odpowiedź",
-    "external.intro": "Wklej zadanie z książki lub od korepetytora oraz swoją odpowiedź — sprawdzę je i zapiszę błędy.",
-    "external.type": "Typ ćwiczenia",
-    "external.keyword": "Słowo-klucz (key word)",
-    "external.question": "Treść zadania",
-    "external.question.ph": "Wklej treść / polecenie zadania…",
-    "external.answer": "Twoja odpowiedź",
-    "external.answer.ph": "Wpisz swoją odpowiedź…",
-    "btn.gradeExternal": "Sprawdź",
-    "errors.weak": "Słabe punkty",
-    "errors.journal": "Dziennik błędów",
-    "btn.refresh": "Odśwież",
-    "loader.default": "Pracuję…",
-    "loader.generating": "Generuję zadanie…",
-    "loader.grading": "Sprawdzam odpowiedź…",
-    "loader.gradingExt": "Sprawdzam zadanie…",
-    "loader.loading": "Wczytuję…",
-    "topic.prefix": "Temat: ",
-    "kw.label": "Słowo-klucz: ",
-    "answer.ph": "Twoja odpowiedź…",
-    "writing.ph": "Napisz swój tekst po angielsku…",
-    "alert.answer": "Wpisz lub wybierz odpowiedź.",
-    "alert.answerAll": "Odpowiedz na wszystkie luki.",
-    "verdict.score": "Wynik:",
-    "alert.fillExternal": "Uzupełnij treść zadania i odpowiedź.",
-    "verdict.correct": "✓ Poprawnie",
-    "verdict.incorrect": "✗ Do poprawy",
-    "band.prefix": "Orientacyjna ocena: ",
-    "corrected.label": "Poprawna wersja:",
-    "result.optionNotes": "Dlaczego pozostałe warianty",
-    "errors.detected": "Wykryte błędy",
-    "noErrors": "Brak błędów. Świetna robota!",
-    "error.prefix": "Błąd: ",
-    "stats.empty": "Brak błędów w dzienniku — rozwiąż kilka zadań.",
-    "journal.empty": "Dziennik jest pusty.",
-    "taxonomy.fail": "Nie udało się wczytać taksonomii: ",
   },
   en: {
     "app.title": "FCE Trainer",
@@ -94,6 +98,50 @@ const I18N = {
     "tab.tips": "Tips",
     "tab.external": "Check external",
     "tab.errors": "My mistakes",
+    "tab.stats": "Statistics",
+    "practice.type": "Exercise type",
+    "practice.topic": "Topic (optional)",
+    "practice.topic.auto": "— auto-select (by my mistakes) —",
+    "btn.generate": "Generate exercise",
+    "btn.grade": "Check answer",
+    "external.intro": "Paste an exercise from a book or your tutor together with your answer — I'll check it and log the mistakes.",
+    "external.type": "Exercise type",
+    "external.keyword": "Key word",
+    "external.question": "Exercise text",
+    "external.question.ph": "Paste the exercise / prompt…",
+    "external.answer": "Your answer",
+    "external.answer.ph": "Type your answer…",
+    "btn.gradeExternal": "Check",
+    "errors.weak": "Weak points",
+    "errors.journal": "Mistake log",
+    "errors.practiceThis": "Practice this mistake",
+    "btn.refresh": "Refresh",
+    "loader.default": "Working…",
+    "loader.generating": "Generating exercise…",
+    "loader.grading": "Checking answer…",
+    "loader.gradingExt": "Checking…",
+    "loader.loading": "Loading…",
+    "topic.prefix": "Topic: ",
+    "kw.label": "Key word: ",
+    "answer.ph": "Your answer…",
+    "writing.ph": "Write your text in English…",
+    "alert.answer": "Enter or select an answer.",
+    "alert.answerAll": "Answer every gap.",
+    "alert.fillExternal": "Fill in the exercise text and your answer.",
+    "verdict.score": "Score:",
+    "verdict.correct": "✓ Correct",
+    "verdict.incorrect": "✗ Needs work",
+    "band.prefix": "Estimated band: ",
+    "corrected.label": "Correct version:",
+    "result.optionNotes": "Why the other options",
+    "errors.detected": "Detected mistakes",
+    "noErrors": "No mistakes. Great job!",
+    "error.prefix": "Error: ",
+    "severity.minor": "minor",
+    "severity.major": "major",
+    "stats.emptyErrors": "No mistakes logged yet — do a few exercises.",
+    "journal.empty": "The log is empty.",
+    "taxonomy.fail": "Failed to load taxonomy: ",
     "tips.today": "today",
     "tips.goalLabel": "Daily goal",
     "tips.goalSave": "Save goal",
@@ -102,13 +150,12 @@ const I18N = {
     "tips.more": "Another exercise",
     "tips.streakDays": "day streak",
     "tips.empty": "Your mistake log is empty — do or paste a few exercises and tips will appear here.",
-    "errors.practiceThis": "Practice this mistake",
-    "tab.stats": "Statistics",
     "stats.learning": "Learning",
     "stats.usage": "Claude usage",
     "stats.usageNote": "Cost is at API rates. Headless mode carries Claude Code's system-prompt overhead, so this is an upper bound — an API app would use less.",
-    "stats.empty": "No data yet — start using the app.",
+    "stats.emptyUsage": "No data yet — start using the app.",
     "stats.exercisesGenerated": "Exercises generated",
+    "stats.queued": "Ready in queue",
     "stats.attempts": "Answers checked",
     "stats.accuracy": "Accuracy",
     "stats.reviews": "Reviews completed",
@@ -125,6 +172,7 @@ const I18N = {
     "stats.leanUsed": "Same model as used",
     "stats.leanSonnet": "On a cheaper model (Sonnet 5)",
     "stats.leanNote": "Counted from the real prompt and response only (no Claude Code overhead, ~4 chars/token). With API prompt caching it would be even lower.",
+    "stats.assumedNote": "Note: no confirmed rate for model ",
     "stats.byKind": "By call type",
     "kind.generate": "Exercise generation",
     "kind.grade": "Grading",
@@ -132,46 +180,6 @@ const I18N = {
     "kind.explain": "Explanations",
     "kind.extract": "Import (extraction)",
     "kind.other": "Other",
-    "practice.type": "Exercise type",
-    "practice.topic": "Topic (optional)",
-    "practice.topic.auto": "— auto-select (by my mistakes) —",
-    "btn.generate": "Generate exercise",
-    "btn.grade": "Check answer",
-    "external.intro": "Paste an exercise from a book or your tutor together with your answer — I'll check it and log the mistakes.",
-    "external.type": "Exercise type",
-    "external.keyword": "Key word",
-    "external.question": "Exercise text",
-    "external.question.ph": "Paste the exercise / prompt…",
-    "external.answer": "Your answer",
-    "external.answer.ph": "Type your answer…",
-    "btn.gradeExternal": "Check",
-    "errors.weak": "Weak points",
-    "errors.journal": "Mistake log",
-    "btn.refresh": "Refresh",
-    "loader.default": "Working…",
-    "loader.generating": "Generating exercise…",
-    "loader.grading": "Checking answer…",
-    "loader.gradingExt": "Checking…",
-    "loader.loading": "Loading…",
-    "topic.prefix": "Topic: ",
-    "kw.label": "Key word: ",
-    "answer.ph": "Your answer…",
-    "writing.ph": "Write your text in English…",
-    "alert.answer": "Enter or select an answer.",
-    "alert.answerAll": "Answer every gap.",
-    "verdict.score": "Score:",
-    "alert.fillExternal": "Fill in the exercise text and your answer.",
-    "verdict.correct": "✓ Correct",
-    "verdict.incorrect": "✗ Needs work",
-    "band.prefix": "Estimated band: ",
-    "corrected.label": "Correct version:",
-    "result.optionNotes": "Why the other options",
-    "errors.detected": "Detected mistakes",
-    "noErrors": "No mistakes. Great job!",
-    "error.prefix": "Error: ",
-    "stats.empty": "No mistakes logged yet — do a few exercises.",
-    "journal.empty": "The log is empty.",
-    "taxonomy.fail": "Failed to load taxonomy: ",
   },
 };
 
@@ -183,22 +191,57 @@ const t = (key) => (I18N[LANG] && I18N[LANG][key]) || I18N.pl[key] || key;
 let TAXONOMY = { exercise_types: [], topics: [] };
 let TOPIC_LABELS = {}; // id -> {pl, en}
 let currentExercise = null;
+let tipsError = null;
+let tipsExercise = null;
 
 const $ = (sel) => document.querySelector(sel);
-const el = (tag, cls, html) => {
+
+/** Element z treścią TEKSTOWĄ (bezpieczny domyślny wybór). */
+const elem = (tag, cls, text) => {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (text !== undefined) n.textContent = text;
+  return n;
+};
+
+/** Element z treścią HTML — wolno użyć tylko z danymi przepuszczonymi przez esc(). */
+const elHtml = (tag, cls, html) => {
   const n = document.createElement(tag);
   if (cls) n.className = cls;
   if (html !== undefined) n.innerHTML = html;
   return n;
 };
-const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) =>
-  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) =>
+  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
 const topicLabel = (id) => (TOPIC_LABELS[id] && TOPIC_LABELS[id][LANG]) || id;
 const typeLabelOf = (typ) => (LANG === "en" ? typ.label_en : typ.label) || typ.label;
+const severityLabel = (s) => t("severity." + (s === "major" ? "major" : "minor"));
 
-function showLoader(key) { $("#loader-text").textContent = t(key || "loader.default"); $("#loader").classList.remove("hidden"); }
+// Licznik równoległych operacji — nakładka znika dopiero, gdy skończy się ostatnia.
+let busyCount = 0;
+function showLoader(key) {
+  $("#loader-text").textContent = t(key || "loader.default");
+  $("#loader").classList.remove("hidden");
+}
 function hideLoader() { $("#loader").classList.add("hidden"); }
+
+/** Wykonuje operację blokując przycisk (chroni przed podwójnym wywołaniem modelu,
+ *  także przy aktywacji klawiaturą, której nakładka nie zatrzymuje). */
+async function withBusy(loaderKey, btn, fn) {
+  if (btn && btn.disabled) return undefined;
+  if (btn) btn.disabled = true;
+  busyCount += 1;
+  showLoader(loaderKey);
+  try {
+    return await fn();
+  } finally {
+    if (btn) btn.disabled = false;
+    busyCount -= 1;
+    if (busyCount === 0) hideLoader();
+  }
+}
 
 async function api(path, options) {
   const res = await fetch(path, options);
@@ -211,36 +254,87 @@ async function api(path, options) {
 }
 
 function isWritingType(typeId) {
-  const t2 = TAXONOMY.exercise_types.find((x) => x.id === typeId);
-  return t2 && t2.area === "writing";
+  const typ = TAXONOMY.exercise_types.find((x) => x.id === typeId);
+  return Boolean(typ && typ.area === "writing");
+}
+
+/** Banner błędu w kontenerze WYNIKOWYM (nigdy w kontenerze ze statycznym markupem). */
+function showError(sel, msg) {
+  const box = $(sel);
+  box.classList.remove("hidden");
+  box.innerHTML = "";
+  const banner = elem("div", "error-banner", t("error.prefix") + msg);
+  banner.setAttribute("role", "alert");
+  box.appendChild(banner);
+}
+
+/** Komunikat walidacyjny przy polu — zamiast blokującego alert(). */
+function fieldError(containerSel, msg) {
+  const box = $(containerSel);
+  if (!box) return;
+  box.querySelectorAll(".field-error").forEach((n) => n.remove());
+  const p = elem("p", "field-error", msg);
+  p.setAttribute("role", "alert");
+  box.appendChild(p);
+  const focusable = box.querySelector("input, textarea, select");
+  if (focusable) focusable.focus();
+}
+
+function clearFieldErrors(containerSel) {
+  const box = $(containerSel);
+  if (box) box.querySelectorAll(".field-error").forEach((n) => n.remove());
 }
 
 // --- Przełącznik języka ------------------------------------------------------
 
 function applyStaticI18n() {
   document.documentElement.lang = LANG;
+  document.title = t("app.title");
   document.querySelectorAll("[data-i18n]").forEach((n) => { n.textContent = t(n.dataset.i18n); });
   document.querySelectorAll("[data-i18n-ph]").forEach((n) => { n.placeholder = t(n.dataset.i18nPh); });
+}
+
+function markLangButtons() {
+  document.querySelectorAll(".lang").forEach((b) => {
+    const on = b.dataset.lang === LANG;
+    b.classList.toggle("is-active", on);
+    b.setAttribute("aria-pressed", String(on));
+  });
 }
 
 function setLang(lang) {
   LANG = lang === "en" ? "en" : "pl";
   localStorage.setItem("fce_lang", LANG);
-  document.querySelectorAll(".lang").forEach((b) => b.classList.toggle("is-active", b.dataset.lang === LANG));
+  markLangButtons();
   applyStaticI18n();
   fillTypeSelects();
   populateTopics();
   if ($("#view-errors").classList.contains("is-active")) loadErrors();
-  if ($("#view-tips").classList.contains("is-active")) loadTips();
   if ($("#view-stats").classList.contains("is-active")) loadStats();
+  if ($("#view-tips").classList.contains("is-active")) {
+    // Nie pobieramy nowego błędu — to zgubiłoby rozwiązywane ćwiczenie.
+    // Przerysowujemy tylko etykiety bieżącego fokusu.
+    if (tipsError) {
+      $("#tips-topic").textContent = topicLabel(tipsError.topic);
+      $("#tips-generate").textContent = tipsExercise ? t("tips.more") : t("tips.generate");
+      refreshProgress();
+    } else {
+      loadTips();
+    }
+  }
 }
 
-document.querySelectorAll(".lang").forEach((b) => b.addEventListener("click", () => setLang(b.dataset.lang)));
+document.querySelectorAll(".lang").forEach((b) =>
+  b.addEventListener("click", () => setLang(b.dataset.lang)));
 
 // --- Nawigacja zakładek ------------------------------------------------------
 
 function activateTab(view) {
-  document.querySelectorAll(".tab").forEach((x) => x.classList.toggle("is-active", x.dataset.view === view));
+  document.querySelectorAll(".tab").forEach((x) => {
+    const on = x.dataset.view === view;
+    x.classList.toggle("is-active", on);
+    x.setAttribute("aria-selected", String(on));
+  });
   document.querySelectorAll(".view").forEach((v) => v.classList.remove("is-active"));
   $("#view-" + view).classList.add("is-active");
 }
@@ -254,15 +348,15 @@ document.querySelectorAll(".tab").forEach((tab) => {
   });
 });
 
-// --- Inicjalizacja taksonomii ------------------------------------------------
+// --- Inicjalizacja -----------------------------------------------------------
 
 async function init() {
+  markLangButtons();
   applyStaticI18n();
-  document.querySelectorAll(".lang").forEach((b) => b.classList.toggle("is-active", b.dataset.lang === LANG));
   try {
     TAXONOMY = await api("/api/taxonomy");
   } catch (e) {
-    document.body.prepend(el("div", "error-banner", t("taxonomy.fail") + esc(e.message)));
+    document.body.prepend(elem("div", "error-banner", t("taxonomy.fail") + e.message));
     return;
   }
   TAXONOMY.topics.forEach((tp) => { TOPIC_LABELS[tp.id] = { pl: tp.label, en: tp.label_en }; });
@@ -275,35 +369,37 @@ async function init() {
 }
 
 function fillTypeSelects() {
-  [["#practice-type"], ["#external-type"]].forEach(([sel]) => {
+  ["#practice-type", "#external-type"].forEach((sel) => {
     const node = $(sel);
     if (!node) return;
     const prev = node.value;
     node.innerHTML = "";
     TAXONOMY.exercise_types.forEach((typ) => {
-      const opt = el("option");
-      opt.value = typ.id; opt.textContent = typeLabelOf(typ);
+      const opt = elem("option", null, typeLabelOf(typ));
+      opt.value = typ.id;
       node.appendChild(opt);
     });
     if (prev) node.value = prev;
+    if (node.selectedIndex < 0) node.selectedIndex = 0;
   });
 }
 
 function populateTopics() {
-  const typeId = $("#practice-type").value;
-  const typ = TAXONOMY.exercise_types.find((x) => x.id === typeId);
+  const typ = TAXONOMY.exercise_types.find((x) => x.id === $("#practice-type").value);
   const sel = $("#practice-topic");
   const prev = sel.value;
   sel.innerHTML = "";
-  const auto = el("option");
-  auto.value = ""; auto.textContent = t("practice.topic.auto");
+  const auto = elem("option", null, t("practice.topic.auto"));
+  auto.value = "";
   sel.appendChild(auto);
   (typ ? typ.topics : []).forEach((topicId) => {
-    const opt = el("option");
-    opt.value = topicId; opt.textContent = topicLabel(topicId);
+    const opt = elem("option", null, topicLabel(topicId));
+    opt.value = topicId;
     sel.appendChild(opt);
   });
   if (prev) sel.value = prev;
+  // Temat z poprzedniego typu może nie istnieć w nowym — bez tego select byłby pusty.
+  if (sel.selectedIndex < 0) sel.selectedIndex = 0;
 }
 
 function toggleExternalKeyword() {
@@ -311,44 +407,42 @@ function toggleExternalKeyword() {
   $("#external-keyword-wrap").classList.toggle("hidden", !isKwt);
 }
 
-// --- Ćwicz: generowanie ------------------------------------------------------
+// --- Wspólne renderowanie zadania (Ćwicz i Tipy) -----------------------------
 
-$("#btn-generate").addEventListener("click", async () => {
-  const type = $("#practice-type").value;
-  const topic = $("#practice-topic").value || null;
-  $("#practice-result").classList.add("hidden");
-  showLoader("loader.generating");
-  try {
-    currentExercise = await api("/api/exercise", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ type, topic, lang: LANG }),
-    });
-    renderExercise(currentExercise);
-  } catch (e) {
-    showError("#exercise-area", e.message);
-  } finally { hideLoader(); }
-});
+const PRACTICE_UI = {
+  card: "#exercise-area", topic: "#exercise-topic", instr: "#exercise-instructions",
+  question: "#exercise-question", area: "#answer-area", result: "#practice-result",
+  radio: "mcq", inputId: "practice-answer", gradeBtn: "#btn-grade", allowWriting: true,
+};
 
-function renderExercise(ex) {
-  $("#exercise-topic").textContent = t("topic.prefix") + topicLabel(ex.topic);
-  $("#exercise-instructions").textContent = ex.instructions || "";
+const TIPS_UI = {
+  card: "#tips-exercise-area", topic: null, instr: "#tips-instructions",
+  question: "#tips-question", area: "#tips-answer-area", result: "#tips-result",
+  radio: "tips-mcq", inputId: "tips-answer", gradeBtn: "#tips-grade", allowWriting: false,
+};
+
+function renderExerciseInto(ui, ex) {
+  if (ui.topic) $(ui.topic).textContent = t("topic.prefix") + topicLabel(ex.topic);
+  $(ui.instr).textContent = ex.instructions || "";
+
   let q = esc(ex.question_text || "");
   if (ex.key_word) q += `\n\n${esc(t("kw.label"))}<span class="kw">${esc(ex.key_word)}</span>`;
-  $("#exercise-question").innerHTML = q;
+  $(ui.question).innerHTML = q;
 
-  const area = $("#answer-area");
+  const area = $(ui.area);
   area.innerHTML = "";
+
   if (ex.items && ex.items.length) {
     // Zadanie wieloczęściowe: jedna grupa wariantów na każdą lukę.
-    const wrap = el("div", "gap-items");
+    const wrap = elem("div", "gap-items");
     ex.items.forEach((item) => {
-      const block = el("div", "gap-item");
-      block.appendChild(el("span", "gap-num", esc(String(item.number))));
-      const opts = el("div", "options options-inline");
+      const block = elem("div", "gap-item");
+      block.appendChild(elem("span", "gap-num", String(item.number)));
+      const opts = elem("div", "options options-inline");
       item.options.forEach((opt) => {
-        const lbl = el("label");
-        lbl.innerHTML = `<input type="radio" name="mcq-${esc(String(item.number))}" value="${esc(opt)}"> ${esc(opt)}`;
+        const lbl = elHtml("label", null,
+          `<input type="radio" name="${esc(ui.radio)}-${esc(String(item.number))}" ` +
+          `value="${esc(opt)}"> ${esc(opt)}`);
         opts.appendChild(lbl);
       });
       block.appendChild(opts);
@@ -356,254 +450,295 @@ function renderExercise(ex) {
     });
     area.appendChild(wrap);
   } else if (ex.options && ex.options.length) {
-    const wrap = el("div", "options");
+    const wrap = elem("div", "options");
     ex.options.forEach((opt) => {
-      const lbl = el("label");
-      lbl.innerHTML = `<input type="radio" name="mcq" value="${esc(opt)}"> ${esc(opt)}`;
+      const lbl = elHtml("label", null,
+        `<input type="radio" name="${esc(ui.radio)}" value="${esc(opt)}"> ${esc(opt)}`);
       wrap.appendChild(lbl);
     });
     area.appendChild(wrap);
   } else {
-    const input = el(isWritingType(ex.type) ? "textarea" : "input");
-    input.id = "practice-answer";
-    if (isWritingType(ex.type)) { input.rows = 10; input.placeholder = t("writing.ph"); }
-    else { input.type = "text"; input.placeholder = t("answer.ph"); }
+    const writing = ui.allowWriting && isWritingType(ex.type);
+    const input = elem(writing ? "textarea" : "input");
+    input.id = ui.inputId;
+    input.setAttribute("aria-label", writing ? t("writing.ph") : t("answer.ph"));
+    if (writing) { input.rows = 10; input.placeholder = t("writing.ph"); }
+    else {
+      input.type = "text";
+      input.placeholder = t("answer.ph");
+      // Enter zatwierdza — przy dziesiątkach powtórzeń oszczędza sięganie po mysz.
+      input.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") { e.preventDefault(); $(ui.gradeBtn).click(); }
+      });
+    }
     area.appendChild(input);
   }
-  $("#exercise-area").classList.remove("hidden");
+
+  $(ui.card).classList.remove("hidden");
+  const first = area.querySelector("input, textarea");
+  if (first) first.focus();
 }
 
-$("#btn-grade").addEventListener("click", async () => {
-  if (!currentExercise) return;
-  const body = { type: currentExercise.type, exercise_id: currentExercise.id, lang: LANG };
+/** Zbiera odpowiedź(i) i buduje ciało żądania oceny. Zwraca null, gdy brak odpowiedzi. */
+function collectGradeBody(ui, ex) {
+  clearFieldErrors(ui.area);
+  const body = { type: ex.type, exercise_id: ex.id, lang: LANG };
 
-  if (currentExercise.items && currentExercise.items.length) {
-    const answers = currentExercise.items.map((item) => {
-      const c = document.querySelector(`input[name="mcq-${item.number}"]:checked`);
+  if (ex.items && ex.items.length) {
+    const answers = ex.items.map((item) => {
+      const c = document.querySelector(`input[name="${ui.radio}-${item.number}"]:checked`);
       return c ? c.value : "";
     });
-    if (answers.some((a) => !a)) { alert(t("alert.answerAll")); return; }
+    if (answers.some((a) => !a)) { fieldError(ui.area, t("alert.answerAll")); return null; }
     body.student_answers = answers;
-  } else {
-    const checked = document.querySelector('input[name="mcq"]:checked');
-    const inp = $("#practice-answer");
-    const answer = checked ? checked.value : (inp ? inp.value.trim() : "");
-    if (!answer) { alert(t("alert.answer")); return; }
-    body.student_answer = answer;
+    return body;
   }
 
-  showLoader("loader.grading");
-  try {
+  const checked = document.querySelector(`input[name="${ui.radio}"]:checked`);
+  const inp = $("#" + ui.inputId);
+  const answer = checked ? checked.value : (inp ? inp.value.trim() : "");
+  if (!answer) { fieldError(ui.area, t("alert.answer")); return null; }
+  body.student_answer = answer;
+  return body;
+}
+
+async function gradeExercise(ui, ex) {
+  const body = collectGradeBody(ui, ex);
+  if (!body) return null;
+  return withBusy("loader.grading", $(ui.gradeBtn), async () => {
     const result = await api("/api/grade", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
-    renderResult("#practice-result", result);
+    renderResult(ui.result, result);
+    return result;
+  });
+}
+
+// --- Ćwicz -------------------------------------------------------------------
+
+$("#btn-generate").addEventListener("click", () =>
+  withBusy("loader.generating", $("#btn-generate"), async () => {
+    $("#practice-result").classList.add("hidden");
+    currentExercise = null; // po nieudanym generowaniu nie zostawiamy starego zadania
+    try {
+      currentExercise = await api("/api/exercise", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: $("#practice-type").value,
+          topic: $("#practice-topic").value || null,
+          lang: LANG,
+        }),
+      });
+      renderExerciseInto(PRACTICE_UI, currentExercise);
+    } catch (e) {
+      // Kontener wynikowy — NIE karta zadania, której markup trzeba zachować.
+      showError("#practice-result", e.message);
+    }
+  }));
+
+$("#btn-grade").addEventListener("click", async () => {
+  if (!currentExercise) return;
+  try {
+    await gradeExercise(PRACTICE_UI, currentExercise);
   } catch (e) {
     showError("#practice-result", e.message);
-  } finally { hideLoader(); }
+  }
 });
 
 // --- Sprawdź z zewnątrz ------------------------------------------------------
 
-$("#btn-grade-external").addEventListener("click", async () => {
-  const type = $("#external-type").value;
-  const question_text = $("#external-question").value.trim();
-  const student_answer = $("#external-answer").value.trim();
-  const key_word = $("#external-keyword").value.trim() || null;
-  if (!question_text || !student_answer) { alert(t("alert.fillExternal")); return; }
-
-  showLoader("loader.gradingExt");
-  try {
-    const result = await api("/api/grade", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ type, question_text, student_answer, key_word, lang: LANG }),
-    });
-    renderResult("#external-result", result);
-  } catch (e) {
-    showError("#external-result", e.message);
-  } finally { hideLoader(); }
-});
+$("#btn-grade-external").addEventListener("click", () =>
+  withBusy("loader.gradingExt", $("#btn-grade-external"), async () => {
+    const question_text = $("#external-question").value.trim();
+    const student_answer = $("#external-answer").value.trim();
+    clearFieldErrors("#view-external .card");
+    if (!question_text || !student_answer) {
+      fieldError("#view-external .card", t("alert.fillExternal"));
+      return;
+    }
+    try {
+      const result = await api("/api/grade", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: $("#external-type").value,
+          question_text,
+          student_answer,
+          key_word: $("#external-keyword").value.trim() || null,
+          lang: LANG,
+        }),
+      });
+      renderResult("#external-result", result);
+    } catch (e) {
+      showError("#external-result", e.message);
+    }
+  }));
 
 // --- Renderowanie wyniku oceny ----------------------------------------------
+
+function optionNotesEl(notes) {
+  const wrap = elem("div", "opt-notes");
+  notes.forEach((o) => {
+    const note = elHtml("div", "opt-note " + (o.is_correct ? "ok" : "bad"),
+      `<span class="opt">${o.is_correct ? "✓" : "✗"} ${esc(o.option)}</span>` +
+      `<span class="opt-why">${esc(o.comment)}</span>`);
+    wrap.appendChild(note);
+  });
+  return wrap;
+}
+
+function errItemEl(err, opts = {}) {
+  const item = elHtml("div", "err-item",
+    `<div class="topic">${esc(topicLabel(err.topic))}` +
+    `<span class="badge ${err.severity === "major" ? "major" : "minor"}">` +
+    `${esc(severityLabel(err.severity))}</span>` +
+    (opts.date ? `<span class="date">${esc(String(err.created_at || "").slice(0, 10))}</span>` : "") +
+    `</div>` +
+    `<div class="diff"><span class="from">${esc(err.student_text)}</span> → ` +
+    `<span class="to">${esc(err.correct_text)}</span></div>` +
+    `<div class="why">${esc(err.explanation)}</div>`);
+  if (opts.practiceBtn) {
+    const btn = elem("button", "practice-btn", t("errors.practiceThis"));
+    btn.addEventListener("click", () => focusOnError(err));
+    item.appendChild(btn);
+  }
+  return item;
+}
+
+function barRow(name, ratio, countText) {
+  const row = elHtml("div", "stat-row",
+    `<span class="name">${esc(name)}</span>` +
+    `<span class="bar"><span></span></span>` +
+    `<span class="count">${esc(countText)}</span>`);
+  row.querySelector(".bar > span").style.width = Math.max(0, Math.min(1, ratio)) * 100 + "%";
+  return row;
+}
 
 function renderResult(sel, r) {
   const box = $(sel);
   box.innerHTML = "";
   box.classList.remove("hidden");
+  box.setAttribute("role", "status");
 
   if (r.score) {
-    box.appendChild(el("div", "verdict " + (r.correct ? "good" : "partial"),
-      t("verdict.score") + " " + esc(r.score)));
+    box.appendChild(elem("div", "verdict " + (r.correct ? "good" : "partial"),
+      t("verdict.score") + " " + r.score));
   } else if (r.correct !== null && r.correct !== undefined) {
-    box.appendChild(el("div", "verdict " + (r.correct ? "good" : "bad"),
+    box.appendChild(elem("div", "verdict " + (r.correct ? "good" : "bad"),
       r.correct ? t("verdict.correct") : t("verdict.incorrect")));
   }
-  if (r.band) box.appendChild(el("p", "band", t("band.prefix") + esc(r.band)));
+
+  if (r.band) box.appendChild(elem("p", "band", t("band.prefix") + r.band));
 
   if (Array.isArray(r.scores) && r.scores.length) {
-    const wrap = el("div", "scores");
+    const wrap = elem("div", "scores");
     r.scores.forEach((s) => {
-      const row = el("div", "score-row");
-      row.innerHTML =
-        `<span class="name">${esc(topicLabel(s.criterion))}</span>` +
-        `<span class="bar"><span style="width:${(s.score / 5) * 100}%"></span></span>` +
-        `<span class="count">${esc(s.score)}/5</span>`;
-      wrap.appendChild(row);
-      if (s.comment) wrap.appendChild(el("p", "why", esc(s.comment)));
+      wrap.appendChild(barRow(topicLabel(s.criterion), s.score / 5, s.score + "/5"));
+      if (s.comment) wrap.appendChild(elem("p", "why", s.comment));
     });
     box.appendChild(wrap);
   }
 
-  if (r.corrected) box.appendChild(el("div", "corrected", `<strong>${esc(t("corrected.label"))}</strong> ` + esc(r.corrected)));
-  if (r.feedback) box.appendChild(el("p", "feedback", esc(r.feedback)));
+  if (r.corrected) {
+    box.appendChild(elHtml("div", "corrected",
+      `<strong>${esc(t("corrected.label"))}</strong> ${esc(r.corrected)}`));
+  }
+  if (r.feedback) box.appendChild(elem("p", "feedback", r.feedback));
 
   // Zadanie wieloczęściowe: wynik i omówienie każdej luki.
-  if (Array.isArray(r.items) && r.items.length) {
+  const hasItems = Array.isArray(r.items) && r.items.length;
+  if (hasItems) {
     r.items.forEach((item) => {
-      const block = el("div", "res-item " + (item.correct ? "ok" : "bad"));
-      let head =
+      const block = elem("div", "res-item " + (item.correct ? "ok" : "bad"));
+      const head = item.correct
+        ? `<span class="to">${esc(item.correct_option)}</span>`
+        : `<span class="from">${esc(item.student_option || "—")}</span> → ` +
+          `<span class="to">${esc(item.correct_option)}</span>`;
+      block.appendChild(elHtml("div", "ri-head",
         `<span class="ri-num">${esc(String(item.number))}</span>` +
-        `<span class="ri-mark">${item.correct ? "✓" : "✗"}</span>`;
-      if (item.correct) {
-        head += `<span class="to">${esc(item.correct_option)}</span>`;
-      } else {
-        head += `<span class="from">${esc(item.student_option || "—")}</span> → ` +
-                `<span class="to">${esc(item.correct_option)}</span>`;
-      }
-      block.innerHTML = `<div class="ri-head">${head}</div>` +
-        (item.comment ? `<div class="why">${esc(item.comment)}</div>` : "");
+        `<span class="ri-mark">${item.correct ? "✓" : "✗"}</span>${head}`));
+      if (item.comment) block.appendChild(elem("div", "why", item.comment));
       if (Array.isArray(item.option_notes) && item.option_notes.length) {
-        const wrap = el("div", "opt-notes");
-        item.option_notes.forEach((o) => {
-          const note = el("div", "opt-note " + (o.is_correct ? "ok" : "bad"));
-          note.innerHTML =
-            `<span class="opt">${o.is_correct ? "✓" : "✗"} ${esc(o.option)}</span>` +
-            `<span class="opt-why">${esc(o.comment)}</span>`;
-          wrap.appendChild(note);
-        });
-        block.appendChild(wrap);
+        block.appendChild(optionNotesEl(item.option_notes));
       }
       box.appendChild(block);
     });
   }
 
   if (Array.isArray(r.option_notes) && r.option_notes.length) {
-    box.appendChild(el("h2", null, t("result.optionNotes")));
-    const wrap = el("div", "opt-notes");
-    r.option_notes.forEach((o) => {
-      const item = el("div", "opt-note " + (o.is_correct ? "ok" : "bad"));
-      item.innerHTML =
-        `<span class="opt">${o.is_correct ? "✓" : "✗"} ${esc(o.option)}</span>` +
-        `<span class="opt-why">${esc(o.comment)}</span>`;
-      wrap.appendChild(item);
-    });
-    box.appendChild(wrap);
+    box.appendChild(elem("h2", null, t("result.optionNotes")));
+    box.appendChild(optionNotesEl(r.option_notes));
   }
 
-  const hasItems = Array.isArray(r.items) && r.items.length;
   if (Array.isArray(r.errors) && r.errors.length && !hasItems) {
     // Przy zadaniach wieloczęściowych bloki per luka już pokazują błędy — nie dublujemy.
-    box.appendChild(el("h2", null, t("errors.detected") + " (" + r.errors.length + ")"));
-    r.errors.forEach((err) => {
-      const item = el("div", "err-item");
-      item.innerHTML =
-        `<div class="topic">${esc(topicLabel(err.topic))}` +
-        `<span class="badge ${err.severity === "major" ? "major" : "minor"}">${esc(err.severity)}</span></div>` +
-        `<div class="diff"><span class="from">${esc(err.student_text)}</span> → <span class="to">${esc(err.correct_text)}</span></div>` +
-        `<div class="why">${esc(err.explanation)}</div>`;
-      box.appendChild(item);
-    });
-  } else if (r.correct) {
-    box.appendChild(el("p", "muted", t("noErrors")));
+    box.appendChild(elem("h2", null, t("errors.detected") + " (" + r.errors.length + ")"));
+    r.errors.forEach((err) => box.appendChild(errItemEl(err)));
+  } else if (r.correct && !hasItems) {
+    box.appendChild(elem("p", "muted", t("noErrors")));
   }
-}
-
-function showError(sel, msg) {
-  const box = $(sel);
-  box.classList.remove("hidden");
-  box.innerHTML = "";
-  box.appendChild(el("div", "error-banner", t("error.prefix") + esc(msg)));
 }
 
 // --- Moje błędy --------------------------------------------------------------
 
 $("#btn-refresh-errors").addEventListener("click", loadErrors);
 
-async function loadErrors() {
-  showLoader("loader.loading");
-  try {
-    const [stats, errors] = await Promise.all([
-      api("/api/stats?lang=" + LANG),
-      api("/api/errors?lang=" + LANG),
-    ]);
-    renderStats(stats);
-    renderErrorsList(errors);
-  } catch (e) {
-    showError("#errors-list", e.message);
-  } finally { hideLoader(); }
+function loadErrors() {
+  return withBusy("loader.loading", null, async () => {
+    try {
+      const [stats, errors] = await Promise.all([
+        api("/api/stats/topics?lang=" + LANG),
+        api("/api/errors?lang=" + LANG),
+      ]);
+      renderTopicStats(stats);
+      renderErrorsList(errors);
+    } catch (e) {
+      showError("#errors-list", e.message);
+    }
+  });
 }
 
-function renderStats(stats) {
+function renderTopicStats(stats) {
   const box = $("#stats");
   box.innerHTML = "";
-  if (!stats.length) { box.appendChild(el("p", "stat-empty", t("stats.empty"))); return; }
+  if (!stats.length) { box.appendChild(elem("p", "stat-empty", t("stats.emptyErrors"))); return; }
   const max = Math.max(...stats.map((s) => s.count));
   stats.forEach((s) => {
-    const row = el("div", "stat-row");
-    row.innerHTML =
-      `<span class="name">${esc(s.topic_label || topicLabel(s.topic))}</span>` +
-      `<span class="bar"><span style="width:${(s.count / max) * 100}%"></span></span>` +
-      `<span class="count">${esc(s.count)}×</span>`;
-    box.appendChild(row);
+    box.appendChild(barRow(s.topic_label || topicLabel(s.topic), s.count / max, s.count + "×"));
   });
 }
 
 function renderErrorsList(errors) {
   const box = $("#errors-list");
   box.innerHTML = "";
-  if (!errors.length) { box.appendChild(el("p", "stat-empty", t("journal.empty"))); return; }
-  errors.forEach((err) => {
-    const item = el("div", "err-item");
-    const date = (err.created_at || "").slice(0, 10);
-    item.innerHTML =
-      `<div class="topic">${esc(err.topic_label || topicLabel(err.topic))}` +
-      `<span class="badge ${err.severity === "major" ? "major" : "minor"}">${esc(err.severity)}</span>` +
-      `<span class="muted" style="float:right;font-weight:400;text-transform:none;letter-spacing:0">${esc(date)}</span></div>` +
-      `<div class="diff"><span class="from">${esc(err.student_text)}</span> → <span class="to">${esc(err.correct_text)}</span></div>` +
-      `<div class="why">${esc(err.explanation)}</div>`;
-    const btn = el("button", "practice-btn", t("errors.practiceThis"));
-    btn.addEventListener("click", () => focusOnError(err));
-    item.appendChild(btn);
-    box.appendChild(item);
-  });
+  if (!errors.length) { box.appendChild(elem("p", "stat-empty", t("journal.empty"))); return; }
+  errors.forEach((err) => box.appendChild(errItemEl(err, { date: true, practiceBtn: true })));
 }
 
 // --- Tipy (tryb skupienia) ---------------------------------------------------
 
-let tipsError = null;
-let tipsExercise = null;
-
-async function loadTips(exclude) {
-  showLoader("loader.loading");
-  try {
-    const url = "/api/tips/focus?lang=" + LANG + (exclude ? "&exclude=" + exclude : "");
-    const data = await api(url);
-    renderGoal(data.progress);
-    setFocus(data.error);
-  } catch (e) {
-    showError("#tips-result", e.message);
-  } finally { hideLoader(); }
+function loadTips(exclude) {
+  return withBusy("loader.loading", null, async () => {
+    try {
+      const url = "/api/tips/focus?lang=" + LANG + (exclude ? "&exclude=" + exclude : "");
+      const data = await api(url);
+      renderGoal(data.progress);
+      setFocus(data.error);
+    } catch (e) {
+      showError("#tips-result", e.message);
+    }
+  });
 }
 
 function renderGoal(progress) {
   $("#tips-done").textContent = progress.done;
   $("#tips-goal").textContent = progress.goal;
   $("#tips-goal-input").value = progress.goal;
-  const pct = progress.goal ? Math.min(100, (progress.done / progress.goal) * 100) : 0;
-  $("#tips-goal-bar").style.width = pct + "%";
+  $("#tips-goal-bar").style.width =
+    (progress.goal ? Math.min(100, (progress.done / progress.goal) * 100) : 0) + "%";
   const streak = progress.streak || 0;
   const streakEl = $("#tips-streak");
   streakEl.textContent = "🔥 " + streak + " " + t("tips.streakDays");
@@ -611,15 +746,7 @@ function renderGoal(progress) {
 }
 
 async function refreshProgress() {
-  try { renderGoal(await api("/api/tips/progress")); } catch (_) {}
-}
-
-// Skok z „Moje błędy" do Tipów z konkretnym błędem + automatyczne wygenerowanie ćwiczenia.
-async function focusOnError(err) {
-  activateTab("tips");
-  setFocus(err);
-  await refreshProgress();
-  $("#tips-generate").click();
+  try { renderGoal(await api("/api/tips/progress")); } catch (_) { /* nieistotne dla pracy */ }
 }
 
 function setFocus(err) {
@@ -641,110 +768,92 @@ function setFocus(err) {
   $("#tips-focus").classList.remove("hidden");
 }
 
-function renderTipsExercise(ex) {
-  $("#tips-result").classList.add("hidden");
-  $("#tips-instructions").textContent = ex.instructions || "";
-  let q = esc(ex.question_text || "");
-  if (ex.key_word) q += `\n\n${esc(t("kw.label"))}<span class="kw">${esc(ex.key_word)}</span>`;
-  $("#tips-question").innerHTML = q;
-
-  const area = $("#tips-answer-area");
-  area.innerHTML = "";
-  if (ex.options && ex.options.length) {
-    const wrap = el("div", "options");
-    ex.options.forEach((opt) => {
-      const lbl = el("label");
-      lbl.innerHTML = `<input type="radio" name="tips-mcq" value="${esc(opt)}"> ${esc(opt)}`;
-      wrap.appendChild(lbl);
-    });
-    area.appendChild(wrap);
-  } else {
-    const input = el("input");
-    input.id = "tips-answer"; input.type = "text"; input.placeholder = t("answer.ph");
-    area.appendChild(input);
-  }
-  $("#tips-exercise-area").classList.remove("hidden");
+/** Skok z „Moje błędy" do Tipów z konkretnym błędem + od razu ćwiczenie. */
+async function focusOnError(err) {
+  activateTab("tips");
+  setFocus(err);
+  await refreshProgress();
+  $("#tips-generate").click();
 }
 
 $("#tips-new").addEventListener("click", () => loadTips(tipsError ? tipsError.id : undefined));
 
-$("#tips-goal-save").addEventListener("click", async () => {
-  const goal = parseInt($("#tips-goal-input").value, 10) || 1;
-  try {
-    const progress = await api("/api/tips/goal", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ goal }),
-    });
-    renderGoal(progress);
-  } catch (e) { showError("#tips-result", e.message); }
-});
+$("#tips-goal-save").addEventListener("click", () =>
+  withBusy("loader.loading", $("#tips-goal-save"), async () => {
+    try {
+      renderGoal(await api("/api/tips/goal", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ goal: parseInt($("#tips-goal-input").value, 10) || 1 }),
+      }));
+    } catch (e) { showError("#tips-result", e.message); }
+  }));
 
-$("#tips-generate").addEventListener("click", async () => {
-  if (!tipsError) return;
-  showLoader("loader.generating");
-  try {
-    tipsExercise = await api("/api/tips/exercise", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ error_id: tipsError.id, lang: LANG }),
-    });
-    renderTipsExercise(tipsExercise);
-  } catch (e) { showError("#tips-result", e.message); }
-  finally { hideLoader(); }
-});
+$("#tips-generate").addEventListener("click", () =>
+  withBusy("loader.generating", $("#tips-generate"), async () => {
+    if (!tipsError) return;
+    tipsExercise = null;
+    try {
+      const ex = await api("/api/tips/exercise", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ error_id: tipsError.id, lang: LANG }),
+      });
+      // Zapamiętujemy błąd źródłowy — do celu zaliczamy TEN błąd, nie bieżący fokus.
+      ex.error_id = tipsError.id;
+      tipsExercise = ex;
+      $("#tips-result").classList.add("hidden");
+      renderExerciseInto(TIPS_UI, ex);
+    } catch (e) { showError("#tips-result", e.message); }
+  }));
 
 $("#tips-grade").addEventListener("click", async () => {
   if (!tipsExercise) return;
-  let answer;
-  const checked = document.querySelector('input[name="tips-mcq"]:checked');
-  if (checked) answer = checked.value;
-  else { const inp = $("#tips-answer"); answer = inp ? inp.value.trim() : ""; }
-  if (!answer) { alert(t("alert.answer")); return; }
-
-  showLoader("loader.grading");
+  let result;
   try {
-    const result = await api("/api/grade", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ type: tipsExercise.type, exercise_id: tipsExercise.id, student_answer: answer, lang: LANG }),
-    });
-    renderResult("#tips-result", result);
-    // Błąd liczy się do dziennego celu dopiero po POPRAWNYM rozwiązaniu ćwiczenia
-    // (maks. +1 na błąd/dzień — zapis jest idempotentny po stronie serwera).
-    if (result.correct === true) {
-      const progress = await api("/api/tips/complete", {
+    result = await gradeExercise(TIPS_UI, tipsExercise);
+  } catch (e) {
+    showError("#tips-result", e.message);
+    return;
+  }
+  if (!result) return;
+  $("#tips-generate").textContent = t("tips.more");
+  // Do dziennego celu zaliczamy błąd dopiero po POPRAWNYM rozwiązaniu.
+  // Osobny try — potknięcie księgowe nie może wymazać wyświetlonej oceny.
+  if (result.correct === true) {
+    try {
+      renderGoal(await api("/api/tips/complete", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ error_id: tipsError.id }),
-      });
-      renderGoal(progress);
-    }
-    $("#tips-generate").textContent = t("tips.more");
-  } catch (e) { showError("#tips-result", e.message); }
-  finally { hideLoader(); }
+        body: JSON.stringify({ error_id: tipsExercise.error_id }),
+      }));
+    } catch (_) { /* ocena jest ważniejsza niż licznik */ }
+  }
 });
 
 // --- Statystyki --------------------------------------------------------------
 
-const kindLabel = (k) => t("kind." + k) !== "kind." + k ? t("kind." + k) : k;
+const kindLabel = (k) => (t("kind." + k) !== "kind." + k ? t("kind." + k) : k);
 const fmtNum = (n) => Number(n || 0).toLocaleString(LANG === "en" ? "en-US" : "pl-PL");
 const fmtCost = (c) => "$" + Number(c || 0).toFixed(Number(c) < 1 ? 4 : 2);
 
 function statLine(label, value) {
-  const row = el("div", "stat-line");
-  row.innerHTML = `<span class="sl-label">${esc(label)}</span><span class="sl-value">${esc(value)}</span>`;
+  const row = elem("div", "stat-line");
+  row.appendChild(elem("span", "sl-label", label));
+  row.appendChild(elem("span", "sl-value", value));
   return row;
 }
 
-async function loadStats() {
-  showLoader("loader.loading");
-  try {
-    const [learning, usage] = await Promise.all([
-      api("/api/stats/learning?lang=" + LANG),
-      api("/api/stats/usage"),
-    ]);
-    renderLearning(learning);
-    renderUsage(usage);
-  } catch (e) {
-    showError("#stats-usage", e.message);
-  } finally { hideLoader(); }
+function loadStats() {
+  return withBusy("loader.loading", null, async () => {
+    try {
+      const [learning, usage] = await Promise.all([
+        api("/api/stats/learning?lang=" + LANG),
+        api("/api/stats/usage"),
+      ]);
+      renderLearning(learning);
+      renderUsage(usage);
+    } catch (e) {
+      showError("#stats-usage", e.message);
+    }
+  });
 }
 
 function renderLearning(d) {
@@ -752,6 +861,9 @@ function renderLearning(d) {
   box.innerHTML = "";
   const acc = d.accuracy == null ? "—" : Math.round(d.accuracy * 100) + "%";
   box.appendChild(statLine(t("stats.exercisesGenerated"), fmtNum(d.exercises_generated)));
+  if (d.exercises_queued) {
+    box.appendChild(statLine(t("stats.queued"), fmtNum(d.exercises_queued)));
+  }
   box.appendChild(statLine(t("stats.attempts"), fmtNum(d.attempts_total)));
   box.appendChild(statLine(t("stats.accuracy"),
     acc + (d.attempts_graded ? ` (${d.attempts_correct}/${d.attempts_graded})` : "")));
@@ -759,15 +871,10 @@ function renderLearning(d) {
   box.appendChild(statLine(t("stats.errorsLogged"), fmtNum(d.errors_logged)));
 
   if (d.by_type && d.by_type.length) {
-    box.appendChild(el("h3", "stat-sub", t("stats.byType")));
+    box.appendChild(elem("h3", "stat-sub", t("stats.byType")));
     const max = Math.max(...d.by_type.map((r) => r.attempts));
     d.by_type.forEach((r) => {
-      const row = el("div", "stat-row");
-      row.innerHTML =
-        `<span class="name">${esc(r.label || r.type)}</span>` +
-        `<span class="bar"><span style="width:${(r.attempts / max) * 100}%"></span></span>` +
-        `<span class="count">${r.correct}/${r.attempts}</span>`;
-      box.appendChild(row);
+      box.appendChild(barRow(r.label || r.type, r.attempts / max, r.correct + "/" + r.attempts));
     });
   }
 }
@@ -777,7 +884,7 @@ function renderUsage(d) {
   box.innerHTML = "";
   const total = d.total || {};
   if (!total.calls) {
-    box.appendChild(el("p", "stat-empty", t("stats.empty")));
+    box.appendChild(elem("p", "stat-empty", t("stats.emptyUsage")));
     return;
   }
   box.appendChild(statLine(t("stats.calls"), fmtNum(total.calls)));
@@ -791,16 +898,20 @@ function renderUsage(d) {
   box.appendChild(statLine(t("stats.avgTime"), Math.round(total.avg_duration_ms) + " ms"));
 
   if (d.lean) {
-    box.appendChild(el("h3", "stat-sub", t("stats.leanTitle")));
+    box.appendChild(elem("h3", "stat-sub", t("stats.leanTitle")));
     const leanUsed = statLine(t("stats.leanUsed"), fmtCost(d.lean.used_model));
     leanUsed.classList.add("cost-highlight");
     box.appendChild(leanUsed);
     box.appendChild(statLine(t("stats.leanSonnet"), fmtCost(d.lean.sonnet)));
-    box.appendChild(el("p", "muted", t("stats.leanNote")));
+    box.appendChild(elem("p", "muted", t("stats.leanNote")));
+    if (Array.isArray(d.lean.assumed_models) && d.lean.assumed_models.length) {
+      box.appendChild(elem("p", "muted",
+        t("stats.assumedNote") + d.lean.assumed_models.join(", ") + " — stawka założona."));
+    }
   }
 
   if (d.by_kind && d.by_kind.length) {
-    box.appendChild(el("h3", "stat-sub", t("stats.byKind")));
+    box.appendChild(elem("h3", "stat-sub", t("stats.byKind")));
     d.by_kind.forEach((r) => {
       box.appendChild(statLine(`${kindLabel(r.kind)} (${r.calls}×)`, fmtCost(r.cost_usd)));
     });

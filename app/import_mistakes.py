@@ -92,7 +92,7 @@ def import_unstructured(conn, path: Path, exercise_type: str) -> tuple[int, int]
     errors = llm_client.extract_errors_from_text(path.read_text(encoding="utf-8"))
     imported = 0
     for err in errors:
-        topic = err.topic if err.topic in tax.TOPICS else "language"
+        topic = tax.normalize_topic(err.topic)
         db.insert_error(
             conn,
             source=tag,

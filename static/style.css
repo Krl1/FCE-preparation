@@ -26,7 +26,8 @@ body {
 }
 
 .topbar {
-  display: flex; align-items: center; gap: 1.5rem;
+  display: flex;
+  flex-wrap: wrap; align-items: center; gap: 1.5rem;
   padding: 1rem 1.5rem;
   background: var(--surface);
   border-bottom: 1px solid var(--line);
@@ -72,7 +73,7 @@ main { max-width: 760px; margin: 1.5rem auto; padding: 0 1rem 4rem; }
 .row h2 { margin: 0; }
 
 label { display: block; font-size: .85rem; color: var(--muted); margin-bottom: .85rem; }
-select, input[type="text"], textarea {
+select, input[type="text"], input[type="number"], textarea {
   display: block; width: 100%; margin-top: .3rem;
   padding: .55rem .7rem; font: inherit; font-size: .95rem;
   border: 1px solid var(--line); border-radius: 8px; background: #fff; color: var(--ink);
@@ -155,7 +156,7 @@ h2 { font-size: 1.05rem; }
 .bar > span { display: block; height: 100%; background: var(--accent); }
 .band { font-weight: 700; }
 
-/* Statystyki */
+/* Statystyki — paski w Moich błędach */
 .stats { display: grid; gap: .5rem; }
 .stat-row { display: flex; align-items: center; gap: .7rem; }
 .stat-row .name { flex: 0 0 45%; font-size: .92rem; }
@@ -192,7 +193,7 @@ h2 { font-size: 1.05rem; }
 }
 .practice-btn:hover { border-color: var(--accent); background: var(--bg); }
 
-/* Statystyki */
+/* Statystyki — zakładka Statystyki */
 .stat-line { display: flex; justify-content: space-between; align-items: baseline; gap: 1rem; padding: .45rem 0; border-bottom: 1px solid var(--line); }
 .stat-line:last-child { border-bottom: none; }
 .sl-label { color: var(--muted); }
@@ -206,3 +207,15 @@ h2 { font-size: 1.05rem; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
 .error-banner { background: var(--bad-bg); color: var(--bad); border: 1px solid var(--bad); border-radius: 8px; padding: .7rem .9rem; }
+
+/* Komunikat walidacyjny przy polu (zamiast blokującego alert()) */
+.field-error {
+  margin: .5rem 0 0; padding: .4rem .65rem; border-radius: 6px;
+  background: var(--bad-bg); color: var(--bad); font-size: .9rem;
+}
+
+/* Data w kaflu błędu */
+.err-item .date {
+  float: right; font-weight: 400; text-transform: none; letter-spacing: 0;
+  color: var(--muted); font-size: .8rem;
+}

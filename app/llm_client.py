@@ -156,51 +156,113 @@ def _call_json(prompt: str, kind: str = "other") -> dict:
 MCQ_ITEM_COUNT = 5
 
 
+# Ile zadań generować w JEDNYM wywołaniu. Koszt wywołania jest zdominowany przez stały
+# narzut Claude Code (~23 tys. tokenów niezależnie od treści), więc generowanie wsadowe
+# jest niemal darmowe na sztukę i dodatkowo eliminuje czekanie na kolejne zadania.
+# MCQ cloze to już 5 luk na zadanie, dlatego ma mniejszy wsad.
+# Wsad musi zmieścić się w limicie długości odpowiedzi modelu — przy zbyt dużym
+# JSON zostaje ucięty i potrzebna jest ponowna próba, co niweczy oszczędność.
+_BATCH_SIZES = {"uoe_part1_mcq_cloze": 2}
+_DEFAULT_BATCH = 3
+
+
+def batch_size(exercise_type: str) -> int:
+    return _BATCH_SIZES.get(exercise_type, _DEFAULT_BATCH)
+
+
+def generate_exercises(exercise_type: str, topic: str, weak_points: list[str] | None = None,
+                       lang: str = "pl", count: int = 1) -> list[GeneratedExercise]:
+    """Generuje `count` różnych zadań danego typu w JEDNYM wywołaniu modelu.
+
+    Pierwsze zadanie jest pokazywane od razu, pozostałe trafiają do kolejki w bazie."""
+    if count <= 1:
+        return [generate_exercise(exercise_type, topic, weak_points, lang)]
+
+    single = _exercise_shape(exercise_type, topic, lang)
+    weak = ", ".join(tax.topic_label(t) for t in (weak_points or []) if t != topic)
+    weak_line = f"\nUczeń ma słabe punkty w: {weak}. Jeśli to naturalne, delikatnie je uwzględnij." if weak else ""
+    type_label = tax.EXERCISE_TYPES.get(exercise_type, {}).get("label", exercise_type)
+
+    prompt = (
+        f"Wygeneruj {count} RÓŻNYCH zadań egzaminacyjnych FCE typu: {type_label}.\n"
+        f"{single['focus']}{weak_line}\n"
+        f"Zadania muszą różnić się tematyką i słownictwem — nie powielaj tego samego kontekstu.\n"
+        f"Zwróć TYLKO obiekt JSON postaci {{\"exercises\": [element, element, ...]}} "
+        f"z dokładnie {count} elementami, gdzie element = {single['shape']}\n"
+        f"Pisz zwięźle — pola tekstowe bez zbędnych komentarzy, żeby odpowiedź nie została ucięta.\n"
+        f"Pola z treścią zadania po angielsku; pole 'instructions' w języku: {_lang_name(lang)}."
+    )
+    data = _call_json(prompt, kind="generate")
+    raw = data.get("exercises") or []
+    out = [GeneratedExercise.model_validate(item) for item in raw[:count]]
+    if not out:
+        raise LLMError("Model nie zwrócił żadnego zadania w odpowiedzi wsadowej.")
+    return out
+
+
+def _exercise_shape(exercise_type: str, topic: str, lang: str) -> dict:
+    """Kształt JSON i wytyczne merytoryczne dla danego typu zadania (wspólne dla
+    generowania pojedynczego i wsadowego)."""
+    topic_label = tax.topic_label(topic)
+    if tax.is_writing(exercise_type):
+        return {
+            "shape": '{"instructions": str, "question_text": str}',
+            "focus": (
+                "question_text ma być pełnym poleceniem zadania Writing (temat + wymagania, "
+                f"~140-190 słów). Zadbaj, by temat naturalnie sprzyjał ćwiczeniu obszaru: {topic_label}."
+            ),
+        }
+    if exercise_type == "uoe_part1_mcq_cloze":
+        return {
+            "shape": ('{"instructions": str, "question_text": str, '
+                      '"items": [{"number": int, "options": [str, str, str, str], '
+                      '"answer": str, "answer_notes": str}]}'),
+            "focus": (
+                f"Ułóż spójny, ciekawy tekst po angielsku (~120–160 słów) z DOKŁADNIE "
+                f"{MCQ_ITEM_COUNT} lukami, oznaczonymi w 'question_text' jako (1) ______ , (2) ______ itd. "
+                f"Dla KAŻDEJ luki podaj w 'items' dokładnie 4 warianty (z prefiksami A/B/C/D) i jeden "
+                f"poprawny w polu 'answer' — zapisany identycznie jak w 'options'. Luki mają testować "
+                f"przede wszystkim: {topic_label}; pozostałe mogą sprawdzać inne słownictwo na poziomie B2. "
+                f"Numery w 'items' muszą odpowiadać numerom luk w tekście."
+            ),
+        }
+    if exercise_type == "uoe_part4_key_word_transformation":
+        return {
+            "shape": ('{"instructions": str, "question_text": str, "key_word": str, '
+                      '"answer": str, "answer_notes": str}'),
+            "focus": (
+                f"Przekształcenie ma testować: {topic_label}. question_text zawiera zdanie wyjściowe i "
+                "zdanie z luką do uzupełnienia (2–5 słów, ze słowem-kluczem)."
+            ),
+        }
+    # part2 open cloze, part3 word formation — interfejs ma JEDNO pole odpowiedzi,
+    # więc zadanie musi mieć dokładnie jedną lukę (bez instrukcji model układa
+    # autentyczny tekst z 8 lukami, którego nie da się wpisać w jedno pole).
+    return {
+        "shape": '{"instructions": str, "question_text": str, "answer": str, "answer_notes": str}',
+        "focus": (
+            f"Zadanie ma testować: {topic_label}. question_text to KRÓTKI fragment (1–2 zdania) "
+            "z DOKŁADNIE JEDNĄ luką oznaczoną jako ______ ; 'answer' to jedno słowo lub "
+            "krótkie wyrażenie wypełniające tę lukę. 'answer_notes' ogranicz do jednego "
+            "krótkiego zdania (dopuszczalne warianty)."
+        ),
+    }
+
+
 def generate_exercise(exercise_type: str, topic: str, weak_points: list[str] | None = None,
                       lang: str = "pl") -> GeneratedExercise:
     """Generuje jedno zadanie danego typu, ukierunkowane na wskazany temat."""
-    lang_name = _lang_name(lang)
+    spec = _exercise_shape(exercise_type, topic, lang)
     type_label = tax.EXERCISE_TYPES.get(exercise_type, {}).get("label", exercise_type)
-    topic_label = tax.topic_label(topic)
     weak = ", ".join(tax.topic_label(t) for t in (weak_points or []) if t != topic)
-
-    if tax.is_writing(exercise_type):
-        shape = (
-            '{"instructions": str, "question_text": str}'
-            "  // question_text = pełne polecenie zadania Writing (temat + wymagania, ~140-190 słów)"
-        )
-        focus = f"Zadbaj, by temat naturalnie sprzyjał ćwiczeniu obszaru: {topic_label}."
-    elif exercise_type == "uoe_part1_mcq_cloze":
-        shape = (
-            '{"instructions": str, "question_text": str, '
-            '"items": [{"number": int, "options": [str, str, str, str], "answer": str, "answer_notes": str}]}'
-        )
-        focus = (
-            f"Ułóż jeden spójny, ciekawy tekst po angielsku (~120–160 słów) z DOKŁADNIE "
-            f"{MCQ_ITEM_COUNT} lukami, oznaczonymi w 'question_text' jako (1) ______ , (2) ______ itd. "
-            f"Dla KAŻDEJ luki podaj w 'items' dokładnie 4 warianty (z prefiksami A/B/C/D) i jeden poprawny "
-            f"w polu 'answer' — zapisany identycznie jak w 'options'. Luki mają testować przede wszystkim: "
-            f"{topic_label}; pozostałe mogą sprawdzać inne słownictwo na poziomie B2. "
-            f"Numery w 'items' muszą odpowiadać numerom luk w tekście."
-        )
-    elif exercise_type == "uoe_part4_key_word_transformation":
-        shape = '{"instructions": str, "question_text": str, "key_word": str, "answer": str, "answer_notes": str}'
-        focus = (
-            f"Przekształcenie ma testować: {topic_label}. question_text zawiera zdanie wyjściowe i "
-            "zdanie z luką do uzupełnienia (2–5 słów, ze słowem-kluczem)."
-        )
-    else:  # part2 open cloze, part3 word formation
-        shape = '{"instructions": str, "question_text": str, "answer": str, "answer_notes": str}'
-        focus = f"Zadanie ma testować: {topic_label}."
-
     weak_line = f"\nUczeń ma słabe punkty w: {weak}. Jeśli to naturalne, delikatnie je uwzględnij." if weak else ""
 
     prompt = (
         f"Wygeneruj JEDNO zadanie egzaminacyjne FCE typu: {type_label}.\n"
-        f"{focus}{weak_line}\n"
-        f"Zwróć TYLKO obiekt JSON o kształcie: {shape}\n"
-        f"Pola z treścią zadania (question_text, options, key_word, answer) po angielsku; "
-        f"pole 'instructions' napisz w języku: {lang_name}."
+        f"{spec['focus']}{weak_line}\n"
+        f"Zwróć TYLKO obiekt JSON o kształcie: {spec['shape']}\n"
+        f"Pola z treścią zadania (question_text, options, items, key_word, answer) po angielsku; "
+        f"pole 'instructions' napisz w języku: {_lang_name(lang)}."
     )
     data = _call_json(prompt, kind="generate")
     return GeneratedExercise.model_validate(data)

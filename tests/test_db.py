@@ -1,3 +1,5 @@
+import threading
+
 import pytest
 
 from app import db
@@ -134,3 +136,80 @@ def test_learning_stats_accuracy_and_totals(conn):
 
 def test_learning_stats_accuracy_none_when_no_graded(conn):
     assert db.learning_stats(conn)["accuracy"] is None
+
+
+def test_learning_stats_counts_only_served_exercises(conn):
+    db.insert_exercise(conn, type="t", topic="tenses", prompt={}, served=True)
+    db.insert_exercise(conn, type="t", topic="tenses", prompt={}, served=False)
+    stats = db.learning_stats(conn)
+    assert stats["exercises_generated"] == 1
+    assert stats["exercises_queued"] == 1
+
+
+def test_queue_serves_fifo_then_empties(conn):
+    first = db.insert_exercise(conn, type="t", topic="tenses", prompt={"n": 1}, served=False)
+    second = db.insert_exercise(conn, type="t", topic="tenses", prompt={"n": 2}, served=False)
+    db.insert_exercise(conn, type="t", topic="inny", prompt={"n": 3}, served=False)
+
+    assert db.take_queued_exercise(conn, type="t", topic="tenses")["id"] == first
+    assert db.take_queued_exercise(conn, type="t", topic="tenses")["id"] == second
+    assert db.take_queued_exercise(conn, type="t", topic="tenses") is None  # kolejka wyczerpana
+    # Wydane zadania nie wracają do kolejki.
+    assert db.count_queued_exercises(conn) == 1  # zostało to z innym tematem
+
+
+def test_migration_backfills_legacy_exercises_even_if_column_existed(tmp_path):
+    """Regresja: kolumna `served_at` mogła powstać w wersji bez uzupełniania danych.
+    Wtedy zadania sprzed kolejki miałyby served_at = NULL i zostałyby wydane po raz
+    drugi jako „nowe" oraz wypadłyby ze statystyk."""
+    path = tmp_path / "legacy.db"
+    first = db.get_connection(path)
+    db.insert_exercise(first, type="t", topic="tenses", prompt={}, served=True)
+    # Odtwórz stan „kolumna jest, uzupełnienia nie było".
+    first.execute("UPDATE exercises SET served_at = NULL")
+    first.execute("DELETE FROM settings WHERE key = 'served_at_backfilled'")
+    first.commit()
+    first.close()
+
+    reopened = db.get_connection(path)
+    assert db.count_queued_exercises(reopened) == 0, "stare zadanie musi zostać oznaczone jako wydane"
+    assert db.learning_stats(reopened)["exercises_generated"] == 1
+    reopened.close()
+
+
+def test_migration_does_not_touch_real_queue(tmp_path):
+    """Po wykonanym uzupełnieniu ponowne otwarcie bazy nie może „wydać" kolejki."""
+    path = tmp_path / "queue.db"
+    first = db.get_connection(path)
+    db.insert_exercise(first, type="t", topic="tenses", prompt={}, served=False)
+    first.close()
+
+    reopened = db.get_connection(path)
+    assert db.count_queued_exercises(reopened) == 1
+    reopened.close()
+
+
+def test_concurrent_access_does_not_lose_writes(conn):
+    """Regresja: jedno połączenie sqlite3 używane z wielu wątków threadpoola FastAPI.
+    Bez blokady w db.py ten test gubi zapisy i rzuca 'bad parameter or other API misuse'."""
+    threads, ops = 4, 60
+    failures = []
+
+    def worker(tid):
+        for i in range(ops):
+            try:
+                db.insert_error(conn, source="race", exercise_type="t", topic="tenses",
+                                student_text=f"s{tid}-{i}", correct_text="c", explanation="e")
+                db.list_errors(conn, limit=20)
+                db.topic_error_counts(conn)
+            except Exception as exc:  # noqa: BLE001 - zbieramy dowolny błąd współbieżności
+                failures.append(repr(exc))
+
+    workers = [threading.Thread(target=worker, args=(t,)) for t in range(threads)]
+    for w in workers:
+        w.start()
+    for w in workers:
+        w.join()
+
+    assert failures == []
+    assert len(db.list_errors(conn, limit=10_000)) == threads * ops

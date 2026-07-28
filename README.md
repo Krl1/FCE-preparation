@@ -11,7 +11,8 @@ doborem kolejnych zadań, żebyś oduczał się powtarzanych pomyłek.
 - **Model:** aplikacja wywołuje **Claude Code w trybie headless** (`claude -p … --output-format json`)
   i korzysta z Twojego **logowania z subskrypcji** (`~/.claude/.credentials.json`) — **bez klucza API**.
   Cała ta zależność jest w jednym pliku: `app/llm_client.py`.
-- **Frontend:** statyczna strona (HTML/JS/CSS) z trzema widokami: *Ćwicz*, *Sprawdź z zewnątrz*, *Moje błędy*.
+- **Frontend:** statyczna strona (HTML/JS/CSS, bez frameworków) z pięcioma widokami: *Ćwicz*, *Tipy*,
+  *Sprawdź z zewnątrz*, *Moje błędy*, *Statystyki*.
 - **Język:** przełącznik **PL / EN** w prawym górnym rogu zmienia zarówno interfejs, jak i język
   treści generowanych przez model (polecenia, wyjaśnienia, feedback) — przydatne, gdy pokazujesz
   aplikację osobie anglojęzycznej. Wybór jest zapamiętywany (localStorage), domyślnie polski.
@@ -47,6 +48,11 @@ Następnie otwórz **http://localhost:8000**.
   (każda z 4 wariantami), sprawdzany jednym przyciskiem — dostajesz wynik punktowy (np. 3/5), a przy
   błędnych lukach omówienie wszystkich wariantów. Liczbę luk zmienia stała `MCQ_ITEM_COUNT`
   w `app/llm_client.py`.
+  Zadania powstają **wsadowo**: jedno wywołanie modelu tworzy kilka zadań, pierwsze dostajesz od razu,
+  a pozostałe czekają w kolejce w bazie i pojawiają się **natychmiast** przy kolejnych kliknięciach.
+  Ponieważ koszt wywołania jest zdominowany przez stały narzut trybu headless (~23 tys. tokenów
+  niezależnie od treści), to kilkukrotnie tańsze i szybsze. Wielkość wsadu: `_BATCH_SIZES`
+  / `_DEFAULT_BATCH` w `app/llm_client.py`.
 - **Tipy** — tryb skupienia: aplikacja pokazuje jeden Twój błąd (dobierany losowo, ważony częstością
   Twoich słabych tematów) wraz z wyjaśnieniem i generuje do niego ćwiczenia. Przyciski: *Ćwiczenie*
   (kolejne ćwiczenie do tego samego błędu), *Inny błąd* (zmiana na nowy). U góry **dzienny cel** —
@@ -65,13 +71,19 @@ Następnie otwórz **http://localhost:8000**.
   granica** — aplikacja na kluczu API z lekkim promptem zużyłaby wyraźnie mniej. Dlatego obok
   pokazywany jest też **szacunek kosztu na API bez narzutu** (tylko realny prompt + odpowiedź,
   wyceniony po cenniku modelu — Opus oraz taniej: Sonnet 5), który daje realniejszą liczbę do
-  decyzji o migracji na API.
+  decyzji o migracji na API. Cennik jest w `app/pricing.py`; jeśli użyty model nie ma
+  **potwierdzonej** stawki, szacunek jest wyraźnie oznaczony jako założony (zamiast podawać
+  liczbę jako pewnik).
 
 ## Testy
 
 ```bash
 python3 -m pytest -q
 ```
+
+Pokrycie: warstwa bazy (w tym regresja współbieżności i migracji kolejki), logika doboru
+zadań (`srs`), parsowanie odpowiedzi modelu i deterministyczna ocena luk, endpointy HTTP
+(FastAPI TestClient, bez wywoływania modelu) oraz import wcześniejszych błędów.
 
 ## Konfiguracja (zmienne środowiskowe)
 

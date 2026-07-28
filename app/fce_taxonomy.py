@@ -137,6 +137,13 @@ def topics_for_type(exercise_type: str) -> list[str]:
     return TYPE_TOPICS.get(exercise_type, [])
 
 
+def normalize_topic(topic: str) -> str:
+    """Sprowadza temat do taksonomii. Model potrafi zwrócić wymyślony identyfikator
+    (np. 'past_simple'); taki błąd nie pasowałby do żadnego zestawu tematów i nie
+    wpływałby na dobór zadań — mapujemy go na ogólne 'language'."""
+    return topic if topic in TOPICS else "language"
+
+
 def topic_label(topic: str, lang: str = "pl") -> str:
     """Czytelna etykieta tematu w danym języku (fallback: sam identyfikator)."""
     meta = TOPICS.get(topic, {})

@@ -8,19 +8,22 @@ from __future__ import annotations
 
 import random
 from pathlib import Path
+from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.staticfiles import StaticFiles
 
 from . import db
 from . import fce_taxonomy as tax
-from . import llm_client, srs
+from . import llm_client, pricing, srs
 from .models import (
     CompleteRequest,
     ExercisePublic,
+    GeneratedExercise,
     GenerateRequest,
     GoalRequest,
     GradeRequest,
+    GradingResult,
     TipExerciseRequest,
 )
 
@@ -49,125 +52,197 @@ def get_taxonomy() -> dict:
     return tax.taxonomy_payload()
 
 
+# --- Zadania -----------------------------------------------------------------
+
+def _public_exercise(exercise_id: int, ex_type: str, topic: str, prompt: dict) -> ExercisePublic:
+    """Buduje odpowiedź dla klienta z zapisanego zadania.
+
+    JEDYNE miejsce budujące `ExercisePublic` — dzięki temu reguła „`answer`/`answer_notes`
+    nigdy nie wychodzą do klienta" jest pilnowana w jednym punkcie."""
+    items = [
+        {"number": it.get("number", i + 1), "options": it.get("options", [])}
+        for i, it in enumerate(prompt.get("items") or [])
+    ]
+    return ExercisePublic(
+        id=exercise_id,
+        type=ex_type,
+        topic=topic,
+        instructions=prompt.get("instructions", ""),
+        question_text=prompt.get("question_text", ""),
+        options=prompt.get("options"),
+        items=items or None,
+        key_word=prompt.get("key_word"),
+    )
+
+
+def _store_and_publish(ex_type: str, topic: str, generated: GeneratedExercise,
+                       source: str) -> ExercisePublic:
+    prompt = generated.model_dump()
+    exercise_id = db.insert_exercise(conn, type=ex_type, topic=topic, prompt=prompt, source=source)
+    return _public_exercise(exercise_id, ex_type, topic, prompt)
+
+
 @app.post("/api/exercise", response_model=ExercisePublic)
 def create_exercise(req: GenerateRequest) -> ExercisePublic:
+    """Wydaje zadanie: najpierw z kolejki (natychmiast, bez kosztu), a gdy kolejka pusta —
+    generuje wsadowo kilka zadań jednym wywołaniem modelu i wydaje pierwsze z nich."""
     if req.type not in tax.EXERCISE_TYPES:
         raise HTTPException(status_code=400, detail=f"Nieznany typ ćwiczenia: {req.type}")
 
+    counts = db.topic_error_counts(conn)
     candidates = tax.topics_for_type(req.type)
-    topic = req.topic or srs.choose_topic(candidates, db.topic_error_counts(conn)) or (
+    topic = req.topic or srs.choose_topic(candidates, counts) or (
         candidates[0] if candidates else "general"
     )
 
-    # Słabe punkty = tematy z największą liczbą błędów (do delikatnego wplecenia).
-    weak_points = [row["topic"] for row in db.topic_error_counts(conn)[:5]]
+    queued = db.take_queued_exercise(conn, type=req.type, topic=topic)
+    if queued is not None:
+        return _public_exercise(queued["id"], queued["type"], queued["topic"], queued["prompt"])
 
+    weak_points = [row["topic"] for row in counts[:5]]
     try:
-        generated = llm_client.generate_exercise(req.type, topic, weak_points, lang=req.lang)
+        generated = llm_client.generate_exercises(
+            req.type, topic, weak_points, lang=req.lang, count=llm_client.batch_size(req.type)
+        )
     except llm_client.LLMError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
-    exercise_id = db.insert_exercise(
-        conn, type=req.type, topic=topic, prompt=generated.model_dump(), source="in_app"
-    )
-    return ExercisePublic(
-        id=exercise_id,
-        type=req.type,
-        topic=topic,
-        instructions=generated.instructions,
-        question_text=generated.question_text,
-        options=generated.options,
-        # Luki bez odpowiedzi wzorcowych — te zostają na serwerze.
-        items=[{"number": it.number, "options": it.options} for it in (generated.items or [])] or None,
-        key_word=generated.key_word,
-    )
+    # Pierwsze wydajemy od razu, resztę odkładamy do kolejki na kolejne kliknięcia.
+    for extra in generated[1:]:
+        db.insert_exercise(conn, type=req.type, topic=topic, prompt=extra.model_dump(),
+                           source="in_app", served=False)
+    return _store_and_publish(req.type, topic, generated[0], "in_app")
 
 
-@app.post("/api/grade")
-def grade(req: GradeRequest) -> dict:
-    if req.type not in tax.EXERCISE_TYPES:
-        raise HTTPException(status_code=400, detail=f"Nieznany typ ćwiczenia: {req.type}")
+# --- Ocena -------------------------------------------------------------------
 
-    model_answer = None
-    key_word = req.key_word
-    question_text = req.question_text
-    options = None
-    items = None
-    source = "external"
+class _GradingTask:
+    """Rozstrzygnięte wejście do oceny: skąd wzięło się zadanie i czym jest odpowiedź."""
 
-    if req.exercise_id is not None:
-        stored = db.get_exercise(conn, req.exercise_id)
-        if stored is None:
-            raise HTTPException(status_code=404, detail="Nie znaleziono zadania o tym id.")
-        prompt = stored["prompt"]
-        question_text = prompt.get("question_text", question_text)
-        model_answer = prompt.get("answer")
-        key_word = prompt.get("key_word", key_word)
-        options = prompt.get("options")
-        items = prompt.get("items")
-        source = "in_app"
+    def __init__(self, *, ex_type: str, question_text: str, source: str,
+                 model_answer: Optional[str] = None, key_word: Optional[str] = None,
+                 options: Optional[list[str]] = None, items: Optional[list[dict]] = None,
+                 student_answers: Optional[list[str]] = None, student_answer: str = ""):
+        self.ex_type = ex_type
+        self.question_text = question_text
+        self.source = source
+        self.model_answer = model_answer
+        self.key_word = key_word
+        self.options = options
+        self.items = items
+        self.student_answers = student_answers
+        self.student_answer = student_answer
 
-    if not question_text:
-        raise HTTPException(status_code=400, detail="Brak treści zadania do oceny.")
+    @property
+    def is_multi(self) -> bool:
+        return bool(self.items) and self.student_answers is not None
 
-    # Zadanie wieloczęściowe (multiple-choice cloze) — ocena wszystkich luk naraz.
-    multi = bool(items) and req.student_answers is not None
+
+def _resolve_grading_task(req: GradeRequest) -> _GradingTask:
+    """Ustala treść zadania i klucz odpowiedzi — z bazy (zadanie z aplikacji)
+    albo z żądania (zadanie wklejone z zewnątrz)."""
+    if req.exercise_id is None:
+        if req.type not in tax.EXERCISE_TYPES:
+            raise HTTPException(status_code=400, detail=f"Nieznany typ ćwiczenia: {req.type}")
+        if not req.question_text:
+            raise HTTPException(status_code=400, detail="Brak treści zadania do oceny.")
+        return _GradingTask(
+            ex_type=req.type, question_text=req.question_text, source="external",
+            key_word=req.key_word, student_answer=req.student_answer,
+        )
+
+    stored = db.get_exercise(conn, req.exercise_id)
+    if stored is None:
+        raise HTTPException(status_code=404, detail="Nie znaleziono zadania o tym id.")
+    prompt = stored["prompt"]
+    items = prompt.get("items")
+    # Typ bierzemy z bazy — jest źródłem prawdy; `req.type` może być niespójne.
+    ex_type = stored["type"]
+
+    if items and req.student_answers is None:
+        raise HTTPException(
+            status_code=400,
+            detail="To zadanie ma wiele luk — wyślij odpowiedzi w polu 'student_answers'.",
+        )
+
     student_answer = req.student_answer
-    if multi:
+    if items:
+        # Czytelny zapis do dziennika podejść: "1. B carry out; 2. A take; ..."
         student_answer = "; ".join(
             f"{items[i].get('number', i + 1)}. {a or '(brak)'}"
             for i, a in enumerate(req.student_answers[: len(items)])
         )
 
+    return _GradingTask(
+        ex_type=ex_type, question_text=prompt.get("question_text", ""), source="in_app",
+        model_answer=prompt.get("answer"), key_word=prompt.get("key_word"),
+        options=prompt.get("options"), items=items,
+        student_answers=req.student_answers, student_answer=student_answer,
+    )
+
+
+def _run_grading(task: _GradingTask, lang: str) -> GradingResult:
     try:
-        if multi:
-            result = llm_client.grade_items(
-                req.type, question_text, items, req.student_answers, lang=req.lang,
+        if task.is_multi:
+            return llm_client.grade_items(
+                task.ex_type, task.question_text, task.items, task.student_answers, lang=lang,
             )
-        else:
-            result = llm_client.grade_answer(
-                req.type, question_text, student_answer,
-                model_answer=model_answer, key_word=key_word, options=options, lang=req.lang,
-            )
+        return llm_client.grade_answer(
+            task.ex_type, task.question_text, task.student_answer,
+            model_answer=task.model_answer, key_word=task.key_word,
+            options=task.options, lang=lang,
+        )
     except llm_client.LLMError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
-    # Zapisz podejście i błędy do dziennika.
+
+def _persist_grading(req: GradeRequest, task: _GradingTask, result: GradingResult) -> None:
     db.insert_attempt(
         conn,
         exercise_id=req.exercise_id,
-        type=req.type,
-        student_answer=student_answer,
+        type=task.ex_type,
+        student_answer=task.student_answer,
         is_correct=result.correct,
         grading=result.model_dump(),
     )
     for err in result.errors:
         db.insert_error(
             conn,
-            source=source,
-            exercise_type=req.type,
-            topic=err.topic,
+            source=task.source,
+            exercise_type=task.ex_type,
+            # Model potrafi wymyślić temat — sprowadzamy go do taksonomii,
+            # inaczej błąd nie wpływałby na dobór zadań i psuł statystyki.
+            topic=tax.normalize_topic(err.topic),
             student_text=err.student_text,
             correct_text=err.correct_text,
             explanation=err.explanation,
             severity=err.severity,
         )
 
+
+@app.post("/api/grade")
+def grade(req: GradeRequest) -> dict:
+    task = _resolve_grading_task(req)
+    result = _run_grading(task, req.lang)
+    _persist_grading(req, task, result)
     return result.model_dump()
 
 
+# --- Błędy -------------------------------------------------------------------
+
 @app.get("/api/errors")
 def get_errors(topic: str | None = Query(default=None),
-               type: str | None = Query(default=None),
+               exercise_type: str | None = Query(default=None, alias="type"),
                lang: str = Query(default="pl")) -> list[dict]:
-    rows = db.list_errors(conn, topic=topic, exercise_type=type)
+    rows = db.list_errors(conn, topic=topic, exercise_type=exercise_type)
     for row in rows:
         row["topic_label"] = tax.topic_label(row["topic"], lang)
     return rows
 
 
-@app.get("/api/stats")
-def get_stats(lang: str = Query(default="pl")) -> list[dict]:
+@app.get("/api/stats/topics")
+def get_topic_stats(lang: str = Query(default="pl")) -> list[dict]:
+    """Liczba błędów per temat — „słabe punkty" w zakładce Moje błędy."""
     rows = db.topic_error_counts(conn)
     for row in rows:
         row["topic_label"] = tax.topic_label(row["topic"], lang)
@@ -177,7 +252,7 @@ def get_stats(lang: str = Query(default="pl")) -> list[dict]:
 # --- Zakładka Tipy (tryb skupienia na pojedynczym błędzie) -------------------
 
 def _progress() -> dict:
-    goal = int(db.get_setting(conn, "daily_goal", str(DEFAULT_DAILY_GOAL)))
+    goal = db.get_int_setting(conn, "daily_goal", DEFAULT_DAILY_GOAL)
     return {"done": db.reviews_done_today(conn), "goal": goal, "streak": db.streak(conn, goal)}
 
 
@@ -190,7 +265,13 @@ def _choose_focus_error(exclude_id: int | None = None) -> dict | None:
     topic = srs.choose_topic(candidates, counts) or candidates[0]
     errs = db.list_errors(conn, topic=topic, limit=500)
     if exclude_id is not None:
-        errs = [e for e in errs if e["id"] != exclude_id] or errs
+        remaining = [e for e in errs if e["id"] != exclude_id]
+        if remaining:
+            errs = remaining
+        else:
+            # Wylosowany temat miał tylko ten jeden błąd — sięgnij po dowolny inny,
+            # żeby „Inny błąd" faktycznie zmieniało błąd.
+            errs = [e for e in db.list_errors(conn, limit=2000) if e["id"] != exclude_id] or errs
     return random.choice(errs) if errs else None
 
 
@@ -215,19 +296,7 @@ def tips_exercise(req: TipExerciseRequest) -> ExercisePublic:
         )
     except llm_client.LLMError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
-
-    exercise_id = db.insert_exercise(
-        conn, type=ex_type, topic=err["topic"], prompt=generated.model_dump(), source="drill"
-    )
-    return ExercisePublic(
-        id=exercise_id,
-        type=ex_type,
-        topic=err["topic"],
-        instructions=generated.instructions,
-        question_text=generated.question_text,
-        options=generated.options,
-        key_word=generated.key_word,
-    )
+    return _store_and_publish(ex_type, err["topic"], generated, "drill")
 
 
 @app.post("/api/tips/complete")
@@ -261,33 +330,18 @@ def stats_learning(lang: str = Query(default="pl")) -> dict:
     return data
 
 
-# Cennik API (USD za 1 mln tokenów): (wejście, wyjście).
-_PRICES: dict[str, tuple[float, float]] = {
-    "claude-opus-4-8": (5.0, 25.0),
-    "claude-opus-4-7": (5.0, 25.0),
-    "claude-sonnet-5": (3.0, 15.0),
-    "claude-sonnet-4-6": (3.0, 15.0),
-    "claude-haiku-4-5": (1.0, 5.0),
-}
-_DEFAULT_PRICE = (5.0, 25.0)
-
-
-def _lean_cost(by_model: list[dict], price_override: tuple[float, float] | None = None) -> float:
-    """Szacowany koszt na API bez narzutu Claude Code: tylko realny prompt + odpowiedź."""
-    total = 0.0
-    for m in by_model:
-        rate = price_override or _PRICES.get(m["model"], _DEFAULT_PRICE)
-        total += m["est_input_tokens"] / 1e6 * rate[0] + m["output_tokens"] / 1e6 * rate[1]
-    return total
-
-
 @app.get("/api/stats/usage")
 def stats_usage() -> dict:
+    """Zużycie Claude + szacunek kosztu na API (bez narzutu trybu headless)."""
     data = db.usage_stats(conn)
     by_model = data.get("by_model", [])
+    used_cost, assumed = pricing.lean_cost(by_model)
+    sonnet_cost, _ = pricing.lean_cost(by_model, rate_override=pricing.sonnet_rate())
     data["lean"] = {
-        "used_model": _lean_cost(by_model),
-        "sonnet": _lean_cost(by_model, _PRICES["claude-sonnet-5"]),
+        "used_model": used_cost,
+        "sonnet": sonnet_cost,
+        # Modele bez potwierdzonej stawki — interfejs oznacza taki szacunek jako założony.
+        "assumed_models": assumed,
     }
     return data
 
