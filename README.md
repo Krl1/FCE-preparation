@@ -88,6 +88,64 @@ Następnie otwórz **http://localhost:8000**.
   **potwierdzonej** stawki, szacunek jest wyraźnie oznaczony jako założony (zamiast podawać
   liczbę jako pewnik).
 
+## Uruchomienie w Dockerze (z autostartem po włączeniu laptopa)
+
+Jednorazowo:
+
+```bash
+docker compose up -d --build
+```
+
+Aplikacja jest dostępna pod **http://localhost:8008**.
+
+### Jak działa autostart
+
+Kontener ma politykę `restart: unless-stopped`, a demon Dockera jest włączony w systemd
+(`systemctl is-enabled docker` → `enabled`). Po włączeniu laptopa demon startuje i wznawia
+kontener, jeśli działał w momencie wyłączania komputera. Dwa zachowania warte zapamiętania:
+
+- `docker compose stop` (albo `docker kill`) to **zatrzymanie na Twoje życzenie** — po takim
+  zatrzymaniu kontener nie wróci sam, także po restarcie systemu. Wznawiasz go przez
+  `docker compose start`.
+- Jeśli wolisz, żeby wracał *zawsze*, nawet po ręcznym zatrzymaniu, zmień politykę
+  w `compose.yaml` na `restart: always`.
+
+### Co jest montowane i dlaczego
+
+Obraz **nie zawiera** Claude Code — binarka i konfiguracja są montowane z hosta, więc
+kontener korzysta z Twojego logowania z subskrypcji i nie potrzebuje klucza API:
+
+| Montowanie | Tryb | Po co |
+|---|---|---|
+| `./data` | zapis | baza SQLite (dziennik błędów, postępy, statystyki) zostaje na hoście |
+| `~/.local/bin/claude` + `~/.local/share/claude` | odczyt | natywna binarka Claude Code (aktualizacja na hoście działa po restarcie kontenera) |
+| `~/.claude` | **zapis** | poświadczenia; Claude Code odświeża wygasający token, więc montowanie tylko do odczytu zepsułoby autoryzację po jego wygaśnięciu |
+
+Kontener działa jako UID 1000 (Twój użytkownik) — bez tego nie odczytałby
+`~/.claude/.credentials.json` (prawa 0600).
+
+### Codzienne polecenia
+
+```bash
+docker compose logs -f          # podgląd logów
+docker compose ps               # stan i zdrowie kontenera
+docker compose up -d --build    # po zmianie kodu: przebuduj i wznów
+docker compose stop             # zatrzymaj (nie wróci sam)
+docker compose start            # wznów
+docker compose down             # usuń kontener (dane w ./data zostają)
+```
+
+### O czym warto wiedzieć
+
+- **Nie uruchamiaj jednocześnie kontenera i `uvicorn` na hoście** — oba pisałyby do tej samej
+  bazy SQLite z dwóch procesów, co grozi błędami „database is locked".
+- Port jest wystawiony **tylko na `127.0.0.1`**. Aplikacja nie ma logowania i korzysta z Twojej
+  subskrypcji, więc nie powinna być widoczna dla innych urządzeń w sieci.
+- Kontener zapisuje też do `~/.claude` (odświeżony token, historia wywołań) — dzieli ten katalog
+  z Twoim interaktywnym Claude Code. Wywołania z aplikacji liczą się do limitów tej samej subskrypcji.
+- Sprawdzenie po najbliższym restarcie laptopa (nie mogłem tego zweryfikować bez uprawnień roota):
+  `docker compose ps` powinno pokazać `Up ... (healthy)`.
+
 ## Testy
 
 ```bash

@@ -1,0 +1,22 @@
+# Baza jest montowana jako wolumen — nie wnosimy jej do obrazu.
+data/
+
+.git/
+.gitignore
+__pycache__/
+**/__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# Materiały źródłowe importu i dokumentacja nie są potrzebne w obrazie.
+tests/
+*.md
+*.tsv
+*.txt
+!requirements.txt
+
+Dockerfile
+compose.yaml
+.dockerignore

@@ -1,0 +1,53 @@
+name: fce-trener
+
+services:
+  app:
+    build: .
+    image: fce-trener:latest
+    container_name: fce-trener
+
+    # Autostart po włączeniu laptopa: demon Dockera jest włączony w systemd
+    # (`systemctl is-enabled docker` → enabled), a ta polityka wznawia kontener po
+    # restarcie systemu i po awarii — ale NIE po Twoim ręcznym `docker compose stop`.
+    restart: unless-stopped
+
+    ports:
+      # Tylko pętla lokalna. Aplikacja nie ma logowania i korzysta z Twojej
+      # subskrypcji Claude, więc nie powinna być widoczna dla innych w sieci.
+      # Otwierasz ją w przeglądarce pod http://localhost:8008
+      - "127.0.0.1:8008:8000"
+
+    volumes:
+      # Baza (dziennik błędów, postępy, statystyki) zostaje na hoście.
+      - ./data:/app/data
+
+      # Claude Code z hosta — te same ścieżki co na hoście, żeby symlink
+      # ~/.local/bin/claude wskazywał na podmontowany katalog wersji. Aktualizacja
+      # CLI na hoście jest widoczna w kontenerze po jego restarcie.
+      - ${HOME}/.local/bin/claude:/home/karol/.local/bin/claude:ro
+      - ${HOME}/.local/share/claude:/home/karol/.local/share/claude:ro
+
+      # Konfiguracja i poświadczenia — montowane DO ZAPISU, bo Claude Code odświeża
+      # wygasający token dostępu. Przy montowaniu tylko do odczytu autoryzacja
+      # przestałaby działać po wygaśnięciu tokenu.
+      - ${HOME}/.claude:/home/karol/.claude
+
+    healthcheck:
+      # Obraz slim nie ma curl-a, więc odpytujemy przez Pythona.
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/taxonomy', timeout=5)
+      interval: 60s
+      timeout: 10s
+      start_period: 15s
+      retries: 3
+
+    # Generowanie zestawu zadań to jedno długie wywołanie modelu — nie ograniczamy
+    # czasu życia procesu, ale porządkujemy logi, żeby nie rosły bez końca.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
