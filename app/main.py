@@ -77,6 +77,8 @@ def create_exercise(req: GenerateRequest) -> ExercisePublic:
         instructions=generated.instructions,
         question_text=generated.question_text,
         options=generated.options,
+        # Luki bez odpowiedzi wzorcowych — te zostają na serwerze.
+        items=[{"number": it.number, "options": it.options} for it in (generated.items or [])] or None,
         key_word=generated.key_word,
     )
 
@@ -90,6 +92,7 @@ def grade(req: GradeRequest) -> dict:
     key_word = req.key_word
     question_text = req.question_text
     options = None
+    items = None
     source = "external"
 
     if req.exercise_id is not None:
@@ -101,16 +104,31 @@ def grade(req: GradeRequest) -> dict:
         model_answer = prompt.get("answer")
         key_word = prompt.get("key_word", key_word)
         options = prompt.get("options")
+        items = prompt.get("items")
         source = "in_app"
 
     if not question_text:
         raise HTTPException(status_code=400, detail="Brak treści zadania do oceny.")
 
-    try:
-        result = llm_client.grade_answer(
-            req.type, question_text, req.student_answer,
-            model_answer=model_answer, key_word=key_word, options=options, lang=req.lang,
+    # Zadanie wieloczęściowe (multiple-choice cloze) — ocena wszystkich luk naraz.
+    multi = bool(items) and req.student_answers is not None
+    student_answer = req.student_answer
+    if multi:
+        student_answer = "; ".join(
+            f"{items[i].get('number', i + 1)}. {a or '(brak)'}"
+            for i, a in enumerate(req.student_answers[: len(items)])
         )
+
+    try:
+        if multi:
+            result = llm_client.grade_items(
+                req.type, question_text, items, req.student_answers, lang=req.lang,
+            )
+        else:
+            result = llm_client.grade_answer(
+                req.type, question_text, student_answer,
+                model_answer=model_answer, key_word=key_word, options=options, lang=req.lang,
+            )
     except llm_client.LLMError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
@@ -119,7 +137,7 @@ def grade(req: GradeRequest) -> dict:
         conn,
         exercise_id=req.exercise_id,
         type=req.type,
-        student_answer=req.student_answer,
+        student_answer=student_answer,
         is_correct=result.correct,
         grading=result.model_dump(),
     )

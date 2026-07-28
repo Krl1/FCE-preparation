@@ -43,11 +43,16 @@ Następnie otwórz **http://localhost:8000**.
 
 - **Ćwicz** — wybierz typ zadania (np. *open cloze*, *key word transformation*, *essay*), opcjonalnie
   temat (albo zostaw dobór automatyczny wg Twoich błędów), wygeneruj i rozwiąż. Aplikacja oceni i zapisze błędy.
+  *Multiple-choice cloze* działa jak na egzaminie: jedno kliknięcie tworzy **spójny tekst z 5 lukami**
+  (każda z 4 wariantami), sprawdzany jednym przyciskiem — dostajesz wynik punktowy (np. 3/5), a przy
+  błędnych lukach omówienie wszystkich wariantów. Liczbę luk zmienia stała `MCQ_ITEM_COUNT`
+  w `app/llm_client.py`.
 - **Tipy** — tryb skupienia: aplikacja pokazuje jeden Twój błąd (dobierany losowo, ważony częstością
   Twoich słabych tematów) wraz z wyjaśnieniem i generuje do niego ćwiczenia. Przyciski: *Ćwiczenie*
   (kolejne ćwiczenie do tego samego błędu), *Inny błąd* (zmiana na nowy). U góry **dzienny cel** —
-  ustalasz, ile błędów chcesz dziennie przerobić; błąd liczy się po sprawdzeniu przynajmniej jednego
-  ćwiczenia do niego. Obok celu widać **serię** (🔥) — liczbę kolejnych dni z osiągniętym celem.
+  ustalasz, ile błędów chcesz dziennie przerobić; błąd liczy się (+1) dopiero po **poprawnym**
+  rozwiązaniu przynajmniej jednego ćwiczenia do niego (maks. +1 na błąd dziennie, niezależnie od
+  liczby prób). Obok celu widać **serię** (🔥) — liczbę kolejnych dni z osiągniętym celem.
 - **Sprawdź z zewnątrz** — wklej zadanie z książki i swoją odpowiedź; aplikacja sprawdzi je i zaloguje błędy.
 - **Moje błędy** — przegląd słabych punktów i pełny dziennik błędów. Przy każdym błędzie przycisk
   **Ćwicz ten błąd** przenosi do zakładki *Tipy* z tym błędem i od razu generuje do niego ćwiczenie.

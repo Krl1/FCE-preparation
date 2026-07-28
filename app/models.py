@@ -9,6 +9,23 @@ from pydantic import BaseModel, Field
 
 # --- Generowanie zadań -------------------------------------------------------
 
+class ExerciseItem(BaseModel):
+    """Pojedyncza luka w zadaniu wieloczęściowym (multiple-choice cloze).
+    `answer`/`answer_notes` zostają po stronie serwera."""
+
+    number: int = Field(description="Numer luki (1..n), zgodny z oznaczeniem w question_text.")
+    options: list[str] = Field(description="Warianty odpowiedzi (dokładnie 4).")
+    answer: Optional[str] = Field(default=None, description="Poprawny wariant.")
+    answer_notes: Optional[str] = Field(default=None)
+
+
+class ExerciseItemPublic(BaseModel):
+    """Luka widziana przez klienta — bez poprawnej odpowiedzi."""
+
+    number: int
+    options: list[str]
+
+
 class GeneratedExercise(BaseModel):
     """Zadanie zwrócone przez LLM. `answer`/`answer_notes` są trzymane po stronie
     serwera i NIE wysyłane do klienta przed sprawdzeniem odpowiedzi."""
@@ -16,7 +33,11 @@ class GeneratedExercise(BaseModel):
     instructions: str = Field(description="Polecenie dla ucznia.")
     question_text: str = Field(description="Treść zadania (tekst z luką, zdanie do przekształcenia, temat wypracowania).")
     options: Optional[list[str]] = Field(
-        default=None, description="Warianty odpowiedzi dla zadań typu multiple-choice."
+        default=None, description="Warianty odpowiedzi dla zadań typu multiple-choice (jedna luka)."
+    )
+    items: Optional[list[ExerciseItem]] = Field(
+        default=None,
+        description="Wiele luk w jednym zadaniu (multiple-choice cloze); wtedy `options` jest puste.",
     )
     key_word: Optional[str] = Field(
         default=None, description="Słowo-klucz w zadaniach key word transformation."
@@ -38,6 +59,7 @@ class ExercisePublic(BaseModel):
     instructions: str
     question_text: str
     options: Optional[list[str]] = None
+    items: Optional[list[ExerciseItemPublic]] = None
     key_word: Optional[str] = None
 
 
@@ -69,12 +91,28 @@ class OptionNote(BaseModel):
     comment: str = Field(description="Krótko, dlaczego wariant jest poprawny/błędny.")
 
 
+class ItemResult(BaseModel):
+    """Wynik oceny jednej luki w zadaniu wieloczęściowym."""
+
+    number: int
+    correct: bool
+    student_option: Optional[str] = None
+    correct_option: str
+    comment: str = Field(description="Jedno zdanie: dlaczego poprawna odpowiedź jest właściwa.")
+    option_notes: Optional[list[OptionNote]] = Field(
+        default=None, description="Omówienie wariantów — wypełniane dla luk błędnie rozwiązanych."
+    )
+
+
 class GradingResult(BaseModel):
     """Wynik oceny zadania (Use of English lub Writing)."""
 
     correct: Optional[bool] = Field(
         default=None, description="Czy odpowiedź jest w pełni poprawna (Use of English)."
     )
+    # Zadania wieloczęściowe (multiple-choice cloze): wynik per luka.
+    items: Optional[list[ItemResult]] = Field(default=None)
+    score: Optional[str] = Field(default=None, description="Np. '3/5' dla zadań wieloczęściowych.")
     corrected: Optional[str] = Field(
         default=None, description="Poprawiona wersja odpowiedzi ucznia."
     )
@@ -97,7 +135,9 @@ class GenerateRequest(BaseModel):
 
 class GradeRequest(BaseModel):
     type: str
-    student_answer: str
+    student_answer: str = ""
+    # Zadania wieloczęściowe: odpowiedź na każdą lukę ("" = brak odpowiedzi).
+    student_answers: Optional[list[str]] = None
     exercise_id: Optional[int] = None  # None → zadanie wklejone z zewnątrz
     # Dla zadań z zewnątrz klient podaje treść bezpośrednio:
     question_text: Optional[str] = None

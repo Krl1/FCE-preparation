@@ -118,6 +118,27 @@ h2 { font-size: 1.05rem; }
 .badge.major { background: var(--bad-bg); color: var(--bad); }
 .badge.minor { background: var(--bg); color: var(--muted); }
 
+/* Zadanie wieloczęściowe (multiple-choice cloze): luki 1..n */
+.gap-items { display: grid; gap: .55rem; margin-bottom: 1rem; }
+.gap-item { display: flex; align-items: center; gap: .7rem; padding: .4rem .5rem; border: 1px solid var(--line); border-radius: 8px; background: #fff; }
+.gap-num { flex: 0 0 1.7rem; height: 1.7rem; display: grid; place-items: center; border-radius: 50%; background: var(--accent); color: var(--accent-ink); font-size: .82rem; font-weight: 700; }
+.options-inline { display: flex; flex-wrap: wrap; gap: .35rem; margin: 0; flex: 1; }
+.options-inline label { padding: .28rem .6rem; font-size: .92rem; }
+
+/* Wynik per luka */
+.res-item { border: 1px solid var(--line); border-radius: 8px; padding: .6rem .75rem; margin: .5rem 0; }
+.res-item.ok { border-left: 3px solid var(--good); }
+.res-item.bad { border-left: 3px solid var(--bad); }
+.ri-head { display: flex; align-items: baseline; gap: .5rem; flex-wrap: wrap; }
+.ri-num { flex: 0 0 1.5rem; height: 1.5rem; display: grid; place-items: center; border-radius: 50%; background: var(--bg); border: 1px solid var(--line); font-size: .78rem; font-weight: 700; }
+.ri-mark { font-weight: 700; }
+.res-item.ok .ri-mark { color: var(--good); }
+.res-item.bad .ri-mark { color: var(--bad); }
+.res-item .from { color: var(--bad); text-decoration: line-through; }
+.res-item .to { color: var(--good); font-weight: 600; }
+.res-item .why { color: var(--muted); font-size: .9rem; margin-top: .3rem; }
+.verdict.partial { background: #fdf3e3; color: var(--warn); }
+
 .opt-notes { display: grid; gap: .35rem; margin: .5rem 0; }
 .opt-note { display: flex; gap: .6rem; align-items: baseline; padding: .45rem .65rem; border-radius: 6px; }
 .opt-note.ok { background: var(--good-bg); }

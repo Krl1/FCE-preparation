@@ -152,6 +152,10 @@ def _call_json(prompt: str, kind: str = "other") -> dict:
 
 # --- Funkcje domenowe --------------------------------------------------------
 
+# Liczba luk w zadaniu typu multiple-choice cloze (FCE Part 1).
+MCQ_ITEM_COUNT = 5
+
+
 def generate_exercise(exercise_type: str, topic: str, weak_points: list[str] | None = None,
                       lang: str = "pl") -> GeneratedExercise:
     """Generuje jedno zadanie danego typu, ukierunkowane na wskazany temat."""
@@ -167,8 +171,18 @@ def generate_exercise(exercise_type: str, topic: str, weak_points: list[str] | N
         )
         focus = f"Zadbaj, by temat naturalnie sprzyjał ćwiczeniu obszaru: {topic_label}."
     elif exercise_type == "uoe_part1_mcq_cloze":
-        shape = '{"instructions": str, "question_text": str, "options": [str, str, str, str], "answer": str, "answer_notes": str}'
-        focus = f"Luka ma testować: {topic_label}. Podaj DOKŁADNIE 4 warianty, jeden poprawny."
+        shape = (
+            '{"instructions": str, "question_text": str, '
+            '"items": [{"number": int, "options": [str, str, str, str], "answer": str, "answer_notes": str}]}'
+        )
+        focus = (
+            f"Ułóż jeden spójny, ciekawy tekst po angielsku (~120–160 słów) z DOKŁADNIE "
+            f"{MCQ_ITEM_COUNT} lukami, oznaczonymi w 'question_text' jako (1) ______ , (2) ______ itd. "
+            f"Dla KAŻDEJ luki podaj w 'items' dokładnie 4 warianty (z prefiksami A/B/C/D) i jeden poprawny "
+            f"w polu 'answer' — zapisany identycznie jak w 'options'. Luki mają testować przede wszystkim: "
+            f"{topic_label}; pozostałe mogą sprawdzać inne słownictwo na poziomie B2. "
+            f"Numery w 'items' muszą odpowiadać numerom luk w tekście."
+        )
     elif exercise_type == "uoe_part4_key_word_transformation":
         shape = '{"instructions": str, "question_text": str, "key_word": str, "answer": str, "answer_notes": str}'
         focus = (
@@ -230,6 +244,94 @@ def generate_drill(topic: str, student_text: str, correct_text: str, explanation
     if ex_type not in _DRILL_TYPES:
         ex_type = "uoe_part2_open_cloze"
     return ex_type, GeneratedExercise.model_validate(data)
+
+
+def grade_items(exercise_type: str, question_text: str, items: list[dict],
+                student_answers: list[str], lang: str = "pl") -> GradingResult:
+    """Ocenia zadanie wieloczęściowe (multiple-choice cloze) — wszystkie luki w jednym wywołaniu.
+
+    Poprawność każdej luki jest ustalana deterministycznie po stronie serwera (porównanie
+    z zapisaną odpowiedzią wzorcową); model dostarcza wyłącznie wyjaśnienia."""
+    lang_name = _lang_name(lang)
+    valid_topics = ", ".join(tax.topics_for_type(exercise_type)) or ", ".join(tax.TOPICS.keys())
+
+    def norm(s: str) -> str:
+        """Normalizuje wariant do porównania: ucina prefiks 'A' / 'A.' / 'A)',
+        wielkość liter i kropkę na końcu ('B heat' i 'heat' są równoważne)."""
+        s = (s or "").strip().rstrip(".").lower()
+        head, _, rest = s.partition(" ")
+        if rest and len(head.rstrip(").")) == 1 and head.rstrip(").").isalpha():
+            return rest.strip()
+        return s
+
+    # Deterministyczna ocena + materiał dla modelu.
+    verdicts, lines = [], []
+    for idx, item in enumerate(items):
+        given = student_answers[idx] if idx < len(student_answers) else ""
+        answer = item.get("answer") or ""
+        is_ok = bool(given) and norm(given) == norm(answer)
+        verdicts.append({
+            "number": item.get("number", idx + 1),
+            "correct": is_ok,
+            "student_option": given or None,
+            "correct_option": answer,
+        })
+        lines.append(
+            f"Luka {item.get('number', idx + 1)}: warianty={item.get('options')}; "
+            f"poprawny='{answer}'; odpowiedź ucznia='{given or '(brak)'}' → "
+            f"{'POPRAWNA' if is_ok else 'BŁĘDNA'}"
+        )
+
+    wrong_numbers = [v["number"] for v in verdicts if not v["correct"]]
+    correct_count = sum(1 for v in verdicts if v["correct"])
+
+    shape = (
+        '{"feedback": str, '
+        '"items": [{"number": int, "comment": str, '
+        '"option_notes": [{"option": str, "is_correct": bool, "comment": str}]|null}], '
+        '"errors": [{"topic": str, "student_text": str, "correct_text": str, "explanation": str, "severity": "minor"|"major"}]}'
+    )
+    prompt = (
+        "Uczeń rozwiązał zadanie FCE typu multiple-choice cloze (tekst z lukami). "
+        "Poprawność każdej luki została już ustalona — Twoim zadaniem jest tylko wyjaśnić.\n\n"
+        f"Tekst zadania:\n{question_text}\n\n"
+        "Wyniki poszczególnych luk:\n" + "\n".join(lines) + "\n\n"
+        f"Dla KAŻDEJ luki podaj w 'items' krótki 'comment' (jedno zdanie) uzasadniający poprawny wariant.\n"
+        f"Dla luk BŁĘDNIE rozwiązanych ({wrong_numbers or 'brak'}) wypełnij dodatkowo 'option_notes' — "
+        "omówienie wszystkich 4 wariantów (is_correct + jedno zdanie, dlaczego pasuje/nie pasuje). "
+        "Dla luk poprawnych ustaw 'option_notes' na null.\n"
+        "W 'errors' umieść po jednej pozycji dla każdej BŁĘDNIE rozwiązanej luki "
+        "(student_text = wariant wybrany przez ucznia, correct_text = wariant poprawny). "
+        f"Pole 'topic' MUSI być jednym z: {valid_topics}.\n"
+        f"'feedback' to maksymalnie 1–2 krótkie zdania podsumowania (wynik: {correct_count}/{len(items)}).\n"
+        f"Pola 'feedback', 'comment', 'explanation' napisz w języku: {lang_name}; warianty i poprawki po angielsku.\n"
+        f"Zwróć TYLKO obiekt JSON o kształcie: {shape}"
+    )
+    data = _call_json(prompt, kind="grade")
+
+    # Scal wyjaśnienia modelu z deterministycznymi werdyktami serwera.
+    notes_by_num = {}
+    for entry in data.get("items") or []:
+        try:
+            notes_by_num[int(entry.get("number"))] = entry
+        except (TypeError, ValueError):
+            continue
+    merged = []
+    for verdict in verdicts:
+        entry = notes_by_num.get(verdict["number"], {})
+        merged.append({
+            **verdict,
+            "comment": str(entry.get("comment") or ""),
+            "option_notes": entry.get("option_notes") if not verdict["correct"] else None,
+        })
+
+    return GradingResult.model_validate({
+        "correct": correct_count == len(items),
+        "score": f"{correct_count}/{len(items)}",
+        "items": merged,
+        "feedback": str(data.get("feedback") or ""),
+        "errors": data.get("errors") or [],
+    })
 
 
 def grade_answer(exercise_type: str, question_text: str, student_answer: str,

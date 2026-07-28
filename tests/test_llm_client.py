@@ -37,6 +37,56 @@ def test_call_json_raises_after_second_failure(monkeypatch):
         llm_client._call_json("prompt")
 
 
+def _stub_items_response(monkeypatch, feedback="ok"):
+    """Zaślepia odpowiedź modelu dla grade_items (same wyjaśnienia — werdykty liczy serwer)."""
+    payload = {
+        "feedback": feedback,
+        "items": [
+            {"number": 1, "comment": "c1", "option_notes": None},
+            {"number": 2, "comment": "c2",
+             "option_notes": [{"option": "A x", "is_correct": False, "comment": "źle"}]},
+        ],
+        "errors": [],
+    }
+    monkeypatch.setattr(llm_client, "_invoke", lambda prompt, kind="other": json.dumps(payload))
+
+
+ITEMS = [
+    {"number": 1, "options": ["A warm", "B heat"], "answer": "A warm"},
+    {"number": 2, "options": ["A x", "B y"], "answer": "B y"},
+]
+
+
+def test_grade_items_all_correct(monkeypatch):
+    _stub_items_response(monkeypatch)
+    r = llm_client.grade_items("uoe_part1_mcq_cloze", "tekst", ITEMS, ["A warm", "B y"])
+    assert r.correct is True
+    assert r.score == "2/2"
+    assert [i.correct for i in r.items] == [True, True]
+    # Dla poprawnych luk nie pokazujemy omówienia wariantów.
+    assert all(i.option_notes is None for i in r.items)
+
+
+def test_grade_items_partial_and_normalizes_option_prefix(monkeypatch):
+    _stub_items_response(monkeypatch)
+    # "warm" bez prefiksu "A " ma zostać uznane za poprawne; druga luka błędna.
+    r = llm_client.grade_items("uoe_part1_mcq_cloze", "tekst", ITEMS, ["warm", "A x"])
+    assert r.correct is False
+    assert r.score == "1/2"
+    assert [i.correct for i in r.items] == [True, False]
+    assert r.items[1].student_option == "A x"
+    assert r.items[1].correct_option == "B y"
+    assert r.items[1].option_notes  # omówienie tylko dla błędnej luki
+
+
+def test_grade_items_unanswered_gap_counts_as_wrong(monkeypatch):
+    _stub_items_response(monkeypatch)
+    r = llm_client.grade_items("uoe_part1_mcq_cloze", "tekst", ITEMS, ["A warm", ""])
+    assert r.score == "1/2"
+    assert r.items[1].correct is False
+    assert r.items[1].student_option is None
+
+
 def test_grade_answer_parses_into_model(monkeypatch):
     payload = {
         "correct": False,

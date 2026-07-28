@@ -73,6 +73,8 @@ const I18N = {
     "answer.ph": "Twoja odpowiedź…",
     "writing.ph": "Napisz swój tekst po angielsku…",
     "alert.answer": "Wpisz lub wybierz odpowiedź.",
+    "alert.answerAll": "Odpowiedz na wszystkie luki.",
+    "verdict.score": "Wynik:",
     "alert.fillExternal": "Uzupełnij treść zadania i odpowiedź.",
     "verdict.correct": "✓ Poprawnie",
     "verdict.incorrect": "✗ Do poprawy",
@@ -156,6 +158,8 @@ const I18N = {
     "answer.ph": "Your answer…",
     "writing.ph": "Write your text in English…",
     "alert.answer": "Enter or select an answer.",
+    "alert.answerAll": "Answer every gap.",
+    "verdict.score": "Score:",
     "alert.fillExternal": "Fill in the exercise text and your answer.",
     "verdict.correct": "✓ Correct",
     "verdict.incorrect": "✗ Needs work",
@@ -335,7 +339,23 @@ function renderExercise(ex) {
 
   const area = $("#answer-area");
   area.innerHTML = "";
-  if (ex.options && ex.options.length) {
+  if (ex.items && ex.items.length) {
+    // Zadanie wieloczęściowe: jedna grupa wariantów na każdą lukę.
+    const wrap = el("div", "gap-items");
+    ex.items.forEach((item) => {
+      const block = el("div", "gap-item");
+      block.appendChild(el("span", "gap-num", esc(String(item.number))));
+      const opts = el("div", "options options-inline");
+      item.options.forEach((opt) => {
+        const lbl = el("label");
+        lbl.innerHTML = `<input type="radio" name="mcq-${esc(String(item.number))}" value="${esc(opt)}"> ${esc(opt)}`;
+        opts.appendChild(lbl);
+      });
+      block.appendChild(opts);
+      wrap.appendChild(block);
+    });
+    area.appendChild(wrap);
+  } else if (ex.options && ex.options.length) {
     const wrap = el("div", "options");
     ex.options.forEach((opt) => {
       const lbl = el("label");
@@ -355,18 +375,29 @@ function renderExercise(ex) {
 
 $("#btn-grade").addEventListener("click", async () => {
   if (!currentExercise) return;
-  let answer;
-  const checked = document.querySelector('input[name="mcq"]:checked');
-  if (checked) answer = checked.value;
-  else { const inp = $("#practice-answer"); answer = inp ? inp.value.trim() : ""; }
-  if (!answer) { alert(t("alert.answer")); return; }
+  const body = { type: currentExercise.type, exercise_id: currentExercise.id, lang: LANG };
+
+  if (currentExercise.items && currentExercise.items.length) {
+    const answers = currentExercise.items.map((item) => {
+      const c = document.querySelector(`input[name="mcq-${item.number}"]:checked`);
+      return c ? c.value : "";
+    });
+    if (answers.some((a) => !a)) { alert(t("alert.answerAll")); return; }
+    body.student_answers = answers;
+  } else {
+    const checked = document.querySelector('input[name="mcq"]:checked');
+    const inp = $("#practice-answer");
+    const answer = checked ? checked.value : (inp ? inp.value.trim() : "");
+    if (!answer) { alert(t("alert.answer")); return; }
+    body.student_answer = answer;
+  }
 
   showLoader("loader.grading");
   try {
     const result = await api("/api/grade", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ type: currentExercise.type, exercise_id: currentExercise.id, student_answer: answer, lang: LANG }),
+      body: JSON.stringify(body),
     });
     renderResult("#practice-result", result);
   } catch (e) {
@@ -403,7 +434,10 @@ function renderResult(sel, r) {
   box.innerHTML = "";
   box.classList.remove("hidden");
 
-  if (r.correct !== null && r.correct !== undefined) {
+  if (r.score) {
+    box.appendChild(el("div", "verdict " + (r.correct ? "good" : "partial"),
+      t("verdict.score") + " " + esc(r.score)));
+  } else if (r.correct !== null && r.correct !== undefined) {
     box.appendChild(el("div", "verdict " + (r.correct ? "good" : "bad"),
       r.correct ? t("verdict.correct") : t("verdict.incorrect")));
   }
@@ -426,6 +460,36 @@ function renderResult(sel, r) {
   if (r.corrected) box.appendChild(el("div", "corrected", `<strong>${esc(t("corrected.label"))}</strong> ` + esc(r.corrected)));
   if (r.feedback) box.appendChild(el("p", "feedback", esc(r.feedback)));
 
+  // Zadanie wieloczęściowe: wynik i omówienie każdej luki.
+  if (Array.isArray(r.items) && r.items.length) {
+    r.items.forEach((item) => {
+      const block = el("div", "res-item " + (item.correct ? "ok" : "bad"));
+      let head =
+        `<span class="ri-num">${esc(String(item.number))}</span>` +
+        `<span class="ri-mark">${item.correct ? "✓" : "✗"}</span>`;
+      if (item.correct) {
+        head += `<span class="to">${esc(item.correct_option)}</span>`;
+      } else {
+        head += `<span class="from">${esc(item.student_option || "—")}</span> → ` +
+                `<span class="to">${esc(item.correct_option)}</span>`;
+      }
+      block.innerHTML = `<div class="ri-head">${head}</div>` +
+        (item.comment ? `<div class="why">${esc(item.comment)}</div>` : "");
+      if (Array.isArray(item.option_notes) && item.option_notes.length) {
+        const wrap = el("div", "opt-notes");
+        item.option_notes.forEach((o) => {
+          const note = el("div", "opt-note " + (o.is_correct ? "ok" : "bad"));
+          note.innerHTML =
+            `<span class="opt">${o.is_correct ? "✓" : "✗"} ${esc(o.option)}</span>` +
+            `<span class="opt-why">${esc(o.comment)}</span>`;
+          wrap.appendChild(note);
+        });
+        block.appendChild(wrap);
+      }
+      box.appendChild(block);
+    });
+  }
+
   if (Array.isArray(r.option_notes) && r.option_notes.length) {
     box.appendChild(el("h2", null, t("result.optionNotes")));
     const wrap = el("div", "opt-notes");
@@ -439,7 +503,9 @@ function renderResult(sel, r) {
     box.appendChild(wrap);
   }
 
-  if (Array.isArray(r.errors) && r.errors.length) {
+  const hasItems = Array.isArray(r.items) && r.items.length;
+  if (Array.isArray(r.errors) && r.errors.length && !hasItems) {
+    // Przy zadaniach wieloczęściowych bloki per luka już pokazują błędy — nie dublujemy.
     box.appendChild(el("h2", null, t("errors.detected") + " (" + r.errors.length + ")"));
     r.errors.forEach((err) => {
       const item = el("div", "err-item");
@@ -641,12 +707,15 @@ $("#tips-grade").addEventListener("click", async () => {
       body: JSON.stringify({ type: tipsExercise.type, exercise_id: tipsExercise.id, student_answer: answer, lang: LANG }),
     });
     renderResult("#tips-result", result);
-    // Błąd liczy się do dziennego celu po zrobieniu ćwiczenia.
-    const progress = await api("/api/tips/complete", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ error_id: tipsError.id }),
-    });
-    renderGoal(progress);
+    // Błąd liczy się do dziennego celu dopiero po POPRAWNYM rozwiązaniu ćwiczenia
+    // (maks. +1 na błąd/dzień — zapis jest idempotentny po stronie serwera).
+    if (result.correct === true) {
+      const progress = await api("/api/tips/complete", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ error_id: tipsError.id }),
+      });
+      renderGoal(progress);
+    }
     $("#tips-generate").textContent = t("tips.more");
   } catch (e) { showError("#tips-result", e.message); }
   finally { hideLoader(); }
