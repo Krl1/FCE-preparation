@@ -189,6 +189,23 @@ class GoalRequest(BaseModel):
     goal: int
 
 
+class ErrorCreate(BaseModel):
+    """Błąd zgłoszony do dziennika po zatwierdzeniu przez ucznia.
+
+    Ocena zwraca błędy jako *propozycje* — do dziennika trafiają dopiero stąd,
+    więc pole `topic` przychodzi od klienta i musi zostać znormalizowane po stronie
+    serwera (klientowi nie wolno wstawić tematu spoza taksonomii)."""
+
+    topic: str
+    student_text: str
+    correct_text: str
+    explanation: str = ""
+    severity: str = "minor"
+    # Skąd pochodzi błąd: gdy podane, typ i źródło bierzemy z zapisanego zadania.
+    exercise_id: Optional[int] = None
+    exercise_type: Optional[str] = None
+
+
 class DisputeRequest(BaseModel):
     """Zastrzeżenie do wyjaśnienia wystawionego przez model."""
 

@@ -193,6 +193,23 @@ h2 { font-size: 1.05rem; }
 }
 .practice-btn:hover { border-color: var(--accent); background: var(--bg); }
 
+/* Zatwierdzanie błędów do dziennika (ocena sama nic nie zapisuje) */
+.pending-bar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: .6rem;
+  margin: .6rem 0; padding: .5rem .7rem; border-radius: 8px;
+  background: #fdf3e3; border: 1px solid #f0dcb4;
+}
+.pending-note { margin: 0; font-size: .88rem; color: var(--warn); }
+.err-add { display: inline-flex; align-items: center; gap: .4rem; }
+.add-btn, .add-all {
+  background: transparent; border: 1px dashed var(--accent); border-radius: 8px;
+  padding: .32rem .75rem; font: inherit; font-size: .85rem; color: var(--accent); cursor: pointer;
+}
+.add-btn:hover, .add-all:hover { background: var(--good-bg); border-style: solid; }
+.add-all { margin-left: auto; }
+.add-done { font-size: .85rem; font-weight: 700; color: var(--good); }
+.res-item .err-add { margin-top: .4rem; }
+
 /* Akcje pod wpisem w dzienniku: ćwicz / usuń */
 .err-actions { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; }
 .err-actions .practice-btn { margin-top: 0; }

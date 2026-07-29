@@ -43,7 +43,8 @@ Następnie otwórz **http://localhost:8000**.
 ## Użycie
 
 - **Ćwicz zadania** — wybierz typ zadania (np. *open cloze*, *key word transformation*, *essay*), opcjonalnie
-  temat (albo zostaw dobór automatyczny wg Twoich błędów), wygeneruj i rozwiąż. Aplikacja oceni i zapisze błędy.
+  temat (albo zostaw dobór automatyczny wg Twoich błędów), wygeneruj i rozwiąż. Aplikacja oceni odpowiedź
+  i **zaproponuje** błędy do dziennika — zapisuje je dopiero po Twoim zatwierdzeniu (patrz *Cykl życia błędu*).
   **Każda część Use of English daje 5 zadań na jedno kliknięcie**, sprawdzanych jednym przyciskiem —
   dostajesz wynik punktowy (np. 3/5) i omówienie każdej pozycji:
   - *Part 1 (multiple-choice cloze)* — jeden spójny tekst z 5 lukami, każda z 4 wariantami;
@@ -74,7 +75,8 @@ Następnie otwórz **http://localhost:8000**.
 
   Uwaga na skalę: przy celu 5 błędów dziennie oznacza to 25 poprawnych ćwiczeń — jeśli to za dużo,
   obniż cel w polu *Dzienny cel*.
-- **Sprawdź z zewnątrz** — wklej zadanie z książki i swoją odpowiedź; aplikacja sprawdzi je i zaloguje błędy.
+- **Sprawdź z zewnątrz** — wklej zadanie z książki i swoją odpowiedź; aplikacja sprawdzi je i zaproponuje
+  błędy do zatwierdzenia.
 - **Moje błędy** — przegląd słabych punktów i pełny dziennik błędów. Przy każdym błędzie przycisk
   **Ćwicz ten błąd** przenosi do zakładki *Ćwicz błędy* z tym błędem i od razu generuje do niego ćwiczenie,
   a **Usuń błąd** (z potwierdzeniem w miejscu) wyrzuca go z dziennika.
@@ -91,11 +93,27 @@ Następnie otwórz **http://localhost:8000**.
   **potwierdzonej** stawki, szacunek jest wyraźnie oznaczony jako założony (zamiast podawać
   liczbę jako pewnik).
 
-### Cykl życia błędu (nic nie znika samo)
+### Cykl życia błędu: nic nie wchodzi i nic nie wychodzi samo
+
+**Ocena nie zapisuje błędów do dziennika.** Zwraca je jako **propozycje** — przy każdej jest
+przycisk **+ Dodaj do dziennika**, a nad listą pasek z przypomnieniem i (gdy propozycji jest
+więcej) **+ Dodaj wszystkie**. Przy zadaniach wieloczęściowych przycisk stoi przy tej luce,
+z której błąd pochodzi; propozycje niepowiązane z żadną luką lądują w osobnej sekcji, żeby nic
+nie przepadło po cichu. Zapisywane jest natomiast **podejście** (do statystyk skuteczności) —
+niezależnie od tego, co zatwierdzisz.
+
+Dlaczego tak: łatwiej zatwierdzić trzy trafne wpisy, niż potem szukać w dzienniku dziesięciu
+śmieci do usunięcia. Skutki uboczne, o których warto wiedzieć: *słabe punkty*, dobór tematów
+i licznik „Błędy w dzienniku" widzą **tylko zatwierdzone** błędy, a temat propozycji jest
+sprowadzany do taksonomii już przy ocenie — zatwierdzasz dokładnie to, co zostanie zapisane
+(serwer normalizuje go ponownie przy zapisie, bo dane z przeglądarki nie są wiarygodne).
+
+Zastrzeżenie (**Nie zgadzam się**) dotyczy wpisów, które **są** w dzienniku — propozycji nie
+trzeba podważać, wystarczy jej nie zatwierdzać.
 
 Błąd raz zapisany **zostaje w dzienniku na zawsze** — nie ma automatycznego wygaszania po
 n-krotnym przerobieniu. Tabela `reviews` notuje tylko, że danego dnia zaliczyłeś błąd do celu,
-i **nie wpływa na dobór**: `_choose_focus_error` waży wyłącznie liczbą i świeżością błędów
+i **nie wpływa na dobór**: `_choose_focus_error` waży wyłącznie liczbą i świeżością wpisów
 w temacie. Praktyczny skutek: błąd opanowany dziesięć razy może w „Ćwicz błędy" wracać tak samo
 często jak nowy.
 

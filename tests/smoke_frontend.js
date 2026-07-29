@@ -139,7 +139,7 @@ const KWT_EX = {
 };
 const MULTI_RESULT = {
   correct: false, score: "1/2", feedback: "Wynik 1/2.",
-  errors: [{ id: 11, item_number: 2, topic: "collocations", student_text: "A c",
+  errors: [{ id: null, item_number: 2, topic: "collocations", student_text: "A c",
              correct_text: "B d", explanation: "e", severity: "major" }],
   items: [
     { number: 1, correct: true, student_option: "A a", correct_option: "A a", comment: "ok", option_notes: null },
@@ -151,6 +151,16 @@ const MULTI_RESULT = {
 const WRITING_RESULT = {
   correct: null, feedback: "fb", band: "Band 3", errors: [],
   scores: [{ criterion: "content", score: 3, comment: "c" }],
+};
+/** Dwie propozycje niepowiązane z lukami — dla przycisku „Dodaj wszystkie". */
+const TWO_CANDIDATES_RESULT = {
+  correct: false, feedback: "fb",
+  errors: [
+    { id: null, item_number: null, topic: "tenses", student_text: "a1",
+      correct_text: "b1", explanation: "e1", severity: "minor" },
+    { id: null, item_number: null, topic: "articles", student_text: "a2",
+      correct_text: "b2", explanation: "e2", severity: "major" },
+  ],
 };
 
 const routes = {
@@ -191,16 +201,20 @@ const routes = {
     proposed_changes: ["usunięcie tego wpisu z dziennika błędów"],
   },
   "/api/dispute/5/apply": { applied: ["usunięto wpis z dziennika błędów"] },
+  "POST /api/errors": { id: 42, topic: "collocations", topic_label: "Kolokacje" },
   "/api/errors/1": { deleted: 1 },   // ręczne usunięcie wpisu z dziennika (DELETE)
   "/api/errors/7": { deleted: 7 },   // ręczne usunięcie błędu w „Ćwicz błędy"
 };
 
 const calls = [];
-global.fetch = async (url) => {
-  calls.push(url);
+global.fetch = async (url, options) => {
+  const method = (options && options.method) || "GET";
+  calls.push(method + " " + url);
   const p = url.split("?")[0];
-  if (!(p in routes)) failures.push("nieznana ścieżka API: " + p);
-  return { ok: true, json: async () => routes[p] ?? {} };
+  // Klucz „METODA ścieżka" ma pierwszeństwo — POST /api/errors zwraca coś innego niż GET.
+  const key = [method + " " + p, p].find((k) => k in routes);
+  if (!key) failures.push("nieznana ścieżka API: " + method + " " + p);
+  return { ok: true, json: async () => (key ? routes[key] : {}) };
 };
 
 // --- uruchomienie -----------------------------------------------------------
@@ -297,6 +311,30 @@ const setInput = (id, value) => {
       await fireByClass("dispute-btn");
       await fireByClass("dispute-send"); await settle();
     }],
+    ["zatwierdzenie błędu z oceny (pojedynczo)", async () => {
+      created.length = 0;
+      routes["/api/exercise"] = MCQ_EX; routes["/api/grade"] = MULTI_RESULT;
+      await fire(".tab:practice");
+      await fire("#btn-generate"); await settle();
+      radioChecked = { "mcq-1": "A a", "mcq-2": "A c" };
+      await fire("#btn-grade"); await settle();
+      const before = calls.filter((c) => c.startsWith("POST /api/errors")).length;
+      await fireByClass("add-btn"); await settle();
+      const after = calls.filter((c) => c.startsWith("POST /api/errors")).length;
+      if (after !== before + 1) failures.push("zatwierdzenie błędu nie wysłało POST /api/errors");
+    }],
+    ["Dodaj wszystkie (dwie propozycje na raz)", async () => {
+      created.length = 0;
+      routes["/api/grade"] = TWO_CANDIDATES_RESULT;
+      setInput("external-question", "I ______ done it.");
+      setInput("external-answer", "has");
+      await fire("#btn-grade-external"); await settle();
+      const before = calls.filter((c) => c.startsWith("POST /api/errors")).length;
+      await fireByClass("add-all"); await settle();
+      const added = calls.filter((c) => c.startsWith("POST /api/errors")).length - before;
+      if (added !== 2) failures.push("Dodaj wszystkie zapisało " + added + " z 2 propozycji");
+      routes["/api/grade"] = MULTI_RESULT;
+    }],
     ["anulowanie usuwania błędu (nic nie leci do API)", async () => {
       created.length = 0;
       await fire("#btn-refresh-errors"); await settle();
@@ -310,7 +348,7 @@ const setInput = (id, value) => {
       await fire("#btn-refresh-errors"); await settle();
       await fireByClass("delete-btn");
       await fireByClass("delete-yes"); await settle();
-      if (!calls.some((c) => c === "/api/errors/1")) failures.push("brak wywołania usunięcia błędu");
+      if (!calls.includes("DELETE /api/errors/1")) failures.push("brak wywołania usunięcia błędu");
     }],
     ["usunięcie ćwiczonego błędu (Ćwicz błędy)", async () => {
       created.length = 0;

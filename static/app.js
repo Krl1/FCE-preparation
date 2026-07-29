@@ -26,6 +26,10 @@ const I18N = {
     "errors.weak": "Słabe punkty",
     "errors.journal": "Dziennik błędów",
     "errors.practiceThis": "Ćwicz ten błąd",
+    "errors.add": "Dodaj do dziennika",
+    "errors.added": "W dzienniku",
+    "errors.addAll": "Dodaj wszystkie",
+    "errors.pending": "Nic nie trafia do dziennika automatycznie — zatwierdź to, co chcesz ćwiczyć.",
     "errors.delete": "Usuń błąd",
     "errors.deleteConfirm": "Usunąć na stałe?",
     "errors.deleteYes": "Tak, usuń",
@@ -47,6 +51,7 @@ const I18N = {
     "loader.loading": "Wczytuję…",
     "loader.dispute": "Weryfikuję zastrzeżenie…",
     "loader.deleting": "Usuwam…",
+    "loader.saving": "Zapisuję…",
     "topic.prefix": "Temat: ",
     "kw.label": "Słowo-klucz: ",
     "answer.ph": "Twoja odpowiedź…",
@@ -131,6 +136,10 @@ const I18N = {
     "errors.weak": "Weak points",
     "errors.journal": "Mistake log",
     "errors.practiceThis": "Practice this mistake",
+    "errors.add": "Add to log",
+    "errors.added": "In the log",
+    "errors.addAll": "Add all",
+    "errors.pending": "Nothing is logged automatically — confirm what you want to practise.",
     "errors.delete": "Delete mistake",
     "errors.deleteConfirm": "Delete permanently?",
     "errors.deleteYes": "Yes, delete",
@@ -152,6 +161,7 @@ const I18N = {
     "loader.loading": "Loading…",
     "loader.dispute": "Re-checking…",
     "loader.deleting": "Deleting…",
+    "loader.saving": "Saving…",
     "topic.prefix": "Topic: ",
     "kw.label": "Key word: ",
     "answer.ph": "Your answer…",
@@ -680,6 +690,44 @@ function disputeWidget(payload) {
   return wrap;
 }
 
+/** Zatwierdzenie wykrytego błędu do dziennika. Ocena sama nic nie zapisuje —
+ *  wpis powstaje dopiero po tym kliknięciu.
+ *  `disputePayload` (jeśli podany) dostaje `error_id`, żeby zastrzeżenie zgłoszone
+ *  PO zatwierdzeniu wiedziało, który wpis usunąć.
+ *  `collect` zbiera akcje dla przycisku „Dodaj wszystkie". */
+function addErrorWidget(candidate, exerciseId, disputePayload, collect) {
+  const wrap = elem("div", "err-add");
+  const btn = elem("button", "add-btn", "+ " + t("errors.add"));
+
+  const doAdd = () => withBusy("loader.saving", btn, async () => {
+    if (candidate.id) return;                     // już zatwierdzony
+    try {
+      const res = await api("/api/errors?lang=" + LANG, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          topic: candidate.topic,
+          student_text: candidate.student_text,
+          correct_text: candidate.correct_text,
+          explanation: candidate.explanation || "",
+          severity: candidate.severity || "minor",
+          exercise_id: exerciseId || null,
+        }),
+      });
+      candidate.id = res.id;
+      if (disputePayload) disputePayload.error_id = res.id;
+      btn.remove();
+      wrap.appendChild(elem("span", "add-done", "✓ " + t("errors.added")));
+    } catch (e) {
+      wrap.appendChild(elem("div", "error-banner", t("error.prefix") + e.message));
+    }
+  });
+
+  btn.addEventListener("click", doAdd);
+  if (collect) collect.push(doAdd);
+  wrap.appendChild(btn);
+  return wrap;
+}
+
 /** Usunięcie wpisu z dziennika, dwustopniowo (klik → potwierdzenie).
  *  Świadomie bez `window.confirm` — modal blokuje wątek i nie da się go
  *  przetestować bez przeglądarki, a potwierdzenie w miejscu wystarcza,
@@ -765,18 +813,23 @@ function errItemEl(err, opts = {}) {
     `<div class="diff"><span class="from">${esc(err.student_text)}</span> → ` +
     `<span class="to">${esc(err.correct_text)}</span></div>` +
     `<div class="why">${esc(err.explanation)}</div>`);
-  if (opts.practiceBtn || opts.deleteBtn) {
+  if (opts.practiceBtn || opts.deleteBtn || opts.addBtn) {
     const row = elem("div", "err-actions");
     if (opts.practiceBtn) {
       const btn = elem("button", "practice-btn", t("errors.practiceThis"));
       btn.addEventListener("click", () => focusOnError(err));
       row.appendChild(btn);
     }
+    // Propozycja z oceny — do dziennika trafia dopiero po zatwierdzeniu.
+    if (opts.addBtn && !err.id) {
+      row.appendChild(addErrorWidget(err, opts.exerciseId, null, opts.collect));
+    }
     // Usunięcie zmienia też „słabe punkty", więc przeładowujemy całą zakładkę.
     if (opts.deleteBtn && err.id) row.appendChild(deleteErrorWidget(err.id, loadErrors));
     item.appendChild(row);
   }
-  // Wpis w dzienniku można zakwestionować zarówno tu, jak i później w „Moich błędach".
+  // Zakwestionować da się wpis, który JEST w dzienniku — propozycji nie trzeba
+  // podważać, wystarczy jej nie zatwierdzać.
   if (err.id) {
     item.appendChild(disputeWidget({
       scope: "error", error_id: err.id, disputed_text: err.explanation || "",
@@ -825,6 +878,12 @@ function renderResult(sel, r, ex) {
   }
   if (r.feedback) box.appendChild(elem("p", "feedback", r.feedback));
 
+  // Pasek zatwierdzania — wypełniany na końcu, gdy wiadomo, ile jest propozycji,
+  // ale umieszczony NAD nimi, żeby od razu było jasne, że nic nie zapisało się samo.
+  const pendingBar = elem("div", "pending-bar hidden");
+  box.appendChild(pendingBar);
+  const pendingAdds = [];
+
   // Zadanie wieloczęściowe: wynik i omówienie każdej luki.
   const hasItems = Array.isArray(r.items) && r.items.length;
   if (hasItems) {
@@ -841,15 +900,18 @@ function renderResult(sel, r, ex) {
       if (Array.isArray(item.option_notes) && item.option_notes.length) {
         block.appendChild(optionNotesEl(item.option_notes));
       }
-      if (ex && ex.id && item.comment) {
-        // Błąd zapisany w dzienniku dla tej pozycji — jeśli istnieje, korekta usunie
-        // dokładnie ten wpis, bez zgadywania.
-        const linked = (r.errors || []).find((e) => e.item_number === item.number);
-        block.appendChild(disputeWidget({
-          scope: "item", exercise_id: ex.id, item_number: item.number,
-          disputed_text: item.comment, error_id: linked ? linked.id : null,
-        }));
+      // Propozycja błędu dla tej luki: zatwierdzasz ją tam, gdzie widzisz omówienie.
+      const linked = (r.errors || []).find((e) => e.item_number === item.number);
+      // Payload zastrzeżenia jest wspólnym obiektem: po zatwierdzeniu wpada w niego
+      // `error_id`, więc korekta usunie dokładnie ten wpis, bez zgadywania.
+      const payload = ex && ex.id ? {
+        scope: "item", exercise_id: ex.id, item_number: item.number,
+        disputed_text: item.comment || "", error_id: linked ? linked.id : null,
+      } : null;
+      if (linked) {
+        block.appendChild(addErrorWidget(linked, ex && ex.id, payload, pendingAdds));
       }
+      if (payload && item.comment) block.appendChild(disputeWidget(payload));
       box.appendChild(block);
     });
   }
@@ -859,12 +921,31 @@ function renderResult(sel, r, ex) {
     box.appendChild(optionNotesEl(r.option_notes));
   }
 
-  if (Array.isArray(r.errors) && r.errors.length && !hasItems) {
-    // Przy zadaniach wieloczęściowych bloki per luka już pokazują błędy — nie dublujemy.
-    box.appendChild(elem("h2", null, t("errors.detected") + " (" + r.errors.length + ")"));
-    r.errors.forEach((err) => box.appendChild(errItemEl(err)));
+  // Błędy nieprzypisane do żadnej luki (albo zadanie jednoczęściowe) — pokazujemy
+  // osobno, żeby żadna propozycja nie przepadła po cichu.
+  const loose = (r.errors || []).filter(
+    (e) => !hasItems || !r.items.some((i) => i.number === e.item_number));
+  if (loose.length) {
+    box.appendChild(elem("h2", null, t("errors.detected") + " (" + loose.length + ")"));
+    loose.forEach((err) => box.appendChild(errItemEl(err, {
+      addBtn: true, exerciseId: ex && ex.id, collect: pendingAdds,
+    })));
   } else if (r.correct && !hasItems) {
     box.appendChild(elem("p", "muted", t("noErrors")));
+  }
+
+  if (pendingAdds.length) {
+    pendingBar.classList.remove("hidden");
+    pendingBar.appendChild(elem("span", "pending-note", t("errors.pending")));
+    if (pendingAdds.length > 1) {
+      const all = elem("button", "add-all", "+ " + t("errors.addAll") +
+        " (" + pendingAdds.length + ")");
+      all.addEventListener("click", () => withBusy("loader.saving", all, async () => {
+        for (const add of pendingAdds) await add();
+        all.remove();
+      }));
+      pendingBar.appendChild(all);
+    }
   }
 }
 

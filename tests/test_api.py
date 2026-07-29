@@ -94,11 +94,11 @@ def test_grade_multi_persists_attempt_and_normalizes_topic(app_ctx, monkeypatch)
     assert attempts[0]["is_correct"] == 0
     assert "2. B give" in attempts[0]["student_answer"]
 
-    # Wymyślony temat zmapowany na 'language'.
-    errors = main_mod.db.list_errors(main_mod.conn)
-    assert len(errors) == 1
-    assert errors[0]["topic"] == "language"
-    assert errors[0]["exercise_type"] == "uoe_part1_mcq_cloze"
+    # Wymyślony temat zmapowany na 'language' JUŻ W ODPOWIEDZI — uczeń zatwierdza
+    # dokładnie to, co zostanie zapisane.
+    assert body["errors"][0]["topic"] == "language"
+    # Ocena sama NIC nie zapisuje do dziennika.
+    assert main_mod.db.list_errors(main_mod.conn) == []
 
 
 def test_grade_multi_without_student_answers_is_rejected(app_ctx, monkeypatch):
@@ -335,16 +335,18 @@ def _graded_multi_exercise(main_mod, monkeypatch):
     return ex_id
 
 
-def test_grade_response_carries_error_ids(app_ctx, monkeypatch):
-    """Bez identyfikatorów nie dałoby się zakwestionować konkretnego wpisu na ekranie oceny."""
+def test_grade_returns_error_candidates_without_ids(app_ctx, monkeypatch):
+    """Błędy z oceny to propozycje: bez `id` (bo nie ma ich w bazie), ale z numerem
+    pozycji — inaczej po zatwierdzeniu nie dałoby się ich powiązać z luką."""
     client, main_mod = app_ctx
     ex_id = _graded_multi_exercise(main_mod, monkeypatch)
     body = client.post("/api/grade", json={
         "type": "uoe_part1_mcq_cloze", "exercise_id": ex_id,
         "student_answers": ["A warm", "B give"],
     }).json()
-    assert body["errors"] and body["errors"][0]["id"] is not None
+    assert body["errors"] and body["errors"][0]["id"] is None
     assert body["errors"][0]["item_number"] == 2
+    assert main_mod.db.list_errors(main_mod.conn) == []
 
 
 def test_dispute_upheld_proposes_changes_but_changes_nothing_yet(app_ctx, monkeypatch):
@@ -507,3 +509,68 @@ def test_deleting_error_keeps_todays_goal_progress(app_ctx):
 
     client.delete(f"/api/errors/{eid}")
     assert client.get("/api/tips/progress").json()["done"] == before
+
+
+# --- Zatwierdzanie błędów do dziennika ---------------------------------------
+
+def test_confirming_error_stores_it_with_type_and_source_from_exercise(app_ctx, monkeypatch):
+    """Typ i źródło biorą się z zapisanego zadania, nie z tego, co przyśle przeglądarka."""
+    client, main_mod = app_ctx
+    ex_id = _graded_multi_exercise(main_mod, monkeypatch)
+    graded = client.post("/api/grade", json={
+        "type": "uoe_part1_mcq_cloze", "exercise_id": ex_id,
+        "student_answers": ["A warm", "B give"],
+    }).json()
+    candidate = graded["errors"][0]
+
+    res = client.post("/api/errors", json={
+        **{k: candidate[k] for k in ("topic", "student_text", "correct_text",
+                                     "explanation", "severity")},
+        "exercise_id": ex_id,
+        "exercise_type": "writing_essay",   # celowo niezgodny — ma zostać zignorowany
+    })
+    assert res.status_code == 200
+    stored = main_mod.db.list_errors(main_mod.conn)
+    assert len(stored) == 1
+    assert stored[0]["id"] == res.json()["id"]
+    assert stored[0]["exercise_type"] == "uoe_part1_mcq_cloze"
+    assert stored[0]["source"] == "in_app"
+
+
+def test_confirming_error_normalizes_topic_from_client(app_ctx):
+    """Klientowi nie wolno wstawić tematu spoza taksonomii — inaczej wpis nie
+    wpływałby na dobór zadań i psuł statystyki."""
+    client, main_mod = app_ctx
+    res = client.post("/api/errors", json={
+        "topic": "wymyslony_temat", "student_text": "a", "correct_text": "b",
+        "explanation": "e", "severity": "major",
+    }).json()
+    assert res["topic"] == "language"
+    stored = main_mod.db.list_errors(main_mod.conn)[0]
+    assert stored["topic"] == "language"
+    # Bez zadania błąd jest „z zewnątrz".
+    assert stored["source"] == "external" and stored["exercise_type"] == "external"
+
+
+def test_confirming_error_validates_input(app_ctx):
+    client, _ = app_ctx
+    assert client.post("/api/errors", json={
+        "topic": "tenses", "student_text": "   ", "correct_text": "b"}).status_code == 400
+    assert client.post("/api/errors", json={
+        "topic": "tenses", "student_text": "a", "correct_text": "b",
+        "exercise_id": 9999}).status_code == 404
+
+
+def test_confirmed_error_feeds_weak_points_and_can_be_practised(app_ctx):
+    """Dziennik napełniany zatwierdzeniami działa dalej normalnie: słabe punkty,
+    fokus w „Ćwicz błędy", usuwanie."""
+    client, _ = app_ctx
+    assert client.get("/api/tips/focus").json()["error"] is None
+
+    eid = client.post("/api/errors", json={
+        "topic": "tenses", "student_text": "a", "correct_text": "b", "explanation": "e",
+    }).json()["id"]
+
+    assert [s["topic"] for s in client.get("/api/stats/topics").json()] == ["tenses"]
+    assert client.get("/api/tips/focus").json()["error"]["id"] == eid
+    assert client.delete(f"/api/errors/{eid}").status_code == 200

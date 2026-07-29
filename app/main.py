@@ -19,6 +19,7 @@ from . import llm_client, pricing, srs
 from .models import (
     CompleteRequest,
     DisputeRequest,
+    ErrorCreate,
     ExercisePublic,
     GeneratedExercise,
     GenerateRequest,
@@ -126,15 +127,14 @@ def create_exercise(req: GenerateRequest) -> ExercisePublic:
 # --- Ocena -------------------------------------------------------------------
 
 class _GradingTask:
-    """Rozstrzygnięte wejście do oceny: skąd wzięło się zadanie i czym jest odpowiedź."""
+    """Rozstrzygnięte wejście do oceny: treść zadania, klucz odpowiedzi i odpowiedź ucznia."""
 
-    def __init__(self, *, ex_type: str, question_text: str, source: str,
+    def __init__(self, *, ex_type: str, question_text: str,
                  model_answer: Optional[str] = None, key_word: Optional[str] = None,
                  options: Optional[list[str]] = None, items: Optional[list[dict]] = None,
                  student_answers: Optional[list[str]] = None, student_answer: str = ""):
         self.ex_type = ex_type
         self.question_text = question_text
-        self.source = source
         self.model_answer = model_answer
         self.key_word = key_word
         self.options = options
@@ -156,7 +156,7 @@ def _resolve_grading_task(req: GradeRequest) -> _GradingTask:
         if not req.question_text:
             raise HTTPException(status_code=400, detail="Brak treści zadania do oceny.")
         return _GradingTask(
-            ex_type=req.type, question_text=req.question_text, source="external",
+            ex_type=req.type, question_text=req.question_text,
             key_word=req.key_word, student_answer=req.student_answer,
         )
 
@@ -183,7 +183,7 @@ def _resolve_grading_task(req: GradeRequest) -> _GradingTask:
         )
 
     return _GradingTask(
-        ex_type=ex_type, question_text=prompt.get("question_text", ""), source="in_app",
+        ex_type=ex_type, question_text=prompt.get("question_text", ""),
         model_answer=prompt.get("answer"), key_word=prompt.get("key_word"),
         options=prompt.get("options"), items=items,
         student_answers=req.student_answers, student_answer=student_answer,
@@ -206,22 +206,13 @@ def _run_grading(task: _GradingTask, lang: str) -> GradingResult:
 
 
 def _persist_grading(req: GradeRequest, task: _GradingTask, result: GradingResult) -> None:
-    """Zapisuje podejście i błędy. Uzupełnia `id` każdego błędu w zwracanym wyniku,
-    żeby uczeń mógł zakwestionować konkretny wpis od razu na ekranie oceny."""
+    """Zapisuje podejście. Błędów NIE zapisuje — ocena zwraca je jako propozycje,
+    a do dziennika trafiają dopiero przez `POST /api/errors`, gdy uczeń je zatwierdzi.
+    Lepiej zatwierdzać pojedynczo niż szukać potem śmieci do usunięcia."""
     for err in result.errors:
-        err.id = db.insert_error(
-            conn,
-            source=task.source,
-            exercise_type=task.ex_type,
-            # Model potrafi wymyślić temat — sprowadzamy go do taksonomii,
-            # inaczej błąd nie wpływałby na dobór zadań i psuł statystyki.
-            topic=tax.normalize_topic(err.topic),
-            student_text=err.student_text,
-            correct_text=err.correct_text,
-            explanation=err.explanation,
-            severity=err.severity,
-        )
-    # Podejście zapisujemy po błędach, żeby zapamiętana ocena zawierała ich identyfikatory.
+        # Model potrafi wymyślić temat — sprowadzamy go do taksonomii już tutaj,
+        # żeby uczeń widział prawdziwą etykietę i zatwierdzał to, co zostanie zapisane.
+        err.topic = tax.normalize_topic(err.topic)
     db.insert_attempt(
         conn,
         exercise_id=req.exercise_id,
@@ -251,6 +242,31 @@ def get_errors(topic: str | None = Query(default=None),
     for row in rows:
         row["topic_label"] = tax.topic_label(row["topic"], lang)
     return rows
+
+
+@app.post("/api/errors")
+def add_error(req: ErrorCreate, lang: str = Query(default="pl")) -> dict:
+    """Dopisuje do dziennika błąd zatwierdzony przez ucznia (ocena sama nic nie zapisuje).
+
+    Typ i źródło ustalamy z zapisanego zadania, gdy jest znane — dane o pochodzeniu
+    błędu nie mogą zależeć od tego, co przyśle przeglądarka."""
+    if not req.student_text.strip():
+        raise HTTPException(status_code=400, detail="Brak treści błędu do zapisania.")
+
+    exercise_type, source = req.exercise_type or "external", "external"
+    if req.exercise_id is not None:
+        stored = db.get_exercise(conn, req.exercise_id)
+        if stored is None:
+            raise HTTPException(status_code=404, detail="Nie znaleziono zadania o tym id.")
+        exercise_type, source = stored["type"], "in_app"
+
+    topic = tax.normalize_topic(req.topic)
+    error_id = db.insert_error(
+        conn, source=source, exercise_type=exercise_type, topic=topic,
+        student_text=req.student_text, correct_text=req.correct_text,
+        explanation=req.explanation, severity=req.severity,
+    )
+    return {"id": error_id, "topic": topic, "topic_label": tax.topic_label(topic, lang)}
 
 
 @app.delete("/api/errors/{error_id}")
