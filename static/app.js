@@ -26,12 +26,21 @@ const I18N = {
     "errors.weak": "Słabe punkty",
     "errors.journal": "Dziennik błędów",
     "errors.practiceThis": "Ćwicz ten błąd",
+    "dispute.button": "Nie zgadzam się",
+    "dispute.placeholder": "Co jest nie tak z tym wyjaśnieniem? (opcjonalnie)",
+    "dispute.send": "Sprawdź ponownie",
+    "dispute.upheld": "Zastrzeżenie uznane — wyjaśnienie było błędne",
+    "dispute.rejected": "Wyjaśnienie utrzymane",
+    "dispute.willChange": "Zatwierdzenie wprowadzi:",
+    "dispute.apply": "Zastosuj poprawkę",
+    "dispute.applied": "Wprowadzono:",
     "btn.refresh": "Odśwież",
     "loader.default": "Pracuję…",
     "loader.generating": "Generuję zadanie…",
     "loader.grading": "Sprawdzam odpowiedź…",
     "loader.gradingExt": "Sprawdzam zadanie…",
     "loader.loading": "Wczytuję…",
+    "loader.dispute": "Weryfikuję zastrzeżenie…",
     "topic.prefix": "Temat: ",
     "kw.label": "Słowo-klucz: ",
     "answer.ph": "Twoja odpowiedź…",
@@ -116,12 +125,21 @@ const I18N = {
     "errors.weak": "Weak points",
     "errors.journal": "Mistake log",
     "errors.practiceThis": "Practice this mistake",
+    "dispute.button": "I disagree",
+    "dispute.placeholder": "What is wrong with this explanation? (optional)",
+    "dispute.send": "Re-check",
+    "dispute.upheld": "Objection accepted — the explanation was wrong",
+    "dispute.rejected": "Explanation upheld",
+    "dispute.willChange": "Confirming will:",
+    "dispute.apply": "Apply correction",
+    "dispute.applied": "Applied:",
     "btn.refresh": "Refresh",
     "loader.default": "Working…",
     "loader.generating": "Generating exercise…",
     "loader.grading": "Checking answer…",
     "loader.gradingExt": "Checking…",
     "loader.loading": "Loading…",
+    "loader.dispute": "Re-checking…",
     "topic.prefix": "Topic: ",
     "kw.label": "Key word: ",
     "answer.ph": "Your answer…",
@@ -540,7 +558,7 @@ async function gradeExercise(ui, ex) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
-    renderResult(ui.result, result);
+    renderResult(ui.result, result, ex);
     return result;
   });
 }
@@ -608,6 +626,75 @@ $("#btn-grade-external").addEventListener("click", () =>
 
 // --- Renderowanie wyniku oceny ----------------------------------------------
 
+// --- Zastrzeżenia do wyjaśnień -----------------------------------------------
+
+/** Przycisk „Nie zgadzam się" z panelem: opcjonalny komentarz → ponowna weryfikacja.
+ *  `payload` identyfikuje kwestionowane wyjaśnienie (pozycja zadania albo wpis w dzienniku). */
+function disputeWidget(payload) {
+  const wrap = elem("div", "dispute");
+  const btn = elem("button", "dispute-btn", "⚠ " + t("dispute.button"));
+  const panel = elem("div", "dispute-panel hidden");
+  const comment = elem("textarea", "dispute-comment");
+  comment.rows = 2;
+  comment.placeholder = t("dispute.placeholder");
+  comment.setAttribute("aria-label", t("dispute.placeholder"));
+  const send = elem("button", "primary dispute-send", t("dispute.send"));
+  const out = elem("div", "dispute-out");
+  panel.appendChild(comment);
+  panel.appendChild(send);
+  panel.appendChild(out);
+
+  btn.addEventListener("click", () => {
+    const opening = panel.classList.contains("hidden");
+    panel.classList.toggle("hidden", !opening);
+    if (opening) comment.focus();
+  });
+
+  send.addEventListener("click", () => withBusy("loader.dispute", send, async () => {
+    out.innerHTML = "";
+    try {
+      const res = await api("/api/dispute", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...payload, comment: comment.value.trim(), lang: LANG }),
+      });
+      renderDisputeOutcome(out, res);
+    } catch (e) {
+      out.appendChild(elem("div", "error-banner", t("error.prefix") + e.message));
+    }
+  }));
+
+  wrap.appendChild(btn);
+  wrap.appendChild(panel);
+  return wrap;
+}
+
+function renderDisputeOutcome(out, res) {
+  const upheld = res.verdict === "upheld";
+  out.appendChild(elem("div", "dispute-verdict " + (upheld ? "upheld" : "rejected"),
+    (upheld ? "✎ " : "✓ ") + t(upheld ? "dispute.upheld" : "dispute.rejected")));
+  if (res.revised_explanation) out.appendChild(elem("p", "dispute-revised", res.revised_explanation));
+  if (res.reasoning) out.appendChild(elem("p", "why", res.reasoning));
+
+  // Dane zmieniamy TYLKO po zatwierdzeniu — pokazujemy wprost, co się zmieni.
+  if (Array.isArray(res.proposed_changes) && res.proposed_changes.length) {
+    out.appendChild(elem("p", "muted", t("dispute.willChange") + " " + res.proposed_changes.join("; ")));
+    const apply = elem("button", "primary dispute-apply", t("dispute.apply"));
+    apply.addEventListener("click", () => withBusy("loader.dispute", apply, async () => {
+      try {
+        const done = await api(`/api/dispute/${res.dispute_id}/apply`, { method: "POST" });
+        apply.remove();
+        out.appendChild(elem("p", "dispute-applied", t("dispute.applied") + " " + done.applied.join("; ")));
+        // Dziennik i licznik mogły się zmienić — odśwież widoki, jeśli są otwarte.
+        if ($("#view-errors").classList.contains("is-active")) loadErrors();
+        if ($("#view-tips").classList.contains("is-active")) refreshProgress();
+      } catch (e) {
+        out.appendChild(elem("div", "error-banner", t("error.prefix") + e.message));
+      }
+    }));
+    out.appendChild(apply);
+  }
+}
+
 function optionNotesEl(notes) {
   const wrap = elem("div", "opt-notes");
   notes.forEach((o) => {
@@ -634,6 +721,12 @@ function errItemEl(err, opts = {}) {
     btn.addEventListener("click", () => focusOnError(err));
     item.appendChild(btn);
   }
+  // Wpis w dzienniku można zakwestionować zarówno tu, jak i później w „Moich błędach".
+  if (err.id) {
+    item.appendChild(disputeWidget({
+      scope: "error", error_id: err.id, disputed_text: err.explanation || "",
+    }));
+  }
   return item;
 }
 
@@ -646,7 +739,7 @@ function barRow(name, ratio, countText) {
   return row;
 }
 
-function renderResult(sel, r) {
+function renderResult(sel, r, ex) {
   const box = $(sel);
   box.innerHTML = "";
   box.classList.remove("hidden");
@@ -692,6 +785,15 @@ function renderResult(sel, r) {
       if (item.comment) block.appendChild(elem("div", "why", item.comment));
       if (Array.isArray(item.option_notes) && item.option_notes.length) {
         block.appendChild(optionNotesEl(item.option_notes));
+      }
+      if (ex && ex.id && item.comment) {
+        // Błąd zapisany w dzienniku dla tej pozycji — jeśli istnieje, korekta usunie
+        // dokładnie ten wpis, bez zgadywania.
+        const linked = (r.errors || []).find((e) => e.item_number === item.number);
+        block.appendChild(disputeWidget({
+          scope: "item", exercise_id: ex.id, item_number: item.number,
+          disputed_text: item.comment, error_id: linked ? linked.id : null,
+        }));
       }
       box.appendChild(block);
     });

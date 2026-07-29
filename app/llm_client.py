@@ -516,6 +516,14 @@ def grade_items(exercise_type: str, question_text: str, items: list[dict],
     errors = [e for e in (data.get("errors") or [])
               if _norm_answer(str(e.get("student_text", ""))) not in ok_answers]
 
+    # Powiąż błąd z pozycją, z której pochodzi — po odpowiedzi ucznia. Dzięki temu
+    # zastrzeżenie do konkretnej pozycji wie, który wpis w dzienniku dotyczy sporu.
+    wrong_by_answer = {
+        _norm_answer(m["student_option"] or ""): m["number"] for m in merged if not m["correct"]
+    }
+    for err in errors:
+        err["item_number"] = wrong_by_answer.get(_norm_answer(str(err.get("student_text", ""))))
+
     correct_count = sum(1 for m in merged if m["correct"])
     return GradingResult.model_validate({
         "correct": correct_count == len(items),
@@ -606,6 +614,66 @@ def extract_errors_from_text(text: str) -> list[ErrorItem]:
     )
     data = _call_json(prompt, kind="extract")
     return [ErrorItem.model_validate(e) for e in data.get("errors", [])]
+
+
+def review_dispute(*, disputed_text: str, user_comment: str, exercise_context: str,
+                   student_answers_text: str, lang: str = "pl") -> dict:
+    """Weryfikuje zastrzeżenie ucznia do wyjaśnienia wystawionego przy ocenie.
+
+    Prompt rozdziela DWIE niezależne kwestie, bo model sam z siebie je zlepia:
+    czy wyjaśnienie było błędne (np. cytowało słowo, którego nie było w zadaniu)
+    oraz czy odpowiedź ucznia powinna zostać uznana za poprawną. Typowy przypadek
+    to „zmyślony cytat, ale odpowiedź i tak zła" — wtedy wyjaśnienie trzeba poprawić,
+    a danych nie ruszać.
+
+    Jest też napisany tak, by model NIE ustępował z uprzejmości: ma obstawać przy
+    poprawnym wyjaśnieniu. Bez tego każde zastrzeżenie kończyłoby się „przyznaniem
+    racji" i kasowaniem prawdziwych błędów z dziennika, czyli psuciem materiału do nauki.
+
+    Zwraca: verdict ('upheld'/'rejected'), revised_explanation, student_was_right, reasoning.
+    """
+    lang_name = _lang_name(lang)
+    shape = (
+        '{"explanation_was_wrong": bool, "student_answer_was_acceptable": bool, '
+        '"revised_explanation": str, "reasoning": str}'
+    )
+    prompt = (
+        "Uczeń przygotowujący się do FCE kwestionuje wyjaśnienie, które wystawił korektor. "
+        "Przeprowadź RZETELNĄ weryfikację — nie ustępuj z uprzejmości.\n\n"
+        "Odpowiedz NIEZALEŻNIE na dwa pytania:\n"
+        "(1) 'explanation_was_wrong' — czy KWESTIONOWANE WYJAŚNIENIE zawiera błąd? "
+        "Ustaw true także wtedy, gdy sama reguła gramatyczna jest prawdziwa, ale wyjaśnienie "
+        "powołuje się na słowo, wariant lub fragment, którego NIE MA w treści zadania — "
+        "zmyślony cytat jest błędem wyjaśnienia. Ustaw false, jeśli wyjaśnienie było "
+        "merytorycznie poprawne; wtedy wytłumacz uczniowi, dlaczego jego zastrzeżenie jest "
+        "nietrafione. Nie przyznawaj racji tylko dlatego, że uczeń się nie zgadza.\n"
+        "(2) 'student_answer_was_acceptable' — czy ODPOWIEDŹ UCZNIA powinna zostać uznana "
+        "za poprawną (np. jest równoważnym wariantem)?\n\n"
+        "Te pytania są niezależne. Najczęstszy przypadek: wyjaśnienie zawierało zmyślony cytat, "
+        "ale odpowiedź ucznia i tak była błędna → explanation_was_wrong=true, "
+        "student_answer_was_acceptable=false.\n\n"
+        "Poniżej masz dokładną, pełną treść zadania. Porównaj z nią KAŻDĄ formę przytoczoną "
+        "w kwestionowanym wyjaśnieniu.\n\n"
+        f"=== DOKŁADNA TREŚĆ ZADANIA ===\n{exercise_context or '(brak — spór dotyczy wpisu w dzienniku błędów)'}\n\n"
+        f"=== ODPOWIEDZI UCZNIA ===\n{student_answers_text or '(brak)'}\n\n"
+        f"=== KWESTIONOWANE WYJAŚNIENIE ===\n{disputed_text}\n\n"
+        f"=== ZASTRZEŻENIE UCZNIA ===\n{user_comment or '(bez komentarza — uczeń uznał to wyjaśnienie za błędne)'}\n\n"
+        "'revised_explanation' to wyjaśnienie do pokazania uczniowi: poprawione, gdy przyznajesz "
+        "błąd, albo utrzymane i lepiej uzasadnione, gdy obstajesz. Maksymalnie 2–3 zdania, "
+        "bez przepraszania. 'reasoning' to jedno zdanie o tym, co zdecydowało.\n"
+        f"Pisz w języku: {lang_name}; przykłady i formy angielskie po angielsku.\n"
+        f"Zwróć TYLKO obiekt JSON o kształcie: {shape}"
+    )
+    data = _call_json(prompt, kind="dispute")
+    return {
+        # Zastrzeżenie jest uznane, gdy wyjaśnienie faktycznie było błędne — niezależnie
+        # od tego, czy odpowiedź ucznia była dobra.
+        "verdict": "upheld" if bool(data.get("explanation_was_wrong")) else "rejected",
+        "revised_explanation": str(data.get("revised_explanation") or "").strip(),
+        # Tylko to pole decyduje o zaproponowaniu korekty danych.
+        "student_was_right": bool(data.get("student_answer_was_acceptable")),
+        "reasoning": str(data.get("reasoning") or "").strip(),
+    }
 
 
 def explain_error(topic: str, student_text: str, correct_text: str, lang: str = "pl") -> str:

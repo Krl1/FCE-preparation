@@ -88,6 +88,33 @@ Następnie otwórz **http://localhost:8000**.
   **potwierdzonej** stawki, szacunek jest wyraźnie oznaczony jako założony (zamiast podawać
   liczbę jako pewnik).
 
+### Zastrzeżenie do wyjaśnienia („To wyjaśnienie jest błędne")
+
+Model czasem myli się w samym wyjaśnieniu — np. powołuje się na słowo, którego w zadaniu nie było.
+Dlatego przy każdym wyjaśnieniu (komentarz do luki, omówienie wariantu, wpis w dzienniku błędów)
+jest link **To wyjaśnienie jest błędne**. Rozwija pole na komentarz — napisz, co się nie zgadza —
+i wysyła zastrzeżenie do ponownej weryfikacji wraz z **dokładną treścią zadania i Twoimi
+odpowiedziami**, żeby model mógł sprawdzić, czy nie zmyślił cytatu.
+
+Weryfikacja rozstrzyga **dwie niezależne rzeczy**, bo mieszanie ich było źródłem błędnych
+werdyktów:
+
+1. **Czy wyjaśnienie było błędne** (`verdict`: `upheld` / `rejected`) — zmyślony cytat wystarcza,
+   żeby uznać zastrzeżenie, nawet jeśli sama reguła gramatyczna była prawdziwa.
+2. **Czy Twoja odpowiedź była jednak dopuszczalna** (`student_was_right`) — to osobna sprawa.
+   Najczęstszy przypadek: wyjaśnienie było wadliwe, ale odpowiedź nadal błędna.
+
+Co się dzieje dalej:
+
+- **Zastrzeżenie uznane** → dostajesz **poprawione wyjaśnienie** (od razu, bez zmian w danych).
+- **Dodatkowo model przyzna, że Twoja odpowiedź była dopuszczalna** → pojawia się przycisk
+  **Popraw ocenę**. Dopiero jego kliknięcie usuwa błędny wpis z dziennika i przelicza wynik
+  podejścia. Nic nie zmienia się bez Twojego potwierdzenia, a każde zastrzeżenie jest zapisane
+  w tabeli `disputes` (jednorazowe zastosowanie).
+- **Zastrzeżenie odrzucone** → wyjaśnienie zostaje, z uzasadnieniem dlaczego. Prompt jawnie
+  zakazuje ustępowania z uprzejmości — inaczej dałoby się wygadać z każdego prawdziwego błędu
+  i dziennik przestałby być wiarygodny.
+
 ## Uruchomienie w Dockerze (z autostartem po włączeniu laptopa)
 
 Jednorazowo:
@@ -155,6 +182,13 @@ python3 -m pytest -q
 Pokrycie: warstwa bazy (w tym regresja współbieżności i migracji kolejki), logika doboru
 zadań (`srs`), parsowanie odpowiedzi modelu i deterministyczna ocena luk, endpointy HTTP
 (FastAPI TestClient, bez wywoływania modelu) oraz import wcześniejszych błędów.
+
+Dodatkowo test przejścia frontendu bez przeglądarki (atrapa DOM + `fetch`), który przechodzi
+wszystkie zakładki i sprawdza, że żadna ścieżka nie wywala się na wyjątku:
+
+```bash
+node tests/smoke_frontend.js
+```
 
 ## Konfiguracja (zmienne środowiskowe)
 

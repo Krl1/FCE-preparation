@@ -18,6 +18,7 @@ from . import fce_taxonomy as tax
 from . import llm_client, pricing, srs
 from .models import (
     CompleteRequest,
+    DisputeRequest,
     ExercisePublic,
     GeneratedExercise,
     GenerateRequest,
@@ -205,16 +206,10 @@ def _run_grading(task: _GradingTask, lang: str) -> GradingResult:
 
 
 def _persist_grading(req: GradeRequest, task: _GradingTask, result: GradingResult) -> None:
-    db.insert_attempt(
-        conn,
-        exercise_id=req.exercise_id,
-        type=task.ex_type,
-        student_answer=task.student_answer,
-        is_correct=result.correct,
-        grading=result.model_dump(),
-    )
+    """Zapisuje podejście i błędy. Uzupełnia `id` każdego błędu w zwracanym wyniku,
+    żeby uczeń mógł zakwestionować konkretny wpis od razu na ekranie oceny."""
     for err in result.errors:
-        db.insert_error(
+        err.id = db.insert_error(
             conn,
             source=task.source,
             exercise_type=task.ex_type,
@@ -226,6 +221,15 @@ def _persist_grading(req: GradeRequest, task: _GradingTask, result: GradingResul
             explanation=err.explanation,
             severity=err.severity,
         )
+    # Podejście zapisujemy po błędach, żeby zapamiętana ocena zawierała ich identyfikatory.
+    db.insert_attempt(
+        conn,
+        exercise_id=req.exercise_id,
+        type=task.ex_type,
+        student_answer=task.student_answer,
+        is_correct=result.correct,
+        grading=result.model_dump(),
+    )
 
 
 @app.post("/api/grade")
@@ -346,11 +350,160 @@ def tips_goal(req: GoalRequest) -> dict:
     return _progress()
 
 
+# --- Zastrzeżenia do wyjaśnień ------------------------------------------------
+
+def _exercise_context(prompt: dict) -> str:
+    """Renderuje pełną, dokładną treść zadania wraz z kluczem odpowiedzi.
+
+    To materiał dowodowy dla weryfikacji zastrzeżenia: model ma porównać każdą formę
+    przytoczoną w kwestionowanym wyjaśnieniu z tym, co RZECZYWIŚCIE było w zadaniu."""
+    parts = []
+    if prompt.get("question_text"):
+        parts.append(prompt["question_text"])
+    for idx, item in enumerate(prompt.get("items") or []):
+        number = item.get("number", idx + 1)
+        line = f"[{number}]"
+        if item.get("question_text"):
+            line += f" {item['question_text']}"
+        if item.get("stem"):
+            line += f" | wyraz podstawowy: {item['stem']}"
+        if item.get("key_word"):
+            line += f" | słowo-klucz: {item['key_word']}"
+        if item.get("options"):
+            line += f" | warianty: {item['options']}"
+        line += f" | poprawna odpowiedź: {item.get('answer')}"
+        parts.append(line)
+    if not prompt.get("items"):
+        if prompt.get("options"):
+            parts.append(f"warianty: {prompt['options']}")
+        if prompt.get("key_word"):
+            parts.append(f"słowo-klucz: {prompt['key_word']}")
+        if prompt.get("answer"):
+            parts.append(f"poprawna odpowiedź: {prompt['answer']}")
+    return "\n".join(parts)
+
+
+@app.post("/api/dispute")
+def create_dispute(req: DisputeRequest) -> dict:
+    """Weryfikuje zastrzeżenie do wyjaśnienia. NIE zmienia jeszcze żadnych danych —
+    ewentualną korektę stosuje dopiero `/api/dispute/{id}/apply` po zatwierdzeniu."""
+    if req.scope not in ("item", "error"):
+        raise HTTPException(status_code=400, detail=f"Nieznany zakres zastrzeżenia: {req.scope}")
+    if not req.disputed_text.strip():
+        raise HTTPException(status_code=400, detail="Brak treści kwestionowanego wyjaśnienia.")
+
+    context, answers_text = "", ""
+    if req.exercise_id is not None:
+        stored = db.get_exercise(conn, req.exercise_id)
+        if stored is None:
+            raise HTTPException(status_code=404, detail="Nie znaleziono zadania o tym id.")
+        context = _exercise_context(stored["prompt"])
+        attempt = db.latest_attempt_for_exercise(conn, req.exercise_id)
+        if attempt:
+            answers_text = attempt["student_answer"]
+
+    if req.error_id is not None:
+        err = db.get_error(conn, req.error_id)
+        if err is None:
+            raise HTTPException(status_code=404, detail="Nie znaleziono błędu o tym id.")
+        context = (context + "\n" if context else "") + (
+            f"Wpis w dzienniku błędów: „{err['student_text']}\" → „{err['correct_text']}\" "
+            f"(temat: {err['topic']})"
+        )
+        answers_text = answers_text or err["student_text"]
+
+    try:
+        review = llm_client.review_dispute(
+            disputed_text=req.disputed_text,
+            user_comment=req.comment,
+            exercise_context=context,
+            student_answers_text=answers_text,
+            lang=req.lang,
+        )
+    except llm_client.LLMError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    dispute_id = db.insert_dispute(
+        conn, scope=req.scope, disputed_text=req.disputed_text, user_comment=req.comment,
+        exercise_id=req.exercise_id, item_number=req.item_number, error_id=req.error_id,
+        verdict=review["verdict"], revised_text=review["revised_explanation"],
+        student_was_right=review["student_was_right"],
+    )
+
+    # Co dokładnie zmieni zatwierdzenie korekty — pokazujemy to uczniowi wprost,
+    # zamiast po cichu modyfikować dziennik.
+    changes: list[str] = []
+    if review["student_was_right"]:
+        if req.error_id is not None:
+            changes.append("usunięcie tego wpisu z dziennika błędów")
+        if req.exercise_id is not None and req.item_number is not None:
+            changes.append("zaliczenie tej pozycji jako poprawnej w zapisanym wyniku")
+
+    return {
+        "dispute_id": dispute_id,
+        "verdict": review["verdict"],
+        "revised_explanation": review["revised_explanation"],
+        "reasoning": review["reasoning"],
+        "student_was_right": review["student_was_right"],
+        "proposed_changes": changes,
+    }
+
+
+@app.post("/api/dispute/{dispute_id}/apply")
+def apply_dispute(dispute_id: int) -> dict:
+    """Stosuje korektę danych po zatwierdzeniu przez ucznia."""
+    dispute = db.get_dispute(conn, dispute_id)
+    if dispute is None:
+        raise HTTPException(status_code=404, detail="Nie znaleziono zastrzeżenia o tym id.")
+    if dispute["applied_at"]:
+        raise HTTPException(status_code=400, detail="Ta korekta została już zastosowana.")
+    if not dispute["student_was_right"]:
+        raise HTTPException(
+            status_code=400,
+            detail="Nie ma czego poprawiać — model nie uznał odpowiedzi za poprawną.",
+        )
+
+    applied: list[str] = []
+
+    if dispute["error_id"] is not None and db.delete_error(conn, dispute["error_id"]):
+        applied.append("usunięto wpis z dziennika błędów")
+
+    # Zapisany wynik: pozycja zostaje zaliczona, a ocena i wynik punktowy przeliczone.
+    if dispute["exercise_id"] is not None and dispute["item_number"] is not None:
+        attempt = db.latest_attempt_for_exercise(conn, dispute["exercise_id"])
+        if attempt:
+            grading = attempt["grading"]
+            items = grading.get("items") or []
+            changed = False
+            for item in items:
+                if item.get("number") == dispute["item_number"] and not item.get("correct"):
+                    item["correct"] = True
+                    item["comment"] = dispute["revised_text"] or item.get("comment", "")
+                    item["option_notes"] = None
+                    changed = True
+            if changed:
+                correct_count = sum(1 for i in items if i.get("correct"))
+                grading["score"] = f"{correct_count}/{len(items)}"
+                grading["correct"] = correct_count == len(items)
+                grading["errors"] = [
+                    e for e in (grading.get("errors") or [])
+                    if e.get("item_number") != dispute["item_number"]
+                ]
+                db.update_attempt_grading(
+                    conn, attempt["id"], grading=grading, is_correct=grading["correct"]
+                )
+                applied.append(f"poprawiono zapisany wynik na {grading['score']}")
+
+    db.mark_dispute_applied(conn, dispute_id)
+    return {"applied": applied or ["brak zmian do wprowadzenia"]}
+
+
 # --- Statystyki (nauka + zużycie Claude) -------------------------------------
 
 @app.get("/api/stats/learning")
 def stats_learning(lang: str = Query(default="pl")) -> dict:
     data = db.learning_stats(conn)
+    data["disputes"] = db.dispute_stats(conn)
     for row in data["by_type"]:
         meta = tax.EXERCISE_TYPES.get(row["type"], {})
         row["label"] = (meta.get("label_en") if lang == "en" else meta.get("label")) or row["type"]

@@ -90,6 +90,12 @@ class ExercisePublic(BaseModel):
 class ErrorItem(BaseModel):
     """Pojedynczy błąd wykryty w odpowiedzi ucznia."""
 
+    # Uzupełniane po zapisie do dziennika — pozwala zakwestionować ten wpis
+    # zarówno na ekranie wyniku, jak i później w zakładce „Moje błędy".
+    id: Optional[int] = Field(default=None)
+    # Numer pozycji zadania, z której wziął się ten błąd (zadania wieloczęściowe).
+    # Pozwala przy zastrzeżeniu usunąć dokładnie ten wpis, bez zgadywania.
+    item_number: Optional[int] = Field(default=None)
     topic: str = Field(description="Identyfikator tematu z taksonomii FCE.")
     student_text: str = Field(description="Fragment odpowiedzi ucznia z błędem.")
     correct_text: str = Field(description="Poprawna wersja.")
@@ -181,3 +187,15 @@ class CompleteRequest(BaseModel):
 
 class GoalRequest(BaseModel):
     goal: int
+
+
+class DisputeRequest(BaseModel):
+    """Zastrzeżenie do wyjaśnienia wystawionego przez model."""
+
+    scope: str  # 'item' — wyjaśnienie pozycji zadania; 'error' — wpis w dzienniku błędów
+    disputed_text: str = Field(description="Kwestionowane wyjaśnienie (to, co widzi uczeń).")
+    comment: str = Field(default="", description="Opcjonalne uzasadnienie zastrzeżenia.")
+    exercise_id: Optional[int] = None
+    item_number: Optional[int] = None
+    error_id: Optional[int] = None
+    lang: str = "pl"

@@ -96,6 +96,26 @@ CREATE TABLE IF NOT EXISTS usage_events (
 );
 
 CREATE INDEX IF NOT EXISTS idx_usage_created ON usage_events(created_at);
+
+-- Zastrzeżenia do wyjaśnień modelu. Uczeń kwestionuje wyjaśnienie, model je weryfikuje,
+-- a ewentualna korekta danych (usunięcie fałszywego błędu z dziennika) następuje dopiero
+-- po zatwierdzeniu przez ucznia — stąd osobne `applied_at`.
+CREATE TABLE IF NOT EXISTS disputes (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at    TEXT NOT NULL,
+    scope         TEXT NOT NULL,              -- 'item' (pozycja zadania) | 'error' (wpis w dzienniku)
+    exercise_id   INTEGER,
+    item_number   INTEGER,
+    error_id      INTEGER,
+    disputed_text TEXT NOT NULL,
+    user_comment  TEXT NOT NULL DEFAULT '',
+    verdict       TEXT,                       -- 'upheld' (uczeń miał rację) | 'rejected'
+    revised_text  TEXT,
+    student_was_right INTEGER NOT NULL DEFAULT 0,
+    applied_at    TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_disputes_created ON disputes(created_at);
 """
 
 
@@ -366,6 +386,77 @@ def reviews_done_today(conn: sqlite3.Connection) -> int:
         (_today(),),
     ).fetchone()
     return int(row["n"])
+
+
+@_synchronized
+def insert_dispute(conn: sqlite3.Connection, *, scope: str, disputed_text: str,
+                   user_comment: str = "", exercise_id: Optional[int] = None,
+                   item_number: Optional[int] = None, error_id: Optional[int] = None,
+                   verdict: Optional[str] = None, revised_text: Optional[str] = None,
+                   student_was_right: bool = False) -> int:
+    cur = conn.execute(
+        "INSERT INTO disputes (created_at, scope, exercise_id, item_number, error_id, "
+        "disputed_text, user_comment, verdict, revised_text, student_was_right) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (_now(), scope, exercise_id, item_number, error_id, disputed_text, user_comment,
+         verdict, revised_text, int(student_was_right)),
+    )
+    conn.commit()
+    return int(cur.lastrowid)
+
+
+@_synchronized
+def get_dispute(conn: sqlite3.Connection, dispute_id: int) -> Optional[dict]:
+    row = conn.execute("SELECT * FROM disputes WHERE id = ?", (dispute_id,)).fetchone()
+    return dict(row) if row else None
+
+
+@_synchronized
+def mark_dispute_applied(conn: sqlite3.Connection, dispute_id: int) -> None:
+    conn.execute("UPDATE disputes SET applied_at = ? WHERE id = ?", (_now(), dispute_id))
+    conn.commit()
+
+
+@_synchronized
+def delete_error(conn: sqlite3.Connection, error_id: int) -> bool:
+    cur = conn.execute("DELETE FROM errors WHERE id = ?", (error_id,))
+    conn.commit()
+    return cur.rowcount > 0
+
+
+@_synchronized
+def latest_attempt_for_exercise(conn: sqlite3.Connection, exercise_id: int) -> Optional[dict]:
+    row = conn.execute(
+        "SELECT * FROM attempts WHERE exercise_id = ? ORDER BY id DESC LIMIT 1", (exercise_id,)
+    ).fetchone()
+    if row is None:
+        return None
+    data = dict(row)
+    data["grading"] = json.loads(data.pop("grading_json"))
+    return data
+
+
+@_synchronized
+def update_attempt_grading(conn: sqlite3.Connection, attempt_id: int, *,
+                           grading: dict, is_correct: Optional[bool]) -> None:
+    conn.execute(
+        "UPDATE attempts SET grading_json = ?, is_correct = ? WHERE id = ?",
+        (json.dumps(grading, ensure_ascii=False),
+         None if is_correct is None else int(is_correct), attempt_id),
+    )
+    conn.commit()
+
+
+@_synchronized
+def dispute_stats(conn: sqlite3.Connection) -> dict:
+    """Ile zastrzeżeń zgłoszono i w ilu model przyznał rację (sygnał jakości ocen)."""
+    row = conn.execute(
+        "SELECT COUNT(*) AS total, "
+        "COALESCE(SUM(CASE WHEN verdict = 'upheld' THEN 1 ELSE 0 END), 0) AS upheld, "
+        "COALESCE(SUM(CASE WHEN applied_at IS NOT NULL THEN 1 ELSE 0 END), 0) AS applied "
+        "FROM disputes"
+    ).fetchone()
+    return dict(row)
 
 
 def _reviews_per_day(conn: sqlite3.Connection) -> dict[str, int]:

@@ -313,6 +313,146 @@ def test_tips_focus_includes_drill_progress(app_ctx):
     assert body["progress"]["drill"]["correct"] == 1
 
 
+# --- Zastrzeżenia do wyjaśnień ----------------------------------------------
+
+def _stub_dispute(main_mod, monkeypatch, *, verdict="upheld", student_was_right=True):
+    payload = {
+        "explanation_was_wrong": verdict == "upheld",
+        "student_answer_was_acceptable": student_was_right,
+        "revised_explanation": "Poprawione wyjaśnienie.",
+        "reasoning": "Wyjaśnienie cytowało słowo, którego nie było w zadaniu.",
+    }
+    monkeypatch.setattr(main_mod.llm_client, "_invoke",
+                        lambda prompt, kind="other": json.dumps(payload))
+
+
+def _graded_multi_exercise(main_mod, monkeypatch):
+    """Ocenia zadanie wielopozycyjne i zwraca (exercise_id, wynik oceny)."""
+    _stub_llm(main_mod, monkeypatch, GRADE_ITEMS_REPLY)
+    ex_id = main_mod.db.insert_exercise(
+        main_mod.conn, type="uoe_part1_mcq_cloze", topic="collocations", prompt=MCQ_PROMPT
+    )
+    return ex_id
+
+
+def test_grade_response_carries_error_ids(app_ctx, monkeypatch):
+    """Bez identyfikatorów nie dałoby się zakwestionować konkretnego wpisu na ekranie oceny."""
+    client, main_mod = app_ctx
+    ex_id = _graded_multi_exercise(main_mod, monkeypatch)
+    body = client.post("/api/grade", json={
+        "type": "uoe_part1_mcq_cloze", "exercise_id": ex_id,
+        "student_answers": ["A warm", "B give"],
+    }).json()
+    assert body["errors"] and body["errors"][0]["id"] is not None
+    assert body["errors"][0]["item_number"] == 2
+
+
+def test_dispute_upheld_proposes_changes_but_changes_nothing_yet(app_ctx, monkeypatch):
+    """Samo zgłoszenie zastrzeżenia NIE może ruszyć danych — dopiero zatwierdzenie."""
+    client, main_mod = app_ctx
+    ex_id = _graded_multi_exercise(main_mod, monkeypatch)
+    graded = client.post("/api/grade", json={
+        "type": "uoe_part1_mcq_cloze", "exercise_id": ex_id,
+        "student_answers": ["A warm", "B give"],
+    }).json()
+    err_id = graded["errors"][0]["id"]
+    errors_before = len(main_mod.db.list_errors(main_mod.conn))
+
+    _stub_dispute(main_mod, monkeypatch)
+    res = client.post("/api/dispute", json={
+        "scope": "item", "exercise_id": ex_id, "item_number": 2, "error_id": err_id,
+        "disputed_text": "Wyjaśnienie cytuje nieistniejące słowo", "comment": "tego nie było",
+    }).json()
+
+    assert res["verdict"] == "upheld"
+    assert res["student_was_right"] is True
+    assert res["proposed_changes"], "powinna pojawić się propozycja korekty"
+    # Dane bez zmian aż do zatwierdzenia.
+    assert len(main_mod.db.list_errors(main_mod.conn)) == errors_before
+    assert main_mod.db.get_dispute(main_mod.conn, res["dispute_id"])["applied_at"] is None
+
+
+def test_dispute_apply_removes_false_error_and_fixes_score(app_ctx, monkeypatch):
+    client, main_mod = app_ctx
+    ex_id = _graded_multi_exercise(main_mod, monkeypatch)
+    graded = client.post("/api/grade", json={
+        "type": "uoe_part1_mcq_cloze", "exercise_id": ex_id,
+        "student_answers": ["A warm", "B give"],
+    }).json()
+    assert graded["score"] == "1/2"
+    err_id = graded["errors"][0]["id"]
+
+    _stub_dispute(main_mod, monkeypatch)
+    res = client.post("/api/dispute", json={
+        "scope": "item", "exercise_id": ex_id, "item_number": 2, "error_id": err_id,
+        "disputed_text": "d", "comment": "c",
+    }).json()
+
+    applied = client.post(f"/api/dispute/{res['dispute_id']}/apply").json()
+    assert applied["applied"]
+    # Fałszywy wpis zniknął z dziennika — nie będzie już napędzał ćwiczeń.
+    assert main_mod.db.get_error(main_mod.conn, err_id) is None
+    # Zapisany wynik poprawiony.
+    attempt = main_mod.db.latest_attempt_for_exercise(main_mod.conn, ex_id)
+    assert attempt["grading"]["score"] == "2/2"
+    assert attempt["is_correct"] == 1
+    assert attempt["grading"]["errors"] == []
+    # Powtórne zatwierdzenie odrzucone.
+    assert client.post(f"/api/dispute/{res['dispute_id']}/apply").status_code == 400
+
+
+def test_dispute_rejected_offers_no_changes_and_apply_is_refused(app_ctx, monkeypatch):
+    """Gdy model obstaje przy wyjaśnieniu, nie wolno pozwolić na korektę danych —
+    inaczej przycisk stałby się sposobem na kasowanie prawdziwych błędów."""
+    client, main_mod = app_ctx
+    eid = main_mod.db.insert_error(
+        main_mod.conn, source="s", exercise_type="t", topic="tenses",
+        student_text="have went", correct_text="have gone", explanation="e",
+    )
+    _stub_dispute(main_mod, monkeypatch, verdict="rejected", student_was_right=False)
+    res = client.post("/api/dispute", json={
+        "scope": "error", "error_id": eid, "disputed_text": "e", "comment": "nie zgadzam się",
+    }).json()
+
+    assert res["verdict"] == "rejected"
+    assert res["proposed_changes"] == []
+    assert client.post(f"/api/dispute/{res['dispute_id']}/apply").status_code == 400
+    assert main_mod.db.get_error(main_mod.conn, eid) is not None
+
+
+def test_dispute_on_journal_entry_removes_it_after_confirmation(app_ctx, monkeypatch):
+    client, main_mod = app_ctx
+    eid = main_mod.db.insert_error(
+        main_mod.conn, source="import:x", exercise_type="imported", topic="tenses",
+        student_text="a", correct_text="b", explanation="bzdura",
+    )
+    _stub_dispute(main_mod, monkeypatch)
+    res = client.post("/api/dispute", json={
+        "scope": "error", "error_id": eid, "disputed_text": "bzdura", "comment": "",
+    }).json()
+    client.post(f"/api/dispute/{res['dispute_id']}/apply")
+    assert main_mod.db.get_error(main_mod.conn, eid) is None
+
+
+def test_dispute_validation_and_stats(app_ctx, monkeypatch):
+    client, main_mod = app_ctx
+    assert client.post("/api/dispute", json={"scope": "cos", "disputed_text": "x"}).status_code == 400
+    assert client.post("/api/dispute", json={"scope": "item", "disputed_text": "  "}).status_code == 400
+    assert client.post("/api/dispute", json={
+        "scope": "error", "error_id": 9999, "disputed_text": "x"}).status_code == 404
+    assert client.post("/api/dispute/9999/apply").status_code == 404
+
+    _stub_dispute(main_mod, monkeypatch)
+    eid = main_mod.db.insert_error(main_mod.conn, source="s", exercise_type="t", topic="tenses",
+                                  student_text="a", correct_text="b", explanation="e")
+    res = client.post("/api/dispute", json={
+        "scope": "error", "error_id": eid, "disputed_text": "e"}).json()
+    stats = client.get("/api/stats/learning").json()["disputes"]
+    assert stats["total"] == 1 and stats["upheld"] == 1 and stats["applied"] == 0
+    client.post(f"/api/dispute/{res['dispute_id']}/apply")
+    assert client.get("/api/stats/learning").json()["disputes"]["applied"] == 1
+
+
 def test_tips_focus_empty_when_no_errors(app_ctx):
     client, _ = app_ctx
     body = client.get("/api/tips/focus").json()

@@ -232,3 +232,22 @@ h2 { font-size: 1.05rem; }
 /* Postęp ćwiczeń do zaliczenia błędu */
 .drill-progress { margin-top: .35rem; font-size: .9rem; color: var(--muted); }
 .drill-progress.is-done { color: var(--good); font-weight: 700; }
+
+/* Zastrzeżenia do wyjaśnień modelu */
+.dispute { margin-top: .5rem; }
+.dispute-btn {
+  background: transparent; border: 1px solid var(--line); border-radius: 8px;
+  padding: .2rem .6rem; font: inherit; font-size: .78rem; color: var(--muted); cursor: pointer;
+}
+.dispute-btn:hover { border-color: var(--warn); color: var(--warn); }
+.dispute-panel { margin-top: .5rem; padding: .6rem .7rem; background: var(--bg);
+                 border: 1px solid var(--line); border-radius: 8px; }
+.dispute-comment { width: 100%; margin: 0 0 .5rem; padding: .45rem .6rem; font: inherit;
+                   font-size: .9rem; border: 1px solid var(--line); border-radius: 6px; resize: vertical; }
+.dispute-send, .dispute-apply { font-size: .85rem; padding: .35rem .8rem; }
+.dispute-out { margin-top: .6rem; display: grid; gap: .4rem; }
+.dispute-verdict { font-size: .85rem; font-weight: 700; padding: .35rem .6rem; border-radius: 6px; }
+.dispute-verdict.upheld { background: var(--good-bg); color: var(--good); }
+.dispute-verdict.rejected { background: #fdf3e3; color: var(--warn); }
+.dispute-revised { margin: 0; font-size: .95rem; }
+.dispute-applied { margin: 0; font-size: .88rem; color: var(--good); font-weight: 700; }

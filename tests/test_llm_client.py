@@ -87,6 +87,91 @@ def test_grade_items_unanswered_gap_counts_as_wrong(monkeypatch):
     assert r.items[1].student_option is None
 
 
+def test_review_dispute_missing_fields_default_to_upholding(monkeypatch):
+    """Brak jednoznacznej odpowiedzi traktujemy jak obstawanie i brak zmian w danych —
+    bezpieczniej nie ruszać dziennika ucznia."""
+    monkeypatch.setattr(llm_client, "_invoke", lambda p, kind="other": json.dumps(
+        {"revised_explanation": "x"}
+    ))
+    out = llm_client.review_dispute(
+        disputed_text="d", user_comment="c", exercise_context="ctx", student_answers_text="a"
+    )
+    assert out["verdict"] == "rejected"
+    assert out["student_was_right"] is False
+
+
+def test_review_dispute_separates_wrong_explanation_from_wrong_answer(monkeypatch):
+    """Najczęstszy przypadek: wyjaśnienie zmyśliło cytat, ale odpowiedź i tak była błędna.
+    Zastrzeżenie musi zostać uznane, a dane pozostać nietknięte."""
+    monkeypatch.setattr(llm_client, "_invoke", lambda p, kind="other": json.dumps(
+        {"explanation_was_wrong": True, "student_answer_was_acceptable": False,
+         "revised_explanation": "Cytat był zmyślony, ale 'gone' nadal jest błędne.",
+         "reasoning": "r"}
+    ))
+    out = llm_client.review_dispute(
+        disputed_text="d", user_comment="c", exercise_context="ctx", student_answers_text="a"
+    )
+    assert out["verdict"] == "upheld"          # wyjaśnienie było błędne
+    assert out["student_was_right"] is False   # ale odpowiedzi nie zaliczamy
+
+
+def test_review_dispute_accepts_equivalent_answer(monkeypatch):
+    monkeypatch.setattr(llm_client, "_invoke", lambda p, kind="other": json.dumps(
+        {"explanation_was_wrong": True, "student_answer_was_acceptable": True,
+         "revised_explanation": "r", "reasoning": "r"}
+    ))
+    out = llm_client.review_dispute(
+        disputed_text="d", user_comment="c", exercise_context="ctx", student_answers_text="a"
+    )
+    assert out["verdict"] == "upheld" and out["student_was_right"] is True
+
+
+def test_review_dispute_prompt_contains_exercise_and_objection(monkeypatch):
+    """Prompt musi zawierać dokładną treść zadania — to na jej podstawie model
+    weryfikuje, czy wyjaśnienie nie powołuje się na nieistniejące fragmenty."""
+    seen = {}
+
+    def spy(prompt, kind="other"):
+        seen["prompt"] = prompt
+        seen["kind"] = kind
+        return json.dumps({"explanation_was_wrong": True, "student_answer_was_acceptable": True,
+                           "revised_explanation": "r", "reasoning": "bo tak"})
+
+    monkeypatch.setattr(llm_client, "_invoke", spy)
+    out = llm_client.review_dispute(
+        disputed_text="Wyjaśnienie cytuje 'xyz'",
+        user_comment="W zadaniu nie było słowa xyz",
+        exercise_context="[1] I ______ done it. | poprawna odpowiedź: have",
+        student_answers_text="1. has",
+    )
+    assert out["verdict"] == "upheld" and out["student_was_right"] is True
+    assert seen["kind"] == "dispute"
+    assert "I ______ done it." in seen["prompt"]
+    assert "W zadaniu nie było słowa xyz" in seen["prompt"]
+    assert "1. has" in seen["prompt"]
+    # Prompt musi jawnie zniechęcać do ustępowania z uprzejmości i rozdzielać dwie osie.
+    low = seen["prompt"].lower()
+    assert "nie ustępuj" in low or "rzetelną" in low
+    assert "niezależnie" in low
+
+
+def test_grade_items_links_errors_to_item_numbers(monkeypatch):
+    """Błąd musi wiedzieć, z której pozycji pochodzi — inaczej korekta po zastrzeżeniu
+    nie wiedziałaby, który wpis w dzienniku usunąć."""
+    payload = {
+        "feedback": "f",
+        "items": [{"number": 1, "correct": False, "comment": "c"},
+                  {"number": 2, "correct": False, "comment": "c"}],
+        "errors": [{"topic": "tenses", "student_text": "zle2", "correct_text": "B y",
+                    "explanation": "e", "severity": "minor"}],
+    }
+    monkeypatch.setattr(llm_client, "_invoke", lambda p, kind="other": json.dumps(payload))
+    items = [{"number": 1, "options": ["A a", "B b"], "answer": "A a"},
+             {"number": 2, "options": ["A x", "B y"], "answer": "B y"}]
+    result = llm_client.grade_items("uoe_part1_mcq_cloze", "tekst", items, ["A a", "zle2"])
+    assert result.errors[0].item_number == 2
+
+
 def test_grade_answer_parses_into_model(monkeypatch):
     payload = {
         "correct": False,
