@@ -4,7 +4,7 @@
  * Uruchomienie (z katalogu projektu):
  *   node tests/smoke_frontend.js
  *
- * Wykonuje realne przepływy aplikacji (generowanie, ocena, Tipy, zastrzeżenia,
+ * Wykonuje realne przepływy aplikacji (generowanie, ocena, ćwiczenie błędów, zastrzeżenia,
  * statystyki, zmiana języka) na atrapach odpowiedzi API i wyłapuje błędy wykonania:
  * literówki w nazwach funkcji, selektory bez odpowiednika w HTML, nieobsłużone
  * kształty danych. Nie sprawdza wyglądu — do tego trzeba przeglądarki.
@@ -192,7 +192,7 @@ const routes = {
   },
   "/api/dispute/5/apply": { applied: ["usunięto wpis z dziennika błędów"] },
   "/api/errors/1": { deleted: 1 },   // ręczne usunięcie wpisu z dziennika (DELETE)
-  "/api/errors/7": { deleted: 7 },   // ręczne usunięcie błędu ćwiczonego w Tipach
+  "/api/errors/7": { deleted: 7 },   // ręczne usunięcie błędu w „Ćwicz błędy"
 };
 
 const calls = [];
@@ -265,7 +265,7 @@ const setInput = (id, value) => {
     }],
     ["sprawdzanie z zewnątrz", async () => fire("#btn-grade-external")],
     ["Moje błędy", async () => fire("#btn-refresh-errors")],
-    ["Tipy: fokus → zestaw ćwiczeń → ocena → cel", async () => {
+    ["Ćwicz błędy: fokus → zestaw ćwiczeń → ocena → cel", async () => {
       await fire(".tab:tips"); await settle();
       await fire("#tips-generate"); await settle();
       radioChecked = {};
@@ -312,13 +312,13 @@ const setInput = (id, value) => {
       await fireByClass("delete-yes"); await settle();
       if (!calls.some((c) => c === "/api/errors/1")) failures.push("brak wywołania usunięcia błędu");
     }],
-    ["usunięcie ćwiczonego błędu w Tipach", async () => {
+    ["usunięcie ćwiczonego błędu (Ćwicz błędy)", async () => {
       created.length = 0;
       await fire(".tab:tips"); await settle();   // setFocus() buduje panel od nowa
       await fireByClass("delete-btn");
       await fireByClass("delete-yes"); await settle();
     }],
-    ["zastrzeżenie do ćwiczonego błędu w Tipach", async () => {
+    ["zastrzeżenie do ćwiczonego błędu (Ćwicz błędy)", async () => {
       created.length = 0;
       await fire(".tab:tips"); await settle();
       await fireByClass("dispute-btn");

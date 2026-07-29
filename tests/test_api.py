@@ -243,7 +243,7 @@ def test_usage_lean_cost_flags_assumed_model(app_ctx):
     assert data["lean"]["assumed_models"] == ["claude-opus-5"]
 
 
-# --- Tipy --------------------------------------------------------------------
+# --- Ćwicz błędy --------------------------------------------------------------------
 
 def test_tips_progress_and_goal_roundtrip(app_ctx):
     client, main_mod = app_ctx

@@ -69,7 +69,7 @@ CREATE TABLE IF NOT EXISTS reviews (
 
 CREATE INDEX IF NOT EXISTS idx_reviews_created ON reviews(created_at);
 
--- Wyniki ćwiczeń do konkretnego błędu (zakładka Tipy). Dzienny cel zalicza błąd
+-- Wyniki ćwiczeń do konkretnego błędu (zakładka „Ćwicz błędy"). Dzienny cel zalicza błąd
 -- dopiero po uzbieraniu wymaganej liczby POPRAWNYCH ćwiczeń w danym dniu.
 CREATE TABLE IF NOT EXISTS drill_scores (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -358,7 +358,7 @@ def insert_review(conn: sqlite3.Connection, error_id: int) -> None:
 @_synchronized
 def insert_drill_score(conn: sqlite3.Connection, *, error_id: int,
                        correct_items: int, total_items: int) -> None:
-    """Zapisuje wynik jednego zestawu ćwiczeń do danego błędu (zakładka Tipy)."""
+    """Zapisuje wynik jednego zestawu ćwiczeń do danego błędu (zakładka „Ćwicz błędy")."""
     conn.execute(
         "INSERT INTO drill_scores (error_id, created_at, correct_items, total_items) "
         "VALUES (?, ?, ?, ?)",

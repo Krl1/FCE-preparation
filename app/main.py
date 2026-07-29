@@ -274,7 +274,7 @@ def get_topic_stats(lang: str = Query(default="pl")) -> list[dict]:
     return rows
 
 
-# --- Zakładka Tipy (tryb skupienia na pojedynczym błędzie) -------------------
+# --- Zakładka „Ćwicz błędy" (tryb skupienia na pojedynczym błędzie) -------------------
 
 def _progress(error_id: int | None = None) -> dict:
     """Postęp dziennego celu. Z `error_id` dołącza też postęp ćwiczeń do tego błędu."""

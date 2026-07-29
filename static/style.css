@@ -163,7 +163,7 @@ h2 { font-size: 1.05rem; }
 .stat-row .count { font-size: .82rem; color: var(--muted); width: 3.5rem; }
 .stat-empty { color: var(--muted); font-style: italic; }
 
-/* Tipy — dzienny cel + karta błędu */
+/* Ćwicz błędy — dzienny cel + karta błędu */
 .goal-progress { font-size: 1.05rem; }
 .goal-progress strong { color: var(--accent); font-size: 1.3rem; }
 .goal-set { margin: 0; }
@@ -211,7 +211,7 @@ h2 { font-size: 1.05rem; }
 .delete-yes { border-color: var(--bad); background: var(--bad-bg); color: var(--bad); font-weight: 700; }
 .delete-no { color: var(--muted); }
 
-/* Karta błędu w Tipach: zastrzeżenie + usunięcie w jednym rzędzie */
+/* Karta błędu w „Ćwicz błędy": zastrzeżenie + usunięcie w jednym rzędzie */
 .focus-feedback { display: flex; flex-wrap: wrap; align-items: flex-start; gap: .6rem; margin-top: .5rem; }
 .focus-feedback .dispute { margin-top: 0; flex: 1 1 22rem; }
 

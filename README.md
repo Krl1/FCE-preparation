@@ -11,7 +11,7 @@ doborem kolejnych zadań, żebyś oduczał się powtarzanych pomyłek.
 - **Model:** aplikacja wywołuje **Claude Code w trybie headless** (`claude -p … --output-format json`)
   i korzysta z Twojego **logowania z subskrypcji** (`~/.claude/.credentials.json`) — **bez klucza API**.
   Cała ta zależność jest w jednym pliku: `app/llm_client.py`.
-- **Frontend:** statyczna strona (HTML/JS/CSS, bez frameworków) z pięcioma widokami: *Ćwicz*, *Tipy*,
+- **Frontend:** statyczna strona (HTML/JS/CSS, bez frameworków) z pięcioma widokami: *Ćwicz zadania*, *Ćwicz błędy*,
   *Sprawdź z zewnątrz*, *Moje błędy*, *Statystyki*.
 - **Język:** przełącznik **PL / EN** w prawym górnym rogu zmienia zarówno interfejs, jak i język
   treści generowanych przez model (polecenia, wyjaśnienia, feedback) — przydatne, gdy pokazujesz
@@ -42,7 +42,7 @@ Następnie otwórz **http://localhost:8000**.
 
 ## Użycie
 
-- **Ćwicz** — wybierz typ zadania (np. *open cloze*, *key word transformation*, *essay*), opcjonalnie
+- **Ćwicz zadania** — wybierz typ zadania (np. *open cloze*, *key word transformation*, *essay*), opcjonalnie
   temat (albo zostaw dobór automatyczny wg Twoich błędów), wygeneruj i rozwiąż. Aplikacja oceni i zapisze błędy.
   **Każda część Use of English daje 5 zadań na jedno kliknięcie**, sprawdzanych jednym przyciskiem —
   dostajesz wynik punktowy (np. 3/5) i omówienie każdej pozycji:
@@ -61,7 +61,7 @@ Następnie otwórz **http://localhost:8000**.
   Ponieważ koszt wywołania jest zdominowany przez stały narzut trybu headless (~23 tys. tokenów
   niezależnie od treści), to kilkukrotnie tańsze i szybsze. Wielkość wsadu: `_UOE_BATCH`
   / `_WRITING_BATCH` w `app/llm_client.py`.
-- **Tipy** — tryb skupienia: aplikacja pokazuje jeden Twój błąd (dobierany losowo, ważony częstością
+- **Ćwicz błędy** — tryb skupienia: aplikacja pokazuje jeden Twój błąd (dobierany losowo, ważony częstością
   Twoich słabych tematów) wraz z wyjaśnieniem i generuje do niego **zestaw 5 ćwiczeń**. Przyciski:
   *Ćwiczenie* (kolejny zestaw do tego samego błędu), *Inny błąd* (zmiana na nowy). Pod wyjaśnieniem
   masz też **Nie zgadzam się** (zastrzeżenie do wyjaśnienia) i **Usuń błąd** — obsługujesz błąd tam,
@@ -76,7 +76,7 @@ Następnie otwórz **http://localhost:8000**.
   obniż cel w polu *Dzienny cel*.
 - **Sprawdź z zewnątrz** — wklej zadanie z książki i swoją odpowiedź; aplikacja sprawdzi je i zaloguje błędy.
 - **Moje błędy** — przegląd słabych punktów i pełny dziennik błędów. Przy każdym błędzie przycisk
-  **Ćwicz ten błąd** przenosi do zakładki *Tipy* z tym błędem i od razu generuje do niego ćwiczenie,
+  **Ćwicz ten błąd** przenosi do zakładki *Ćwicz błędy* z tym błędem i od razu generuje do niego ćwiczenie,
   a **Usuń błąd** (z potwierdzeniem w miejscu) wyrzuca go z dziennika.
 - **Statystyki** — dwie sekcje: *Nauka* (wygenerowane ćwiczenia, sprawdzone odpowiedzi, skuteczność,
   powtórki, liczba błędów, podział wg typu zadania) oraz *Zużycie Claude* (liczba wywołań, tokeny
@@ -96,13 +96,13 @@ Następnie otwórz **http://localhost:8000**.
 Błąd raz zapisany **zostaje w dzienniku na zawsze** — nie ma automatycznego wygaszania po
 n-krotnym przerobieniu. Tabela `reviews` notuje tylko, że danego dnia zaliczyłeś błąd do celu,
 i **nie wpływa na dobór**: `_choose_focus_error` waży wyłącznie liczbą i świeżością błędów
-w temacie. Praktyczny skutek: błąd opanowany dziesięć razy może w Tipach wracać tak samo
+w temacie. Praktyczny skutek: błąd opanowany dziesięć razy może w „Ćwicz błędy" wracać tak samo
 często jak nowy.
 
 Dlatego dziennik porządkujesz sam, **ręcznie**:
 
 - w zakładce *Moje błędy* — przycisk **Usuń błąd** przy każdym wpisie,
-- w zakładce *Tipy* — ten sam przycisk **przy błędzie, który właśnie ćwiczysz**, żeby nie szukać
+- w zakładce *Ćwicz błędy* — ten sam przycisk **przy błędzie, który właśnie ćwiczysz**, żeby nie szukać
   go potem w setkach innych wpisów.
 
 Oba wymagają potwierdzenia (**Na pewno? / Anuluj**), świadomie bez okienka przeglądarki.
@@ -110,11 +110,11 @@ Usunięcie **nie cofa dziś zdobytego celu ani serii** — powtórki zostają w 
 którą naprawdę wykonałeś, powinna zostać policzona. Zmienia się natomiast lista *słabych punktów*,
 bo liczona jest z dziennika na bieżąco.
 
-### Zastrzeżenie do wyjaśnienia („To wyjaśnienie jest błędne")
+### Zastrzeżenie do wyjaśnienia („Nie zgadzam się")
 
 Model czasem myli się w samym wyjaśnieniu — np. powołuje się na słowo, którego w zadaniu nie było.
 Dlatego przy każdym wyjaśnieniu (komentarz do luki, omówienie wariantu, wpis w dzienniku błędów)
-jest link **To wyjaśnienie jest błędne**. Rozwija pole na komentarz — napisz, co się nie zgadza —
+jest link **Nie zgadzam się**. Rozwija pole na komentarz — napisz, co się nie zgadza —
 i wysyła zastrzeżenie do ponownej weryfikacji wraz z **dokładną treścią zadania i Twoimi
 odpowiedziami**, żeby model mógł sprawdzić, czy nie zmyślił cytatu.
 

@@ -5,8 +5,8 @@
 const I18N = {
   pl: {
     "app.title": "FCE Trener",
-    "tab.practice": "Ćwicz",
-    "tab.tips": "Tipy",
+    "tab.practice": "Ćwicz zadania",
+    "tab.tips": "Ćwicz błędy",
     "tab.external": "Sprawdź z zewnątrz",
     "tab.errors": "Moje błędy",
     "tab.stats": "Statystyki",
@@ -76,7 +76,7 @@ const I18N = {
     "tips.more": "Kolejne ćwiczenie",
     "tips.streakDays": "dni w serii",
     "tips.drillProgress": "Poprawne ćwiczenia do zaliczenia tego błędu:",
-    "tips.empty": "Dziennik błędów jest pusty — rozwiąż lub wklej kilka zadań, a tu pojawią się tipy.",
+    "tips.empty": "Dziennik błędów jest pusty — rozwiąż lub wklej kilka zadań, a pojawią się tu błędy do przećwiczenia.",
     "stats.learning": "Nauka",
     "stats.usage": "Zużycie Claude",
     "stats.usageNote": "Koszt liczony wg stawek API. Tryb headless niesie narzut systemowego promptu Claude Code, więc to górna granica — aplikacja na API zużyłaby mniej.",
@@ -103,15 +103,15 @@ const I18N = {
     "stats.byKind": "Wg rodzaju wywołania",
     "kind.generate": "Generowanie zadań",
     "kind.grade": "Sprawdzanie",
-    "kind.drill": "Ćwiczenia do błędów (Tipy)",
+    "kind.drill": "Ćwiczenia do błędów",
     "kind.explain": "Wyjaśnienia",
     "kind.extract": "Import (ekstrakcja)",
     "kind.other": "Inne",
   },
   en: {
     "app.title": "FCE Trainer",
-    "tab.practice": "Practice",
-    "tab.tips": "Tips",
+    "tab.practice": "Practice tasks",
+    "tab.tips": "Practice mistakes",
     "tab.external": "Check external",
     "tab.errors": "My mistakes",
     "tab.stats": "Statistics",
@@ -181,7 +181,7 @@ const I18N = {
     "tips.more": "Another exercise",
     "tips.streakDays": "day streak",
     "tips.drillProgress": "Correct exercises needed for this mistake:",
-    "tips.empty": "Your mistake log is empty — do or paste a few exercises and tips will appear here.",
+    "tips.empty": "Your mistake log is empty — do or paste a few exercises and mistakes to practise will appear here.",
     "stats.learning": "Learning",
     "stats.usage": "Claude usage",
     "stats.usageNote": "Cost is at API rates. Headless mode carries Claude Code's system-prompt overhead, so this is an upper bound — an API app would use less.",
@@ -208,7 +208,7 @@ const I18N = {
     "stats.byKind": "By call type",
     "kind.generate": "Exercise generation",
     "kind.grade": "Grading",
-    "kind.drill": "Mistake drills (Tips)",
+    "kind.drill": "Mistake drills",
     "kind.explain": "Explanations",
     "kind.extract": "Import (extraction)",
     "kind.other": "Other",
@@ -439,7 +439,7 @@ function toggleExternalKeyword() {
   $("#external-keyword-wrap").classList.toggle("hidden", !isKwt);
 }
 
-// --- Wspólne renderowanie zadania (Ćwicz i Tipy) -----------------------------
+// --- Wspólne renderowanie zadania („Ćwicz zadania" i „Ćwicz błędy") -----------------------------
 
 const PRACTICE_UI = {
   card: "#exercise-area", topic: "#exercise-topic", instr: "#exercise-instructions",
@@ -905,7 +905,7 @@ function renderErrorsList(errors) {
     errItemEl(err, { date: true, practiceBtn: true, deleteBtn: true })));
 }
 
-// --- Tipy (tryb skupienia) ---------------------------------------------------
+// --- Ćwicz błędy (tryb skupienia) ---------------------------------------------------
 
 function loadTips(exclude) {
   return withBusy("loader.loading", null, async () => {
@@ -980,7 +980,7 @@ function renderFocusFeedback(err) {
   box.appendChild(deleteErrorWidget(err.id, () => loadTips()));
 }
 
-/** Skok z „Moje błędy" do Tipów z konkretnym błędem + od razu ćwiczenie. */
+/** Skok z „Moje błędy" do „Ćwicz błędy" z konkretnym błędem + od razu ćwiczenie. */
 async function focusOnError(err) {
   activateTab("tips");
   setFocus(err);

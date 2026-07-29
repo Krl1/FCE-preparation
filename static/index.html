@@ -13,8 +13,8 @@
   <header class="topbar">
     <h1 data-i18n="app.title">FCE&nbsp;Trener</h1>
     <nav class="tabs" role="tablist">
-      <button class="tab is-active" role="tab" aria-selected="true" aria-controls="view-practice" data-view="practice" data-i18n="tab.practice">Ćwicz</button>
-      <button class="tab" role="tab" aria-selected="false" aria-controls="view-tips" data-view="tips" data-i18n="tab.tips">Tipy</button>
+      <button class="tab is-active" role="tab" aria-selected="true" aria-controls="view-practice" data-view="practice" data-i18n="tab.practice">Ćwicz zadania</button>
+      <button class="tab" role="tab" aria-selected="false" aria-controls="view-tips" data-view="tips" data-i18n="tab.tips">Ćwicz błędy</button>
       <button class="tab" role="tab" aria-selected="false" aria-controls="view-external" data-view="external" data-i18n="tab.external">Sprawdź z zewnątrz</button>
       <button class="tab" role="tab" aria-selected="false" aria-controls="view-errors" data-view="errors" data-i18n="tab.errors">Moje błędy</button>
       <button class="tab" role="tab" aria-selected="false" aria-controls="view-stats" data-view="stats" data-i18n="tab.stats">Statystyki</button>
@@ -26,7 +26,7 @@
   </header>
 
   <main>
-    <!-- WIDOK: ĆWICZ -->
+    <!-- WIDOK: ĆWICZ ZADANIA -->
     <section id="view-practice" class="view is-active">
       <div class="card">
         <div class="row">
@@ -51,7 +51,7 @@
       <div id="practice-result" class="card result hidden"></div>
     </section>
 
-    <!-- WIDOK: TIPY (tryb skupienia) -->
+    <!-- WIDOK: ĆWICZ BŁĘDY (tryb skupienia na jednym błędzie) -->
     <section id="view-tips" class="view">
       <div class="card goal-card">
         <div class="row">
@@ -67,7 +67,7 @@
       </div>
 
       <div id="tips-empty" class="card hidden">
-        <p class="stat-empty" data-i18n="tips.empty">Dziennik błędów jest pusty — rozwiąż lub wklej kilka zadań, a tu pojawią się tipy.</p>
+        <p class="stat-empty" data-i18n="tips.empty">Dziennik błędów jest pusty — rozwiąż lub wklej kilka zadań, a pojawią się tu błędy do przećwiczenia.</p>
       </div>
 
       <div id="tips-focus" class="card focus-card hidden">
