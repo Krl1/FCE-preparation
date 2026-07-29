@@ -194,3 +194,96 @@ def test_grade_answer_parses_into_model(monkeypatch):
     assert result.correct is False
     assert len(result.errors) == 1
     assert result.errors[0].topic == "comparatives"
+
+
+# --- Wiązanie błędów z lukami (regresja: powtarzające się odpowiedzi) ---------
+
+FIVE_GAPS = [
+    {"number": n, "answer": a}
+    for n, a in [(1, "in"), (2, "the"), (3, "a"), (4, "The"), (5, "the")]
+]
+
+
+def _stub(monkeypatch, payload):
+    monkeypatch.setattr(llm_client, "_invoke", lambda p, kind="other": json.dumps(payload))
+
+
+def test_identical_student_answers_still_link_to_distinct_gaps(monkeypatch):
+    """Regresja: przy czterech pustych lukach zapisanych jako '-' wiązanie po treści
+    odpowiedzi sklejało wszystkie błędy w JEDNĄ pozycję. Skutek w aplikacji: przycisk
+    „Dodaj do dziennika" pojawiał się tylko przy ostatniej luce, a jego kliknięcie
+    zapisywało błąd zupełnie innej luki."""
+    _stub(monkeypatch, {
+        "feedback": "f",
+        "items": [{"number": n, "comment": f"c{n}"} for n in range(1, 6)],
+        # Model podaje item_number — tak jak każe mu prompt.
+        "errors": [
+            {"item_number": n, "topic": "articles", "student_text": "-",
+             "correct_text": "x", "explanation": f"e{n}", "severity": "minor"}
+            for n in (1, 2, 4, 5)
+        ],
+    })
+    r = llm_client.grade_items("uoe_part2_open_cloze", "tekst", FIVE_GAPS,
+                               ["-", "-", "a", "-", "-"], topic="articles")
+    assert r.score == "1/5"          # poprawna tylko luka 3
+    assert [e.item_number for e in r.errors] == [1, 2, 4, 5]
+    # Treść wpisu opisuje TĘ lukę, przy której się go zatwierdza.
+    assert [e.correct_text for e in r.errors] == ["in", "the", "The", "the"]
+    assert all(e.student_text == "-" for e in r.errors)
+
+
+def test_errors_without_item_numbers_are_spread_over_wrong_gaps(monkeypatch):
+    """Gdy model nie poda numerów, rozdzielamy błędy po kolei — nadal jeden na lukę."""
+    _stub(monkeypatch, {
+        "feedback": "f",
+        "items": [{"number": n, "comment": f"c{n}"} for n in range(1, 6)],
+        "errors": [{"topic": "articles", "student_text": "-", "correct_text": "x",
+                    "explanation": f"e{i}", "severity": "minor"} for i in range(4)],
+    })
+    r = llm_client.grade_items("uoe_part2_open_cloze", "t", FIVE_GAPS,
+                               ["-", "-", "a", "-", "-"], topic="articles")
+    assert [e.item_number for e in r.errors] == [1, 2, 4, 5]
+
+
+def test_missing_error_for_wrong_gap_is_synthesized(monkeypatch):
+    """Model pominął dwie luki — propozycje składamy z własnych danych, żeby żadna
+    błędna luka nie została bez czego zatwierdzić."""
+    _stub(monkeypatch, {
+        "feedback": "f",
+        "items": [{"number": n, "comment": f"komentarz {n}"} for n in range(1, 6)],
+        "errors": [{"item_number": 1, "topic": "prepositions", "student_text": "-",
+                    "correct_text": "in", "explanation": "od modelu", "severity": "major"}],
+    })
+    r = llm_client.grade_items("uoe_part2_open_cloze", "t", FIVE_GAPS,
+                               ["-", "-", "a", "-", "-"], topic="articles")
+    assert [e.item_number for e in r.errors] == [1, 2, 4, 5]
+    assert r.errors[0].explanation == "od modelu" and r.errors[0].severity == "major"
+    # Uzupełnione: wyjaśnienie z komentarza do luki, temat z zadania, waga domyślna.
+    assert r.errors[1].explanation == "komentarz 2"
+    assert r.errors[1].topic == "articles" and r.errors[1].severity == "minor"
+
+
+def test_error_pointing_at_a_correct_gap_is_dropped(monkeypatch):
+    """Błąd przy luce zaliczonej jako poprawna nie może trafić do propozycji."""
+    _stub(monkeypatch, {
+        "feedback": "f",
+        "items": [{"number": n, "comment": "c"} for n in range(1, 6)],
+        "errors": [{"item_number": 3, "topic": "articles", "student_text": "a",
+                    "correct_text": "a", "explanation": "zmyślone", "severity": "minor"}],
+    })
+    r = llm_client.grade_items("uoe_part2_open_cloze", "t", FIVE_GAPS,
+                               ["in", "the", "a", "The", "the"], topic="articles")
+    assert r.score == "5/5"
+    assert r.errors == []
+
+
+def test_grade_items_prompt_demands_item_number(monkeypatch):
+    seen = {}
+
+    def spy(prompt, kind="other"):
+        seen["prompt"] = prompt
+        return json.dumps({"feedback": "f", "items": [], "errors": []})
+
+    monkeypatch.setattr(llm_client, "_invoke", spy)
+    llm_client.grade_items("uoe_part2_open_cloze", "t", FIVE_GAPS, ["-"] * 5)
+    assert "item_number" in seen["prompt"]

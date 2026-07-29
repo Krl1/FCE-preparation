@@ -152,6 +152,18 @@ const WRITING_RESULT = {
   correct: null, feedback: "fb", band: "Band 3", errors: [],
   scores: [{ criterion: "content", score: 3, comment: "c" }],
 };
+const FIVE_GAPS_EX = {
+  id: 9, type: "uoe_part3_word_formation", topic: "word_formation", instructions: "Uzupełnij",
+  items: [1, 2, 3, 4, 5].map((n) => ({ number: n, question_text: `zdanie ${n} ______` })),
+};
+/** Pięć luk, cztery błędne z IDENTYCZNĄ odpowiedzią „-" — zgłoszony przypadek. */
+const FIVE_GAPS_RESULT = {
+  correct: false, score: "1/5", feedback: "f",
+  errors: [1, 2, 4, 5].map((n) => ({ id: null, item_number: n, topic: "articles",
+    student_text: "-", correct_text: "the", explanation: "e" + n, severity: "minor" })),
+  items: [1, 2, 3, 4, 5].map((n) => ({ number: n, correct: n === 3, student_option: n === 3 ? "a" : "-",
+    correct_option: n === 3 ? "a" : "the", comment: "c" + n, option_notes: null })),
+};
 /** Dwie propozycje niepowiązane z lukami — dla przycisku „Dodaj wszystkie". */
 const TWO_CANDIDATES_RESULT = {
   correct: false, feedback: "fb",
@@ -334,6 +346,23 @@ const setInput = (id, value) => {
       const added = calls.filter((c) => c.startsWith("POST /api/errors")).length - before;
       if (added !== 2) failures.push("Dodaj wszystkie zapisało " + added + " z 2 propozycji");
       routes["/api/grade"] = MULTI_RESULT;
+    }],
+    ["cztery błędne luki z tą samą odpowiedzią → cztery osobne przyciski", async () => {
+      created.length = 0;
+      routes["/api/exercise"] = FIVE_GAPS_EX; routes["/api/grade"] = FIVE_GAPS_RESULT;
+      await fire(".tab:practice");
+      await fire("#btn-generate"); await settle();
+      // Ta sama odpowiedź w każdej luce — właśnie to sklejało błędy w jedną pozycję.
+      [1, 2, 3, 4, 5].forEach((n) => setInput(`practice-answer-${n}`, "-"));
+      await fire("#btn-grade"); await settle();
+      const buttons = created.filter((n) => String(n.className || "").includes("add-btn"));
+      if (buttons.length !== 4) failures.push("przyciski dodawania: " + buttons.length + " z 4");
+      // Zatwierdzamy drugi z nich — musi polecieć dokładnie jedno żądanie.
+      const before = calls.filter((c) => c.startsWith("POST /api/errors")).length;
+      await fireByClass("add-btn", 1); await settle();
+      const added = calls.filter((c) => c.startsWith("POST /api/errors")).length - before;
+      if (added !== 1) failures.push("zatwierdzenie jednej luki wysłało " + added + " żądań");
+      routes["/api/exercise"] = MCQ_EX; routes["/api/grade"] = MULTI_RESULT;
     }],
     ["anulowanie usuwania błędu (nic nie leci do API)", async () => {
       created.length = 0;

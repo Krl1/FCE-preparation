@@ -883,6 +883,10 @@ function renderResult(sel, r, ex) {
   const pendingBar = elem("div", "pending-bar hidden");
   box.appendChild(pendingBar);
   const pendingAdds = [];
+  // Propozycje pokazane już przy konkretnej luce — reszta idzie do sekcji zbiorczej.
+  // Liczymy je jawnie (a nie po numerze pozycji), żeby żadna propozycja nie została
+  // pokazana dwa razy ani nie zniknęła, nawet gdy serwer przypisze numery dziwnie.
+  const shownErrors = new Set();
 
   // Zadanie wieloczęściowe: wynik i omówienie każdej luki.
   const hasItems = Array.isArray(r.items) && r.items.length;
@@ -901,7 +905,9 @@ function renderResult(sel, r, ex) {
         block.appendChild(optionNotesEl(item.option_notes));
       }
       // Propozycja błędu dla tej luki: zatwierdzasz ją tam, gdzie widzisz omówienie.
-      const linked = (r.errors || []).find((e) => e.item_number === item.number);
+      const linked = (r.errors || []).find(
+        (e) => e.item_number === item.number && !shownErrors.has(e));
+      if (linked) shownErrors.add(linked);
       // Payload zastrzeżenia jest wspólnym obiektem: po zatwierdzeniu wpada w niego
       // `error_id`, więc korekta usunie dokładnie ten wpis, bez zgadywania.
       const payload = ex && ex.id ? {
@@ -923,8 +929,7 @@ function renderResult(sel, r, ex) {
 
   // Błędy nieprzypisane do żadnej luki (albo zadanie jednoczęściowe) — pokazujemy
   // osobno, żeby żadna propozycja nie przepadła po cichu.
-  const loose = (r.errors || []).filter(
-    (e) => !hasItems || !r.items.some((i) => i.number === e.item_number));
+  const loose = (r.errors || []).filter((e) => !shownErrors.has(e));
   if (loose.length) {
     box.appendChild(elem("h2", null, t("errors.detected") + " (" + loose.length + ")"));
     loose.forEach((err) => box.appendChild(errItemEl(err, {

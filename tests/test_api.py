@@ -574,3 +574,43 @@ def test_confirmed_error_feeds_weak_points_and_can_be_practised(app_ctx):
     assert [s["topic"] for s in client.get("/api/stats/topics").json()] == ["tenses"]
     assert client.get("/api/tips/focus").json()["error"]["id"] == eid
     assert client.delete(f"/api/errors/{eid}").status_code == 200
+
+
+def test_each_wrong_gap_can_be_confirmed_separately(app_ctx, monkeypatch):
+    """Regresja pełnej ścieżki: pięć luk, cztery odpowiedzi identyczne ('-').
+    Każda błędna luka ma własną propozycję, a zatwierdzenie zapisuje TĘ lukę —
+    wcześniej wszystkie sklejały się w jedną i do dziennika trafiał błąd innej luki."""
+    client, main_mod = app_ctx
+    prompt = {
+        "instructions": "Uzupełnij",
+        "items": [{"number": n, "question_text": f"zdanie {n} ______", "answer": a}
+                  for n, a in [(1, "in"), (2, "the"), (3, "a"), (4, "The"), (5, "the")]],
+    }
+    _stub_llm(main_mod, monkeypatch, {
+        "feedback": "f",
+        "items": [{"number": n, "comment": f"c{n}"} for n in range(1, 6)],
+        "errors": [{"item_number": n, "topic": "articles", "student_text": "-",
+                    "correct_text": "x", "explanation": f"e{n}", "severity": "minor"}
+                   for n in (1, 2, 4, 5)],
+    })
+    ex_id = main_mod.db.insert_exercise(main_mod.conn, type="uoe_part2_open_cloze",
+                                        topic="articles", prompt=prompt)
+
+    body = client.post("/api/grade", json={
+        "type": "uoe_part2_open_cloze", "exercise_id": ex_id,
+        "student_answers": ["-", "-", "a", "-", "-"],
+    }).json()
+    assert [e["item_number"] for e in body["errors"]] == [1, 2, 4, 5]
+
+    # Zatwierdzamy tylko luki 2, 4 i 5 — dokładnie tak, jak chciał uczeń.
+    for err in body["errors"]:
+        if err["item_number"] == 1:
+            continue
+        client.post("/api/errors", json={
+            **{k: err[k] for k in ("topic", "student_text", "correct_text",
+                                   "explanation", "severity")},
+            "exercise_id": ex_id,
+        })
+
+    stored = sorted(e["correct_text"] for e in main_mod.db.list_errors(main_mod.conn))
+    assert stored == ["The", "the", "the"], "w dzienniku muszą wylądować luki 2, 4 i 5"

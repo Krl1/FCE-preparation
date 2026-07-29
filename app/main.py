@@ -129,12 +129,14 @@ def create_exercise(req: GenerateRequest) -> ExercisePublic:
 class _GradingTask:
     """Rozstrzygnięte wejście do oceny: treść zadania, klucz odpowiedzi i odpowiedź ucznia."""
 
-    def __init__(self, *, ex_type: str, question_text: str,
+    def __init__(self, *, ex_type: str, question_text: str, topic: str = "",
                  model_answer: Optional[str] = None, key_word: Optional[str] = None,
                  options: Optional[list[str]] = None, items: Optional[list[dict]] = None,
                  student_answers: Optional[list[str]] = None, student_answer: str = ""):
         self.ex_type = ex_type
         self.question_text = question_text
+        # Temat zadania — awaryjny temat propozycji błędu, gdy model go nie poda.
+        self.topic = topic
         self.model_answer = model_answer
         self.key_word = key_word
         self.options = options
@@ -183,7 +185,7 @@ def _resolve_grading_task(req: GradeRequest) -> _GradingTask:
         )
 
     return _GradingTask(
-        ex_type=ex_type, question_text=prompt.get("question_text", ""),
+        ex_type=ex_type, question_text=prompt.get("question_text", ""), topic=stored["topic"],
         model_answer=prompt.get("answer"), key_word=prompt.get("key_word"),
         options=prompt.get("options"), items=items,
         student_answers=req.student_answers, student_answer=student_answer,
@@ -195,6 +197,7 @@ def _run_grading(task: _GradingTask, lang: str) -> GradingResult:
         if task.is_multi:
             return llm_client.grade_items(
                 task.ex_type, task.question_text, task.items, task.student_answers, lang=lang,
+                topic=task.topic,
             )
         return llm_client.grade_answer(
             task.ex_type, task.question_text, task.student_answer,

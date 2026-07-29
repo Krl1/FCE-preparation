@@ -396,8 +396,63 @@ def _norm_answer(s: str) -> str:
     return s
 
 
+def _errors_per_wrong_item(merged: list[dict], model_errors: list[dict],
+                           topic: str) -> list[dict]:
+    """Buduje DOKŁADNIE jedną propozycję błędu na każdą błędną pozycję.
+
+    Wiązanie idzie po numerze pozycji, nie po treści odpowiedzi ucznia. Wcześniej
+    szło po treści i przy powtarzających się odpowiedziach (np. cztery puste luki
+    zapisane jako '-') wszystkie błędy sklejały się w jedną pozycję: pozostałe luki
+    nie dostawały propozycji, a zatwierdzenie dopisywało do dziennika błąd innej luki.
+
+    `student_text` i `correct_text` bierzemy z werdyktów serwera, nie z odpowiedzi
+    modelu — wpis w dzienniku musi opisywać tę lukę, przy której go zatwierdzasz.
+    Od modelu zostaje temat, wyjaśnienie i waga błędu."""
+    wrong = [m for m in merged if not m["correct"]]
+    wrong_numbers = {m["number"] for m in wrong}
+
+    by_item: dict[int, dict] = {}
+    leftovers: list[dict] = []
+    for err in model_errors:
+        try:
+            number = int(err.get("item_number"))
+        except (TypeError, ValueError):
+            number = None
+        if number in wrong_numbers and number not in by_item:
+            by_item[number] = err
+        else:
+            # Brak numeru, numer nieznany albo już zajęty (także: błąd przypisany
+            # do pozycji zaliczonej jako poprawna — takiego nie zapisujemy).
+            leftovers.append(err)
+
+    # Nieprzypisane: najpierw do luki o tej samej odpowiedzi ucznia, potem po kolei.
+    for err in leftovers:
+        free = [m for m in wrong if m["number"] not in by_item]
+        if not free:
+            break
+        text = _norm_answer(str(err.get("student_text", "")))
+        match = next((m for m in free if _norm_answer(m["student_option"] or "") == text), free[0])
+        by_item[match["number"]] = err
+
+    errors = []
+    for item in wrong:
+        # Gdy model pominął lukę, propozycję składamy z własnych danych — każda błędna
+        # luka musi mieć co zatwierdzić, inaczej cicho by przepadła.
+        err = by_item.get(item["number"]) or {}
+        errors.append({
+            "item_number": item["number"],
+            "topic": str(err.get("topic") or topic or ""),
+            "student_text": item["student_option"] or "(brak)",
+            "correct_text": item["correct_option"],
+            "explanation": str(err.get("explanation") or item["comment"] or ""),
+            "severity": "major" if err.get("severity") == "major" else "minor",
+        })
+    return errors
+
+
 def grade_items(exercise_type: str, question_text: str, items: list[dict],
-                student_answers: list[str], lang: str = "pl") -> GradingResult:
+                student_answers: list[str], lang: str = "pl",
+                topic: str = "") -> GradingResult:
     """Ocenia zadanie wieloczęściowe — wszystkie pozycje w JEDNYM wywołaniu modelu.
 
     Dwa tryby oceny, zależnie od pozycji:
@@ -467,7 +522,8 @@ def grade_items(exercise_type: str, question_text: str, items: list[dict],
         '{"feedback": str, '
         '"items": [{"number": int, "correct": bool, "comment": str, '
         '"option_notes": [{"option": str, "is_correct": bool, "comment": str}]|null}], '
-        '"errors": [{"topic": str, "student_text": str, "correct_text": str, "explanation": str, "severity": "minor"|"major"}]}'
+        '"errors": [{"item_number": int, "topic": str, "student_text": str, "correct_text": str, '
+        '"explanation": str, "severity": "minor"|"major"}]}'
     )
     prompt = (
         f"Uczeń rozwiązał zadanie FCE (typ: {exercise_type}) składające się z {len(items)} pozycji.\n"
@@ -476,7 +532,9 @@ def grade_items(exercise_type: str, question_text: str, items: list[dict],
         + judge_line
         + "Dla KAŻDEJ pozycji podaj krótki 'comment' (jedno zdanie) uzasadniający poprawną odpowiedź.\n"
         + notes_line
-        + "W 'errors' umieść po jednej pozycji dla każdej pozycji, którą uznajesz za BŁĘDNĄ "
+        + "W 'errors' umieść po jednym wpisie dla KAŻDEJ pozycji, którą uznajesz za BŁĘDNĄ. "
+        "Pole 'item_number' MUSI być numerem tej pozycji — bez niego nie da się powiązać "
+        "błędu z luką, gdy kilka luk ma tę samą odpowiedź ucznia. "
         "(student_text = odpowiedź ucznia, correct_text = poprawna). "
         f"Pole 'topic' MUSI być jednym z: {valid_topics}.\n"
         "'feedback' to maksymalnie 1–2 krótkie zdania podsumowania.\n"
@@ -510,19 +568,7 @@ def grade_items(exercise_type: str, question_text: str, items: list[dict],
             "option_notes": entry.get("option_notes") if not correct else None,
         })
 
-    # Odfiltruj błędy dotyczące pozycji uznanych ostatecznie za poprawne — inaczej
-    # model mógłby zanieczyścić dziennik błędem przy odpowiedzi, którą sami zaliczyliśmy.
-    ok_answers = {_norm_answer(m["student_option"] or "") for m in merged if m["correct"]}
-    errors = [e for e in (data.get("errors") or [])
-              if _norm_answer(str(e.get("student_text", ""))) not in ok_answers]
-
-    # Powiąż błąd z pozycją, z której pochodzi — po odpowiedzi ucznia. Dzięki temu
-    # zastrzeżenie do konkretnej pozycji wie, który wpis w dzienniku dotyczy sporu.
-    wrong_by_answer = {
-        _norm_answer(m["student_option"] or ""): m["number"] for m in merged if not m["correct"]
-    }
-    for err in errors:
-        err["item_number"] = wrong_by_answer.get(_norm_answer(str(err.get("student_text", ""))))
+    errors = _errors_per_wrong_item(merged, data.get("errors") or [], topic)
 
     correct_count = sum(1 for m in merged if m["correct"])
     return GradingResult.model_validate({
