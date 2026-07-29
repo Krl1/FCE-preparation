@@ -469,3 +469,41 @@ def test_tips_focus_exclude_returns_different_error(app_ctx):
     first = client.get("/api/tips/focus").json()["error"]["id"]
     other = client.get(f"/api/tips/focus?exclude={first}").json()["error"]["id"]
     assert other != first and other in ids
+
+
+# --- Ręczne usuwanie błędów z dziennika --------------------------------------
+
+def test_delete_error_removes_it_from_journal_and_weak_points(app_ctx):
+    client, main_mod = app_ctx
+    keep = main_mod.db.insert_error(main_mod.conn, source="s", exercise_type="t", topic="tenses",
+                                    student_text="zostaje", correct_text="b", explanation="e")
+    drop = main_mod.db.insert_error(main_mod.conn, source="s", exercise_type="t", topic="articles",
+                                    student_text="do usunięcia", correct_text="b", explanation="e")
+
+    assert client.delete(f"/api/errors/{drop}").json() == {"deleted": drop}
+    ids = [e["id"] for e in client.get("/api/errors").json()]
+    assert ids == [keep]
+    # „Słabe punkty" liczone są z dziennika, więc temat bez błędów znika z listy.
+    assert "articles" not in [s["topic"] for s in client.get("/api/stats/topics").json()]
+
+
+def test_delete_error_twice_is_404(app_ctx):
+    client, main_mod = app_ctx
+    eid = main_mod.db.insert_error(main_mod.conn, source="s", exercise_type="t", topic="tenses",
+                                   student_text="a", correct_text="b", explanation="e")
+    assert client.delete(f"/api/errors/{eid}").status_code == 200
+    assert client.delete(f"/api/errors/{eid}").status_code == 404
+
+
+def test_deleting_error_keeps_todays_goal_progress(app_ctx):
+    """Usunięcie błędu nie odbiera dziś zaliczonego celu — przerobiona praca
+    pozostaje przerobiona, inaczej porządkowanie dziennika cofałoby serię."""
+    client, main_mod = app_ctx
+    eid = main_mod.db.insert_error(main_mod.conn, source="s", exercise_type="t", topic="tenses",
+                                   student_text="a", correct_text="b", explanation="e")
+    main_mod.db.insert_review(main_mod.conn, eid)
+    before = client.get("/api/tips/progress").json()["done"]
+    assert before == 1
+
+    client.delete(f"/api/errors/{eid}")
+    assert client.get("/api/tips/progress").json()["done"] == before

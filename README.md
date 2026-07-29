@@ -63,7 +63,9 @@ Następnie otwórz **http://localhost:8000**.
   / `_WRITING_BATCH` w `app/llm_client.py`.
 - **Tipy** — tryb skupienia: aplikacja pokazuje jeden Twój błąd (dobierany losowo, ważony częstością
   Twoich słabych tematów) wraz z wyjaśnieniem i generuje do niego **zestaw 5 ćwiczeń**. Przyciski:
-  *Ćwiczenie* (kolejny zestaw do tego samego błędu), *Inny błąd* (zmiana na nowy).
+  *Ćwiczenie* (kolejny zestaw do tego samego błędu), *Inny błąd* (zmiana na nowy). Pod wyjaśnieniem
+  masz też **Nie zgadzam się** (zastrzeżenie do wyjaśnienia) i **Usuń błąd** — obsługujesz błąd tam,
+  gdzie go widzisz, bez szukania wpisu w dzienniku.
   U góry **dzienny cel** — ustalasz, ile błędów chcesz dziennie przerobić. Błąd zalicza się (+1)
   dopiero po **5 poprawnie rozwiązanych ćwiczeniach** do niego, liczonych **narastająco w obrębie
   dnia** — 3/5 w jednym podejściu i 2/5 w kolejnym też wystarczy. Postęp widać pod celem
@@ -74,7 +76,8 @@ Następnie otwórz **http://localhost:8000**.
   obniż cel w polu *Dzienny cel*.
 - **Sprawdź z zewnątrz** — wklej zadanie z książki i swoją odpowiedź; aplikacja sprawdzi je i zaloguje błędy.
 - **Moje błędy** — przegląd słabych punktów i pełny dziennik błędów. Przy każdym błędzie przycisk
-  **Ćwicz ten błąd** przenosi do zakładki *Tipy* z tym błędem i od razu generuje do niego ćwiczenie.
+  **Ćwicz ten błąd** przenosi do zakładki *Tipy* z tym błędem i od razu generuje do niego ćwiczenie,
+  a **Usuń błąd** (z potwierdzeniem w miejscu) wyrzuca go z dziennika.
 - **Statystyki** — dwie sekcje: *Nauka* (wygenerowane ćwiczenia, sprawdzone odpowiedzi, skuteczność,
   powtórki, liczba błędów, podział wg typu zadania) oraz *Zużycie Claude* (liczba wywołań, tokeny
   wejściowe/wyjściowe/cache, **szacowany koszt wg stawek API** i podział wg rodzaju wywołania).
@@ -87,6 +90,25 @@ Następnie otwórz **http://localhost:8000**.
   decyzji o migracji na API. Cennik jest w `app/pricing.py`; jeśli użyty model nie ma
   **potwierdzonej** stawki, szacunek jest wyraźnie oznaczony jako założony (zamiast podawać
   liczbę jako pewnik).
+
+### Cykl życia błędu (nic nie znika samo)
+
+Błąd raz zapisany **zostaje w dzienniku na zawsze** — nie ma automatycznego wygaszania po
+n-krotnym przerobieniu. Tabela `reviews` notuje tylko, że danego dnia zaliczyłeś błąd do celu,
+i **nie wpływa na dobór**: `_choose_focus_error` waży wyłącznie liczbą i świeżością błędów
+w temacie. Praktyczny skutek: błąd opanowany dziesięć razy może w Tipach wracać tak samo
+często jak nowy.
+
+Dlatego dziennik porządkujesz sam, **ręcznie**:
+
+- w zakładce *Moje błędy* — przycisk **Usuń błąd** przy każdym wpisie,
+- w zakładce *Tipy* — ten sam przycisk **przy błędzie, który właśnie ćwiczysz**, żeby nie szukać
+  go potem w setkach innych wpisów.
+
+Oba wymagają potwierdzenia (**Na pewno? / Anuluj**), świadomie bez okienka przeglądarki.
+Usunięcie **nie cofa dziś zdobytego celu ani serii** — powtórki zostają w `reviews`, bo praca,
+którą naprawdę wykonałeś, powinna zostać policzona. Zmienia się natomiast lista *słabych punktów*,
+bo liczona jest z dziennika na bieżąco.
 
 ### Zastrzeżenie do wyjaśnienia („To wyjaśnienie jest błędne")
 

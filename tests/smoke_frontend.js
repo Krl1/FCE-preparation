@@ -191,6 +191,8 @@ const routes = {
     proposed_changes: ["usunięcie tego wpisu z dziennika błędów"],
   },
   "/api/dispute/5/apply": { applied: ["usunięto wpis z dziennika błędów"] },
+  "/api/errors/1": { deleted: 1 },   // ręczne usunięcie wpisu z dziennika (DELETE)
+  "/api/errors/7": { deleted: 7 },   // ręczne usunięcie błędu ćwiczonego w Tipach
 };
 
 const calls = [];
@@ -292,6 +294,33 @@ const setInput = (id, value) => {
     ["zastrzeżenie do wpisu w dzienniku", async () => {
       created.length = 0;
       await fire("#btn-refresh-errors"); await settle();
+      await fireByClass("dispute-btn");
+      await fireByClass("dispute-send"); await settle();
+    }],
+    ["anulowanie usuwania błędu (nic nie leci do API)", async () => {
+      created.length = 0;
+      await fire("#btn-refresh-errors"); await settle();
+      const before = calls.length;
+      await fireByClass("delete-btn");     // rozwiń potwierdzenie
+      await fireByClass("delete-no");      // wycofaj się
+      if (calls.length !== before) failures.push("anulowanie wysłało żądanie do API");
+    }],
+    ["usunięcie błędu z dziennika", async () => {
+      created.length = 0;
+      await fire("#btn-refresh-errors"); await settle();
+      await fireByClass("delete-btn");
+      await fireByClass("delete-yes"); await settle();
+      if (!calls.some((c) => c === "/api/errors/1")) failures.push("brak wywołania usunięcia błędu");
+    }],
+    ["usunięcie ćwiczonego błędu w Tipach", async () => {
+      created.length = 0;
+      await fire(".tab:tips"); await settle();   // setFocus() buduje panel od nowa
+      await fireByClass("delete-btn");
+      await fireByClass("delete-yes"); await settle();
+    }],
+    ["zastrzeżenie do ćwiczonego błędu w Tipach", async () => {
+      created.length = 0;
+      await fire(".tab:tips"); await settle();
       await fireByClass("dispute-btn");
       await fireByClass("dispute-send"); await settle();
     }],

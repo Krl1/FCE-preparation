@@ -26,6 +26,11 @@ const I18N = {
     "errors.weak": "Słabe punkty",
     "errors.journal": "Dziennik błędów",
     "errors.practiceThis": "Ćwicz ten błąd",
+    "errors.delete": "Usuń błąd",
+    "errors.deleteConfirm": "Usunąć na stałe?",
+    "errors.deleteYes": "Tak, usuń",
+    "errors.deleteCancel": "Anuluj",
+    "errors.deleted": "Błąd usunięty z dziennika.",
     "dispute.button": "Nie zgadzam się",
     "dispute.placeholder": "Co jest nie tak z tym wyjaśnieniem? (opcjonalnie)",
     "dispute.send": "Sprawdź ponownie",
@@ -41,6 +46,7 @@ const I18N = {
     "loader.gradingExt": "Sprawdzam zadanie…",
     "loader.loading": "Wczytuję…",
     "loader.dispute": "Weryfikuję zastrzeżenie…",
+    "loader.deleting": "Usuwam…",
     "topic.prefix": "Temat: ",
     "kw.label": "Słowo-klucz: ",
     "answer.ph": "Twoja odpowiedź…",
@@ -125,6 +131,11 @@ const I18N = {
     "errors.weak": "Weak points",
     "errors.journal": "Mistake log",
     "errors.practiceThis": "Practice this mistake",
+    "errors.delete": "Delete mistake",
+    "errors.deleteConfirm": "Delete permanently?",
+    "errors.deleteYes": "Yes, delete",
+    "errors.deleteCancel": "Cancel",
+    "errors.deleted": "Mistake removed from the log.",
     "dispute.button": "I disagree",
     "dispute.placeholder": "What is wrong with this explanation? (optional)",
     "dispute.send": "Re-check",
@@ -140,6 +151,7 @@ const I18N = {
     "loader.gradingExt": "Checking…",
     "loader.loading": "Loading…",
     "loader.dispute": "Re-checking…",
+    "loader.deleting": "Deleting…",
     "topic.prefix": "Topic: ",
     "kw.label": "Key word: ",
     "answer.ph": "Your answer…",
@@ -668,6 +680,43 @@ function disputeWidget(payload) {
   return wrap;
 }
 
+/** Usunięcie wpisu z dziennika, dwustopniowo (klik → potwierdzenie).
+ *  Świadomie bez `window.confirm` — modal blokuje wątek i nie da się go
+ *  przetestować bez przeglądarki, a potwierdzenie w miejscu wystarcza,
+ *  by przypadkowe kliknięcie nie skasowało danych. */
+function deleteErrorWidget(errorId, onDone) {
+  const wrap = elem("div", "err-delete");
+  const btn = elem("button", "delete-btn", "🗑 " + t("errors.delete"));
+  const confirmBox = elem("span", "delete-confirm hidden");
+  const yes = elem("button", "delete-yes", t("errors.deleteYes"));
+  const no = elem("button", "delete-no", t("errors.deleteCancel"));
+  confirmBox.appendChild(elem("span", "delete-q", t("errors.deleteConfirm")));
+  confirmBox.appendChild(yes);
+  confirmBox.appendChild(no);
+
+  btn.addEventListener("click", () => {
+    btn.classList.add("hidden");
+    confirmBox.classList.remove("hidden");
+    yes.focus();
+  });
+  no.addEventListener("click", () => {
+    confirmBox.classList.add("hidden");
+    btn.classList.remove("hidden");
+  });
+  yes.addEventListener("click", () => withBusy("loader.deleting", yes, async () => {
+    try {
+      await api("/api/errors/" + errorId, { method: "DELETE" });
+      if (onDone) onDone();
+    } catch (e) {
+      wrap.appendChild(elem("div", "error-banner", t("error.prefix") + e.message));
+    }
+  }));
+
+  wrap.appendChild(btn);
+  wrap.appendChild(confirmBox);
+  return wrap;
+}
+
 function renderDisputeOutcome(out, res) {
   const upheld = res.verdict === "upheld";
   out.appendChild(elem("div", "dispute-verdict " + (upheld ? "upheld" : "rejected"),
@@ -716,10 +765,16 @@ function errItemEl(err, opts = {}) {
     `<div class="diff"><span class="from">${esc(err.student_text)}</span> → ` +
     `<span class="to">${esc(err.correct_text)}</span></div>` +
     `<div class="why">${esc(err.explanation)}</div>`);
-  if (opts.practiceBtn) {
-    const btn = elem("button", "practice-btn", t("errors.practiceThis"));
-    btn.addEventListener("click", () => focusOnError(err));
-    item.appendChild(btn);
+  if (opts.practiceBtn || opts.deleteBtn) {
+    const row = elem("div", "err-actions");
+    if (opts.practiceBtn) {
+      const btn = elem("button", "practice-btn", t("errors.practiceThis"));
+      btn.addEventListener("click", () => focusOnError(err));
+      row.appendChild(btn);
+    }
+    // Usunięcie zmienia też „słabe punkty", więc przeładowujemy całą zakładkę.
+    if (opts.deleteBtn && err.id) row.appendChild(deleteErrorWidget(err.id, loadErrors));
+    item.appendChild(row);
   }
   // Wpis w dzienniku można zakwestionować zarówno tu, jak i później w „Moich błędach".
   if (err.id) {
@@ -846,7 +901,8 @@ function renderErrorsList(errors) {
   const box = $("#errors-list");
   box.innerHTML = "";
   if (!errors.length) { box.appendChild(elem("p", "stat-empty", t("journal.empty"))); return; }
-  errors.forEach((err) => box.appendChild(errItemEl(err, { date: true, practiceBtn: true })));
+  errors.forEach((err) => box.appendChild(
+    errItemEl(err, { date: true, practiceBtn: true, deleteBtn: true })));
 }
 
 // --- Tipy (tryb skupienia) ---------------------------------------------------
@@ -907,7 +963,21 @@ function setFocus(err) {
   $("#tips-from").textContent = err.student_text;
   $("#tips-to").textContent = err.correct_text;
   $("#tips-why").textContent = err.explanation || "";
+  renderFocusFeedback(err);
   $("#tips-focus").classList.remove("hidden");
+}
+
+/** Zastrzeżenie do wyjaśnienia i usunięcie błędu, którego właśnie ćwiczysz. */
+function renderFocusFeedback(err) {
+  const box = $("#tips-feedback");
+  if (!box) return;
+  box.innerHTML = "";
+  if (!err.id) return;
+  box.appendChild(disputeWidget({
+    scope: "error", error_id: err.id, disputed_text: err.explanation || "",
+  }));
+  // Po usunięciu nie ma czego ćwiczyć — od razu podstawiamy kolejny błąd.
+  box.appendChild(deleteErrorWidget(err.id, () => loadTips()));
 }
 
 /** Skok z „Moje błędy" do Tipów z konkretnym błędem + od razu ćwiczenie. */

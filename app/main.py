@@ -253,6 +253,18 @@ def get_errors(topic: str | None = Query(default=None),
     return rows
 
 
+@app.delete("/api/errors/{error_id}")
+def remove_error(error_id: int) -> dict:
+    """Usuwa wpis z dziennika (np. gdy błąd jest opanowany albo zapisany omyłkowo).
+
+    Zapisane powtórki zostają — dzienny postęp i seria opierają się na tym, co
+    naprawdę przerobiłeś, więc usunięcie błędu nie cofa dziś zdobytego celu.
+    """
+    if not db.delete_error(conn, error_id):
+        raise HTTPException(status_code=404, detail="Nie znaleziono błędu o tym id.")
+    return {"deleted": error_id}
+
+
 @app.get("/api/stats/topics")
 def get_topic_stats(lang: str = Query(default="pl")) -> list[dict]:
     """Liczba błędów per temat — „słabe punkty" w zakładce Moje błędy."""

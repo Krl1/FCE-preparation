@@ -193,6 +193,28 @@ h2 { font-size: 1.05rem; }
 }
 .practice-btn:hover { border-color: var(--accent); background: var(--bg); }
 
+/* Akcje pod wpisem w dzienniku: ćwicz / usuń */
+.err-actions { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; }
+.err-actions .practice-btn { margin-top: 0; }
+.err-delete { display: inline-flex; align-items: center; gap: .4rem; }
+.delete-btn {
+  background: transparent; border: 1px solid var(--line); border-radius: 8px;
+  padding: .32rem .7rem; font: inherit; font-size: .85rem; color: var(--muted); cursor: pointer;
+}
+.delete-btn:hover { border-color: var(--bad); color: var(--bad); }
+.delete-confirm { display: inline-flex; align-items: center; gap: .4rem; font-size: .85rem; }
+.delete-q { color: var(--bad); font-weight: 600; }
+.delete-yes, .delete-no {
+  font: inherit; font-size: .82rem; padding: .28rem .6rem; border-radius: 8px; cursor: pointer;
+  border: 1px solid var(--line); background: transparent;
+}
+.delete-yes { border-color: var(--bad); background: var(--bad-bg); color: var(--bad); font-weight: 700; }
+.delete-no { color: var(--muted); }
+
+/* Karta błędu w Tipach: zastrzeżenie + usunięcie w jednym rzędzie */
+.focus-feedback { display: flex; flex-wrap: wrap; align-items: flex-start; gap: .6rem; margin-top: .5rem; }
+.focus-feedback .dispute { margin-top: 0; flex: 1 1 22rem; }
+
 /* Statystyki — zakładka Statystyki */
 .stat-line { display: flex; justify-content: space-between; align-items: baseline; gap: 1rem; padding: .45rem 0; border-bottom: 1px solid var(--line); }
 .stat-line:last-child { border-bottom: none; }
