@@ -73,8 +73,22 @@ Następnie otwórz **http://localhost:8000**.
   („Poprawne ćwiczenia do zaliczenia tego błędu: 3/5"). Próg zmienia `DRILL_CORRECT_TARGET`
   w `app/main.py`. Obok celu widać **serię** (🔥) — liczbę kolejnych dni z osiągniętym celem.
 
-  Uwaga na skalę: przy celu 5 błędów dziennie oznacza to 25 poprawnych ćwiczeń — jeśli to za dużo,
-  obniż cel w polu *Dzienny cel*.
+  **Opuszczony dzień można odrobić.** Przespanie dnia nie zrywa serii od razu: następny dzień musi
+  pokryć cel za siebie i za każdy zaległy dzień — po jednym opuszczonym dniu to `2 × cel` różnych
+  błędów, po dwóch `3 × cel`. Licznik nad paskiem pokazuje wtedy ten podniesiony cel, a pod serią
+  pojawia się ostrzeżenie („⚠️ Zaległość z 2 dni — zalicz dziś 15 różnych błędów, inaczej seria
+  przepada"). Zasady:
+  - **trzy dni pod rząd bez ćwiczeń = seria pęka** nieodwracalnie (limit `GRACE_DAYS` w `app/streak.py`);
+  - rozliczenie jest **wszystko albo nic** w obrębie dnia — 10 z wymaganych 15 nie zmniejsza długu
+    na jutro, taki dzień liczy się po prostu jako zwykły zaliczony i zaczyna nową serię;
+  - **odrobione dni nie wchodzą do licznika** — po dwóch przespanych dniach i spłacie seria rośnie
+    o 1, bo 🔥 pokazuje dni, w których naprawdę ćwiczyłeś;
+  - dzisiejszy dzień ma jak dotąd czas do końca doby — dopóki trwa, seria stoi (choć oznaczona
+    jako zagrożona), a nie zeruje się o północy.
+
+  Uwaga na skalę: przy celu 5 błędów dziennie oznacza to 25 poprawnych ćwiczeń — a przy dwudniowej
+  zaległości 15 błędów, czyli 75 ćwiczeń w jednym dniu. Jeśli to za dużo, obniż cel w polu
+  *Dzienny cel* (reguła serii liczy się zawsze od aktualnej wartości celu).
 - **Sprawdź z zewnątrz** — wklej zadanie z książki i swoją odpowiedź; aplikacja sprawdzi je i zaproponuje
   błędy do zatwierdzenia.
 - **Moje błędy** — przegląd słabych punktów i pełny dziennik błędów. Przy każdym błędzie przycisk
@@ -220,8 +234,9 @@ python3 -m pytest -q
 ```
 
 Pokrycie: warstwa bazy (w tym regresja współbieżności i migracji kolejki), logika doboru
-zadań (`srs`), parsowanie odpowiedzi modelu i deterministyczna ocena luk, endpointy HTTP
-(FastAPI TestClient, bez wywoływania modelu) oraz import wcześniejszych błędów.
+zadań (`srs`), reguła serii wraz z odrabianiem zaległości (`streak` — moduł jest czysty, więc
+testy budują historię dni bez bazy), parsowanie odpowiedzi modelu i deterministyczna ocena luk,
+endpointy HTTP (FastAPI TestClient, bez wywoływania modelu) oraz import wcześniejszych błędów.
 
 Dodatkowo test przejścia frontendu bez przeglądarki (atrapa DOM + `fetch`), który przechodzi
 wszystkie zakładki i sprawdza, że żadna ścieżka nie wywala się na wyjątku:

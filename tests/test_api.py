@@ -247,12 +247,39 @@ def test_usage_lean_cost_flags_assumed_model(app_ctx):
 
 def test_tips_progress_and_goal_roundtrip(app_ctx):
     client, main_mod = app_ctx
-    assert client.get("/api/tips/progress").json() == {"done": 0, "goal": 5, "streak": 0}
+    assert client.get("/api/tips/progress").json() == {
+        "done": 0, "goal": 5, "streak": 0,
+        "required_today": 5, "overdue_days": 0, "at_risk": False,
+    }
     assert client.post("/api/tips/goal", json={"goal": 2}).json()["goal"] == 2
     # Poza zakresem → przycięcie do dozwolonego przedziału.
     assert client.post("/api/tips/goal", json={"goal": 999}).json()["goal"] == 50
 
     assert client.post("/api/tips/complete", json={"error_id": 9999}).status_code == 404
+
+
+def test_progress_reports_overdue_goal_after_a_missed_day(app_ctx):
+    """Przespany dzień nie zeruje serii — dzisiejszy cel rośnie o zaległy dzień."""
+    from datetime import date, timedelta
+    client, main_mod = app_ctx
+    client.post("/api/tips/goal", json={"goal": 2})
+    today = date.today()
+
+    # Cel osiągnięty przedwczoraj i trzy dni temu, wczoraj przerwa.
+    for offset in (2, 3):
+        day = (today - timedelta(days=offset)).isoformat()
+        for error_id in (10 * offset, 10 * offset + 1):
+            main_mod.conn.execute(
+                "INSERT INTO reviews (error_id, created_at) VALUES (?, ?)",
+                (error_id, day + "T12:00:00+02:00"),
+            )
+    main_mod.conn.commit()
+
+    prog = client.get("/api/tips/progress").json()
+    assert prog["streak"] == 2
+    assert prog["required_today"] == 4      # 2 za dziś + 2 zaległe
+    assert prog["overdue_days"] == 1
+    assert prog["at_risk"] is True
 
 
 def test_drill_counts_toward_goal_only_after_five_correct(app_ctx):

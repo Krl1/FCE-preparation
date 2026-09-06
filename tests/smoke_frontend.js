@@ -182,15 +182,19 @@ const routes = {
   "/api/tips/focus": {
     error: { id: 7, topic: "collocations", topic_label: "Kolokacje", student_text: "x",
              correct_text: "y", explanation: "z" },
-    progress: { done: 1, goal: 5, streak: 2, drill: { correct: 0, target: 5 } },
+    progress: { done: 1, goal: 5, streak: 2, required_today: 5, overdue_days: 0,
+               at_risk: false, drill: { correct: 0, target: 5 } },
   },
-  "/api/tips/progress": { done: 1, goal: 5, streak: 2, drill: { correct: 1, target: 5 } },
+  "/api/tips/progress": { done: 1, goal: 5, streak: 2, required_today: 5, overdue_days: 0,
+                          at_risk: false, drill: { correct: 1, target: 5 } },
   "/api/tips/exercise": {
     id: 2, type: "uoe_part3_word_formation", topic: "collocations", instructions: "i",
     items: [1, 2, 3, 4, 5].map((n) => ({ number: n, question_text: `zdanie ${n} ______` })),
   },
-  "/api/tips/complete": { done: 2, goal: 5, streak: 2, drill: { correct: 3, target: 5 } },
-  "/api/tips/goal": { done: 1, goal: 3, streak: 2, drill: { correct: 0, target: 5 } },
+  "/api/tips/complete": { done: 2, goal: 5, streak: 2, required_today: 5, overdue_days: 0,
+                          at_risk: false, drill: { correct: 3, target: 5 } },
+  "/api/tips/goal": { done: 1, goal: 3, streak: 2, required_today: 3, overdue_days: 0,
+                      at_risk: false, drill: { correct: 0, target: 5 } },
   "/api/errors": [{ id: 1, item_number: null, topic: "collocations", topic_label: "Kolokacje",
                     student_text: "a", correct_text: "b", explanation: "c", severity: "minor",
                     created_at: "2026-07-28T10:00:00+02:00" }],
@@ -235,6 +239,8 @@ process.on("unhandledRejection", (e) => failures.push("unhandledRejection: " + e
 eval(fs.readFileSync(APP, "utf8"));
 
 const settle = () => new Promise((r) => setTimeout(r, 15));
+
+const nodeText = (key) => String((nodes.get(key) || {}).textContent ?? "");
 
 const fire = async (key, ev = "click") => {
   const fns = handlers[key + "|" + ev] || [];
@@ -305,6 +311,30 @@ const setInput = (id, value) => {
       await fire("#tips-grade"); await settle();
       await fire("#tips-new");
       await fire("#tips-goal-save");
+    }],
+    ["Ćwicz błędy: zaległy cel po przespanych dniach", async () => {
+      const normal = routes["/api/tips/focus"];
+      routes["/api/tips/focus"] = {
+        error: normal.error,
+        progress: { done: 4, goal: 5, streak: 11, required_today: 15, overdue_days: 2,
+                    at_risk: true, drill: { correct: 1, target: 5 } },
+      };
+      await fire(".tab:tips"); await settle();
+      if (!nodeText("#tips-goal").includes("15")) {
+        failures.push("cel dnia nie uwzględnia zaległości: " + nodeText("#tips-goal"));
+      }
+      if (!nodeText("#tips-streak").includes("11")) {
+        failures.push("licznik serii nie pokazuje dni: " + nodeText("#tips-streak"));
+      }
+      const debt = nodeText("#tips-debt");
+      if (!debt.includes("15") || !debt.includes("2")) {
+        failures.push("brak notki o zaległościach (dni i cel): " + debt);
+      }
+      routes["/api/tips/focus"] = normal;
+      await fire(".tab:tips"); await settle();
+      if (nodeText("#tips-debt") !== "") {
+        failures.push("notka o zaległościach została po ich spłacie: " + nodeText("#tips-debt"));
+      }
     }],
     ["zastrzeżenie do pozycji wyniku + zatwierdzenie korekty", async () => {
       created.length = 0;

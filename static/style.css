@@ -186,6 +186,12 @@ h2 { font-size: 1.05rem; }
 .streak { margin-top: .6rem; font-size: .95rem; color: var(--warn); font-weight: 700; }
 .streak.is-zero { color: var(--muted); font-weight: 400; }
 
+/* Zaległy cel: seria stoi, ale przepadnie, jeśli dług nie zostanie dziś spłacony. */
+.streak-debt {
+  margin-top: .4rem; padding: .45rem .7rem; border-radius: 8px;
+  background: var(--bad-bg); color: var(--bad); font-size: .9rem; font-weight: 600;
+}
+
 .practice-btn {
   margin-top: .7rem; background: transparent; border: 1px solid var(--line);
   border-radius: 8px; padding: .32rem .75rem; font: inherit; font-size: .85rem;

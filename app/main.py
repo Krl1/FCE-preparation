@@ -15,7 +15,7 @@ from fastapi.staticfiles import StaticFiles
 
 from . import db
 from . import fce_taxonomy as tax
-from . import llm_client, pricing, srs
+from . import llm_client, pricing, srs, streak
 from .models import (
     CompleteRequest,
     DisputeRequest,
@@ -298,7 +298,8 @@ def get_topic_stats(lang: str = Query(default="pl")) -> list[dict]:
 def _progress(error_id: int | None = None) -> dict:
     """Postęp dziennego celu. Z `error_id` dołącza też postęp ćwiczeń do tego błędu."""
     goal = db.get_int_setting(conn, "daily_goal", DEFAULT_DAILY_GOAL)
-    out = {"done": db.reviews_done_today(conn), "goal": goal, "streak": db.streak(conn, goal)}
+    out = {"done": db.reviews_done_today(conn), "goal": goal,
+           **streak.state(db.reviews_per_day(conn), goal)}
     if error_id is not None:
         out["drill"] = {
             "correct": db.drill_correct_today(conn, error_id),

@@ -80,6 +80,9 @@ const I18N = {
     "tips.generate": "Ćwiczenie",
     "tips.more": "Kolejne ćwiczenie",
     "tips.streakDays": "dni w serii",
+    "tips.debtNote": "Zaległość z {days} — zalicz dziś {n} różnych błędów, inaczej seria przepada.",
+    "tips.debtOneDay": "1 dnia",
+    "tips.debtManyDays": "{days} dni",
     "tips.drillProgress": "Poprawne ćwiczenia do zaliczenia tego błędu:",
     "tips.empty": "Dziennik błędów jest pusty — rozwiąż lub wklej kilka zadań, a pojawią się tu błędy do przećwiczenia.",
     "stats.learning": "Nauka",
@@ -190,6 +193,9 @@ const I18N = {
     "tips.generate": "Exercise",
     "tips.more": "Another exercise",
     "tips.streakDays": "day streak",
+    "tips.debtNote": "{days} to make up — clear {n} different mistakes today or the streak is gone.",
+    "tips.debtOneDay": "1 missed day",
+    "tips.debtManyDays": "{days} missed days",
     "tips.drillProgress": "Correct exercises needed for this mistake:",
     "tips.empty": "Your mistake log is empty — do or paste a few exercises and mistakes to practise will appear here.",
     "stats.learning": "Learning",
@@ -1007,16 +1013,37 @@ function loadTips(exclude) {
 }
 
 function renderGoal(progress) {
+  // `required_today` to cel dnia razem z zaległościami z opuszczonych dni — postęp i pasek
+  // liczymy właśnie do niego, a pole „Dzienny cel" pokazuje samą stawkę bazową.
+  const required = progress.required_today || progress.goal;
   $("#tips-done").textContent = progress.done;
-  $("#tips-goal").textContent = progress.goal;
+  $("#tips-goal").textContent = required;
   $("#tips-goal-input").value = progress.goal;
   $("#tips-goal-bar").style.width =
-    (progress.goal ? Math.min(100, (progress.done / progress.goal) * 100) : 0) + "%";
+    (required ? Math.min(100, (progress.done / required) * 100) : 0) + "%";
   const streak = progress.streak || 0;
   const streakEl = $("#tips-streak");
   streakEl.textContent = "🔥 " + streak + " " + t("tips.streakDays");
   streakEl.classList.toggle("is-zero", streak === 0);
+  renderStreakDebt(progress, required);
   renderDrillProgress(progress.drill);
+}
+
+/** Ostrzeżenie o zaległym celu: przespane dni można odrobić tylko w całości i tylko dziś. */
+function renderStreakDebt(progress, required) {
+  const box = $("#tips-debt");
+  if (!box) return;
+  const days = progress.overdue_days || 0;
+  if (!progress.at_risk || !days) {
+    box.textContent = "";
+    box.classList.add("hidden");
+    return;
+  }
+  const label = days === 1
+    ? t("tips.debtOneDay")
+    : t("tips.debtManyDays").replace("{days}", days);
+  box.textContent = "⚠️ " + t("tips.debtNote").replace("{days}", label).replace("{n}", required);
+  box.classList.remove("hidden");
 }
 
 /** Postęp ćwiczeń wymaganych do zaliczenia bieżącego błędu (np. 3/5). */
