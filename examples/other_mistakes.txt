@@ -1,0 +1,31 @@
+# Przykładowe dane demonstracyjne — luźne notatki z powtarzanymi błędami.
+# Format jest DOWOLNY, tak jak w writing_mistakes.txt.
+
+1. Gerund vs. infinitive
+It's not worth to go there -> It's not worth going there. (zawsze: worth + -ing)
+I recommend to go -> I recommend going.
+I am not a fan of get a tan -> I'm not a fan of getting a tan. (po przyimku zawsze -ing)
+
+2. Przyimki
+Depends from -> Depends ON.
+From the other hand -> ON the other hand.
+On the gym -> AT / IN the gym.
+In Friday -> ON Friday.
+I was on the wedding -> I was AT the wedding.
+
+3. Liczba mnoga i policzalność
+The teeths are expensive -> The teeth are expensive.
+Every children -> Every child / All children.
+It's a lot of damages -> It has done a lot of damage. (damage zwykle niepoliczalne)
+
+4. Przedimki
+The Krakow -> Krakow. (miasta bez "the")
+The nature affects me -> Nature affects me. (ogólnie — bez "the")
+Popular places in the Italy -> in Italy.
+
+5. Dobór słów
+Consumptionism -> Consumerism.
+Preferation -> Preference.
+Boarding games -> Board games.
+Traditional healthy kitchen -> Healthy cuisine. (kitchen to pomieszczenie)
+The photos tell that -> The photos show / depict.

@@ -1,0 +1,34 @@
+# Przykładowe dane demonstracyjne — informacja zwrotna do prac pisemnych.
+# Format jest DOWOLNY: aplikacja przepuszcza ten plik przez model, który sam wyławia
+# z tekstu pary "błędnie → poprawnie". Wklejaj tu feedback od nauczyciela albo własne notatki.
+
+"Essay (Technology at school) — Estimated level: B1+/B2 (5.5–6/10)
+
+What works
+Clear opinion and logical paragraphing.
+Relevant examples.
+
+Key problems
+Grammar
+"we started use computers" -> we started using computers
+"a new methods were introduced" -> new methods have been introduced
+"The technology helps" -> Technology helps (no article for general nouns)
+
+Word forms and spelling
+"comunication" -> communication
+"more easier" -> easier
+
+Tip: watch articles and present perfect for changes over time."
+
+"Report (School library) — Estimated level: solid B2 (6–7/10)
+
+What works
+Good structure with headings, appropriately formal tone.
+
+Key problems
+"is closes at 6 p.m." -> closes at 6 p.m.
+"too muche to choice" -> too much choice
+"collage" -> college
+
+Tip: push for more formal phrasing — "It would be beneficial to..." instead of
+"It would be a good idea to..."."

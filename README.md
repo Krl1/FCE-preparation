@@ -5,6 +5,23 @@ Generuje zadania (**Use of English** + **Writing**), sprawdza odpowiedzi — tak
 z zewnątrz** (z książki / od korepetytora) — i prowadzi **dziennik Twoich błędów**, który steruje
 doborem kolejnych zadań, żebyś oduczał się powtarzanych pomyłek.
 
+> ### ⚠️ Zanim uruchomisz — przeczytaj
+>
+> To narzędzie **osobiste, uruchamiane lokalnie**, nie usługa dla wielu osób. Wynika z tego kilka
+> rzeczy, o których trzeba wiedzieć **przed** pierwszym startem:
+>
+> - **Aplikacja nie ma żadnego logowania.** Kto dosięgnie portu, ten ma pełny dostęp do dziennika
+>   błędów i może zużywać Twoją subskrypcję Claude. Dlatego `compose.yaml` wystawia port
+>   **tylko na `127.0.0.1`** — nie zmieniaj tego na `0.0.0.0` bez postawienia czegoś przed aplikacją.
+> - **Wariant dockerowy montuje `~/.claude` z prawem zapisu**, czyli oddaje kontenerowi Twoje
+>   **poświadczenia subskrypcji Claude** (musi, bo Claude Code odświeża wygasający token). Uruchamiaj
+>   ten obraz tylko z kodu, któremu ufasz, i nie publikuj zbudowanego obrazu — powstaje z Twojego
+>   katalogu domowego.
+> - **Wywołania modelu liczą się do limitów Twojej subskrypcji** (Pro/Max), a nie do osobnego klucza API.
+> - **Baza `data/fce.db` to Twoje dane osobiste** — dziennik błędów, prace, statystyki. Jest
+>   w `.gitignore` i nigdy nie powinna trafić do repozytorium. To samo dotyczy materiałów do importu
+>   (patrz *Import wcześniejszych błędów*).
+
 ## Jak to działa
 
 - **Backend:** FastAPI (Python) + SQLite.
@@ -39,6 +56,35 @@ python3 -m uvicorn app.main:app --reload
 ```
 
 Następnie otwórz **http://localhost:8000**.
+
+## Import wcześniejszych błędów (opcjonalnie)
+
+Jeśli masz już listę swoich pomyłek — z korepetycji, ocenionych prac albo własnych notatek —
+możesz wgrać ją do dziennika na starcie, żeby aplikacja od pierwszego zadania celowała w Twoje
+słabe punkty. Skrypt czyta trzy pliki z katalogu głównego:
+
+| Plik | Format | Jak jest przetwarzany |
+|---|---|---|
+| `english_mistakes.tsv` | TSV: `date`, `wrong`, `correct`, `category`, `note`, `source` | deterministycznie, z mapowaniem `category` na taksonomię FCE (`CATEGORY_MAP` w `app/import_mistakes.py`) |
+| `writing_mistakes.txt` | dowolny tekst | model wyławia pary „błędnie → poprawnie"; błędy dostają typ `writing` |
+| `other_mistakes.txt` | dowolny tekst | jak wyżej, typ `imported` |
+
+**Tych plików nie ma w repozytorium — i nie powinno być.** To materiał osobisty, więc są wpisane
+do `.gitignore`. Wzorce formatu do skopiowania leżą w `examples/`:
+
+```bash
+cp examples/english_mistakes.tsv examples/writing_mistakes.txt examples/other_mistakes.txt .
+# podmień zawartość na własną, potem:
+python3 -m app.import_mistakes
+```
+
+Brakujący plik jest po prostu pomijany — możesz użyć jednego, dwóch albo żadnego. Import jest
+**idempotentny**: każde źródło zapisuje błędy z etykietą `import:<nazwa_pliku>`, a ponowne
+uruchomienie kasuje poprzednie wpisy z tego pliku i wstawia świeże. Powtórny import nie mnoży
+duplikatów, mimo że ekstrakcja przez model nie jest deterministyczna.
+
+Uwaga: pliki tekstowe idą przez model, więc ich import **kosztuje wywołania subskrypcji**
+(TSV nie — jest czytany lokalnie).
 
 ## Użycie
 
@@ -202,8 +248,21 @@ kontener korzysta z Twojego logowania z subskrypcji i nie potrzebuje klucza API:
 | `~/.local/bin/claude` + `~/.local/share/claude` | odczyt | natywna binarka Claude Code (aktualizacja na hoście działa po restarcie kontenera) |
 | `~/.claude` | **zapis** | poświadczenia; Claude Code odświeża wygasający token, więc montowanie tylko do odczytu zepsułoby autoryzację po jego wygaśnięciu |
 
-Kontener działa jako UID 1000 (Twój użytkownik) — bez tego nie odczytałby
-`~/.claude/.credentials.json` (prawa 0600).
+#### Dlaczego ścieżki w kontenerze są takie same jak na hoście
+
+`~/.local/bin/claude` to **absolutny** symlink (→ `/home/<user>/.local/share/claude/versions/X.Y.Z`).
+Gdyby kontener montował te katalogi pod inną ścieżką, symlink wskazywałby w pustkę i `claude` nie
+uruchomiłby się. Dlatego katalog domowy w obrazie jest równy `${HOME}` hosta — `compose.yaml`
+podstawia go jako argument budowania `APP_HOME`. W kodzie nie ma żadnej zaszytej nazwy użytkownika.
+
+Z tego samego powodu kontener działa jako UID/GID **1000**: musi odczytać
+`~/.claude/.credentials.json` (prawa 0600) i zapisać bazę w `./data`. Jeśli Twój użytkownik ma
+inny UID (sprawdź: `id -u`), zbuduj obraz tak:
+
+```bash
+export APP_UID=$(id -u) APP_GID=$(id -g)
+docker compose up -d --build
+```
 
 ### Codzienne polecenia
 
@@ -257,3 +316,10 @@ node tests/smoke_frontend.js
 - Uporządkowany JSON jest wymuszany promptem i parsowany z jedną ponowną próbą (nie gwarantowany schematem).
 - Latencja pojedynczego sprawdzenia to zwykle ~2–5 s (widać wskaźnik ładowania).
 - Aby w przyszłości przejść na **klucz API**, wystarczy podmienić funkcję `_invoke` w `app/llm_client.py`.
+
+## Licencja
+
+[MIT](LICENSE) — rób z tym, co chcesz, zachowaj tylko notę o prawach autorskich. Bez gwarancji.
+
+Aplikacja jest narzędziem do nauki, nie oficjalnym produktem Cambridge Assessment English.
+„B2 First" i „FCE" to znaki towarowe ich właścicieli i użyto ich tu wyłącznie opisowo.

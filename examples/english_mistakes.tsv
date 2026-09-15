@@ -1,0 +1,11 @@
+date	wrong	correct	category	note	source
+2026-01-05	in home	at home	fixed_phrase	stały zwrot — zawsze 'at home', nigdy 'in home'	Example data
+2026-01-05	a free time	free time	articles_countability	'time' w znaczeniu 'czas wolny' jest niepoliczalne — bez 'a'	Example data
+2026-01-05	prefer X than Y	prefer X rather than Y	collocation	po 'prefer' używamy 'rather than', nie samego 'than'	Example data
+2026-01-05	depends from	depends on	preposition	'depend' zawsze łączy się z 'on'	Example data
+2026-01-12	I has finished	I have finished	verb_form	'has' tylko dla he/she/it; z 'I' zawsze 'have'	Example data
+2026-01-12	one's (liczba mnoga)	ones	spelling	apostrof nie tworzy liczby mnogiej	Example data
+2026-01-12	why it takes so long	why does it take so long	question_inversion	pytanie wymaga inwersji: Why + does + podmiot	Example data
+2026-01-19	staff (rzeczy)	stuff	false_friend	staff = personel; stuff = rzeczy	Example data
+2026-01-19	It's not worth to go	It's not worth going	verb_pattern	po 'worth' zawsze gerund	Example data
+2026-01-19	tested completely	completely tested	word_order	przysłówek przed imiesłowem biernym	Example data

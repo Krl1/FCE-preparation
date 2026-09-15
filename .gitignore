@@ -1,3 +1,9 @@
+# Dane osobiste: Twój dziennik błędów i materiały źródłowe do importu.
+# Wzorce do skopiowania są w examples/ — patrz README, sekcja "Import wcześniejszych błędów".
+/english_mistakes.tsv
+/writing_mistakes.txt
+/other_mistakes.txt
+
 # Data
 data/*.db
 data/*.db-journal

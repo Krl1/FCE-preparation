@@ -6,6 +6,11 @@ Obsługuje dwa rodzaje źródeł:
 2. Nieuporządkowane pliki tekstowe (`writing_mistakes.txt`, `other_mistakes.txt`) — informacja
    zwrotna z ocen / notatki. Ekstrakcja błędów przez Claude (llm_client.extract_errors_from_text).
 
+Wszystkie trzy pliki są prywatne i NIE są w repozytorium (patrz .gitignore) — kładziesz je
+w katalogu głównym sam. Wzorce formatu do skopiowania leżą w `examples/`:
+    cp examples/english_mistakes.tsv examples/writing_mistakes.txt examples/other_mistakes.txt .
+Brakujący plik jest po prostu pomijany.
+
 Uruchomienie:  python3 -m app.import_mistakes
 
 Import jest IDEMPOTENTNY strategią „zastąp według pliku": każde źródło zapisuje błędy z etykietą
