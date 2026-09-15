@@ -1,325 +1,331 @@
-# FCE Trener
+# FCE Trainer
 
-Lokalna aplikacja w przeglądarce do przygotowania do egzaminu **Cambridge B2 First (FCE)**.
-Generuje zadania (**Use of English** + **Writing**), sprawdza odpowiedzi — także te **wklejone
-z zewnątrz** (z książki / od korepetytora) — i prowadzi **dziennik Twoich błędów**, który steruje
-doborem kolejnych zadań, żebyś oduczał się powtarzanych pomyłek.
+[Polski](README.pl.md) · **English**
 
-> ### ⚠️ Zanim uruchomisz — przeczytaj
+A local browser app for preparing for the **Cambridge B2 First (FCE)** exam. It generates tasks
+(**Use of English** + **Writing**), marks your answers — including ones **pasted from elsewhere**
+(a coursebook, your tutor) — and keeps a **log of your own mistakes**, which then steers what you
+get next, so you unlearn the errors you actually repeat.
+
+> ### ⚠️ Read this before you run it
 >
-> To narzędzie **osobiste, uruchamiane lokalnie**, nie usługa dla wielu osób. Wynika z tego kilka
-> rzeczy, o których trzeba wiedzieć **przed** pierwszym startem:
+> This is a **personal, locally-run tool**, not a service for multiple users. A few consequences
+> you need to know **before** the first start:
 >
-> - **Aplikacja nie ma żadnego logowania.** Kto dosięgnie portu, ten ma pełny dostęp do dziennika
->   błędów i może zużywać Twoją subskrypcję Claude. Dlatego `compose.yaml` wystawia port
->   **tylko na `127.0.0.1`** — nie zmieniaj tego na `0.0.0.0` bez postawienia czegoś przed aplikacją.
-> - **Wariant dockerowy montuje `~/.claude` z prawem zapisu**, czyli oddaje kontenerowi Twoje
->   **poświadczenia subskrypcji Claude** (musi, bo Claude Code odświeża wygasający token). Uruchamiaj
->   ten obraz tylko z kodu, któremu ufasz, i nie publikuj zbudowanego obrazu — powstaje z Twojego
->   katalogu domowego.
-> - **Wywołania modelu liczą się do limitów Twojej subskrypcji** (Pro/Max), a nie do osobnego klucza API.
-> - **Baza `data/fce.db` to Twoje dane osobiste** — dziennik błędów, prace, statystyki. Jest
->   w `.gitignore` i nigdy nie powinna trafić do repozytorium. To samo dotyczy materiałów do importu
->   (patrz *Import wcześniejszych błędów*).
+> - **The app has no authentication whatsoever.** Anyone who can reach the port has full access to
+>   your mistake log and can spend your Claude subscription. That is why `compose.yaml` binds the
+>   port to **`127.0.0.1` only** — do not change it to `0.0.0.0` without putting something in front.
+> - **The Docker setup mounts `~/.claude` writable**, which hands the container your **Claude
+>   subscription credentials** (it has to: Claude Code refreshes an expiring token). Only run this
+>   image from code you trust, and never publish the built image — it is derived from your home
+>   directory.
+> - **Model calls count against your subscription limits** (Pro/Max), not against a separate API key.
+> - **`data/fce.db` is your personal data** — mistake log, submissions, statistics. It is in
+>   `.gitignore` and must never reach a repository. The same goes for the import source files
+>   (see *Importing past mistakes*).
 
-## Jak to działa
+## How it works
 
 - **Backend:** FastAPI (Python) + SQLite.
-- **Model:** aplikacja wywołuje **Claude Code w trybie headless** (`claude -p … --output-format json`)
-  i korzysta z Twojego **logowania z subskrypcji** (`~/.claude/.credentials.json`) — **bez klucza API**.
-  Cała ta zależność jest w jednym pliku: `app/llm_client.py`.
-- **Frontend:** statyczna strona (HTML/JS/CSS, bez frameworków) z pięcioma widokami: *Ćwicz zadania*, *Ćwicz błędy*,
-  *Sprawdź z zewnątrz*, *Moje błędy*, *Statystyki*.
-- **Język:** przełącznik **PL / EN** w prawym górnym rogu zmienia zarówno interfejs, jak i język
-  treści generowanych przez model (polecenia, wyjaśnienia, feedback) — przydatne, gdy pokazujesz
-  aplikację osobie anglojęzycznej. Wybór jest zapamiętywany (localStorage), domyślnie polski.
-  Uwaga: wcześniej zapisane błędy zachowują język, w jakim powstały.
+- **Model:** the app shells out to **Claude Code in headless mode** (`claude -p … --output-format json`)
+  and uses your **subscription login** (`~/.claude/.credentials.json`) — **no API key**. The whole
+  dependency lives in one file: `app/llm_client.py`.
+- **Frontend:** a static page (HTML/JS/CSS, no frameworks) with five views: *Practice tasks*,
+  *Practice mistakes*, *Check external*, *My mistakes*, *Statistics*.
+- **Language:** the **PL / EN** switch in the top-right corner changes both the interface and the
+  language of what the model produces (instructions, explanations, feedback) — handy when you show
+  the app to an English speaker. The choice is remembered (localStorage); Polish is the default.
+  Note: mistakes logged earlier keep the language they were written in.
 
-## Wymagania
+## Requirements
 
 - Python 3.12
-- Zainstalowany i **zalogowany** Claude Code (`claude` w `PATH`). Sprawdź: `claude --version`.
+- Claude Code installed and **logged in** (`claude` on your `PATH`). Check with `claude --version`.
 
-## Instalacja zależności
+## Installing dependencies
 
 ```bash
 pip3 install --user --break-system-packages -r requirements.txt
 ```
 
-(Alternatywnie, jeśli masz `python3-venv`: `python3 -m venv .venv && .venv/bin/pip install -r requirements.txt`
-i uruchamiaj przez `.venv/bin/python -m uvicorn …`.)
+(Or, if you have `python3-venv`: `python3 -m venv .venv && .venv/bin/pip install -r requirements.txt`,
+then run through `.venv/bin/python -m uvicorn …`.)
 
-## Uruchomienie
+## Running
 
 ```bash
 python3 -m uvicorn app.main:app --reload
 ```
 
-Następnie otwórz **http://localhost:8000**.
+Then open **http://localhost:8000**.
 
-## Import wcześniejszych błędów (opcjonalnie)
+## Importing past mistakes (optional)
 
-Jeśli masz już listę swoich pomyłek — z korepetycji, ocenionych prac albo własnych notatek —
-możesz wgrać ją do dziennika na starcie, żeby aplikacja od pierwszego zadania celowała w Twoje
-słabe punkty. Skrypt czyta trzy pliki z katalogu głównego:
+If you already have a list of your errors — from lessons, marked writing, or your own notes — you
+can load it into the log up front, so the app aims at your weak spots from the very first task.
+The script reads three files from the project root:
 
-| Plik | Format | Jak jest przetwarzany |
+| File | Format | How it is processed |
 |---|---|---|
-| `english_mistakes.tsv` | TSV: `date`, `wrong`, `correct`, `category`, `note`, `source` | deterministycznie, z mapowaniem `category` na taksonomię FCE (`CATEGORY_MAP` w `app/import_mistakes.py`) |
-| `writing_mistakes.txt` | dowolny tekst | model wyławia pary „błędnie → poprawnie"; błędy dostają typ `writing` |
-| `other_mistakes.txt` | dowolny tekst | jak wyżej, typ `imported` |
+| `english_mistakes.tsv` | TSV: `date`, `wrong`, `correct`, `category`, `note`, `source` | deterministically, mapping `category` onto the FCE taxonomy (`CATEGORY_MAP` in `app/import_mistakes.py`) |
+| `writing_mistakes.txt` | free-form text | the model extracts "wrong → correct" pairs; entries get the `writing` type |
+| `other_mistakes.txt` | free-form text | same as above, type `imported` |
 
-**Tych plików nie ma w repozytorium — i nie powinno być.** To materiał osobisty, więc są wpisane
-do `.gitignore`. Wzorce formatu do skopiowania leżą w `examples/`:
+**These files are not in the repository — and should not be.** They are personal material, so they
+are listed in `.gitignore`. Format templates to copy live in `examples/`:
 
 ```bash
 cp examples/english_mistakes.tsv examples/writing_mistakes.txt examples/other_mistakes.txt .
-# podmień zawartość na własną, potem:
+# replace the contents with your own, then:
 python3 -m app.import_mistakes
 ```
 
-Brakujący plik jest po prostu pomijany — możesz użyć jednego, dwóch albo żadnego. Import jest
-**idempotentny**: każde źródło zapisuje błędy z etykietą `import:<nazwa_pliku>`, a ponowne
-uruchomienie kasuje poprzednie wpisy z tego pliku i wstawia świeże. Powtórny import nie mnoży
-duplikatów, mimo że ekstrakcja przez model nie jest deterministyczna.
+A missing file is simply skipped — use one, two, or none. The import is **idempotent**: each source
+writes entries tagged `import:<filename>`, and a re-run first deletes the previous entries from that
+file and inserts fresh ones. Running it again does not multiply duplicates, even though the model's
+extraction is not deterministic.
 
-Uwaga: pliki tekstowe idą przez model, więc ich import **kosztuje wywołania subskrypcji**
-(TSV nie — jest czytany lokalnie).
+Note: the text files go through the model, so importing them **costs subscription calls** (the TSV
+does not — it is parsed locally).
 
-## Użycie
+## Using the app
 
-- **Ćwicz zadania** — wybierz typ zadania (np. *open cloze*, *key word transformation*, *essay*), opcjonalnie
-  temat (albo zostaw dobór automatyczny wg Twoich błędów), wygeneruj i rozwiąż. Aplikacja oceni odpowiedź
-  i **zaproponuje** błędy do dziennika — zapisuje je dopiero po Twoim zatwierdzeniu (patrz *Cykl życia błędu*).
-  **Każda część Use of English daje 5 zadań na jedno kliknięcie**, sprawdzanych jednym przyciskiem —
-  dostajesz wynik punktowy (np. 3/5) i omówienie każdej pozycji:
-  - *Part 1 (multiple-choice cloze)* — jeden spójny tekst z 5 lukami, każda z 4 wariantami;
-    przy błędnych lukach omówienie wszystkich wariantów,
-  - *Part 2 (open cloze)* — 5 zdań, w każdym jedna luka na jedno słowo,
-  - *Part 3 (word formation)* — 5 zdań z wyrazem podstawowym do przekształcenia,
-  - *Part 4 (key word transformation)* — 5 przekształceń ze słowem-kluczem.
+- **Practice tasks** — pick a task type (e.g. *open cloze*, *key word transformation*, *essay*),
+  optionally a topic (or leave it to be chosen automatically from your mistakes), generate and solve.
+  The app marks your answer and **proposes** mistakes for the log — nothing is written until you
+  confirm (see *The life of a mistake*).
+  **Every Use of English part gives you 5 items per click**, checked with one button — you get
+  a score (e.g. 3/5) and a comment on each item:
+  - *Part 1 (multiple-choice cloze)* — one coherent text with 5 gaps, each with 4 options; for the
+    wrong ones you get a walkthrough of all options,
+  - *Part 2 (open cloze)* — 5 sentences, one one-word gap each,
+  - *Part 3 (word formation)* — 5 sentences with a base word to transform,
+  - *Part 4 (key word transformation)* — 5 rewrites with a given key word.
 
-  Liczbę pozycji zmienia stała `ITEMS_PER_EXERCISE` w `app/llm_client.py`. Odpowiedzi zamknięte
-  (warianty) są oceniane **deterministycznie** przez serwer; przy odpowiedziach otwartych ocenia
-  model, ale dokładne trafienie we wzorzec zawsze liczy się jako poprawne — dobra odpowiedź nie
-  trafi do dziennika jako błąd.
-  Zadania powstają **wsadowo**: jedno wywołanie modelu tworzy kilka zadań, pierwsze dostajesz od razu,
-  a pozostałe czekają w kolejce w bazie i pojawiają się **natychmiast** przy kolejnych kliknięciach.
-  Ponieważ koszt wywołania jest zdominowany przez stały narzut trybu headless (~23 tys. tokenów
-  niezależnie od treści), to kilkukrotnie tańsze i szybsze. Wielkość wsadu: `_UOE_BATCH`
-  / `_WRITING_BATCH` w `app/llm_client.py`.
-- **Ćwicz błędy** — tryb skupienia: aplikacja pokazuje jeden Twój błąd (dobierany losowo, ważony częstością
-  Twoich słabych tematów) wraz z wyjaśnieniem i generuje do niego **zestaw 5 ćwiczeń**. Przyciski:
-  *Ćwiczenie* (kolejny zestaw do tego samego błędu), *Inny błąd* (zmiana na nowy). Pod wyjaśnieniem
-  masz też **Nie zgadzam się** (zastrzeżenie do wyjaśnienia) i **Usuń błąd** — obsługujesz błąd tam,
-  gdzie go widzisz, bez szukania wpisu w dzienniku.
-  U góry **dzienny cel** — ustalasz, ile błędów chcesz dziennie przerobić. Błąd zalicza się (+1)
-  dopiero po **5 poprawnie rozwiązanych ćwiczeniach** do niego, liczonych **narastająco w obrębie
-  dnia** — 3/5 w jednym podejściu i 2/5 w kolejnym też wystarczy. Postęp widać pod celem
-  („Poprawne ćwiczenia do zaliczenia tego błędu: 3/5"). Próg zmienia `DRILL_CORRECT_TARGET`
-  w `app/main.py`. Obok celu widać **serię** (🔥) — liczbę kolejnych dni z osiągniętym celem.
+  The item count is the `ITEMS_PER_EXERCISE` constant in `app/llm_client.py`. Closed answers
+  (options) are marked **deterministically** by the server; for open answers the model marks, but
+  an exact match against the key always counts as correct — a good answer will not land in the log
+  as a mistake.
+  Tasks are generated **in batches**: one model call creates several exercises, you get the first
+  immediately and the rest wait in a queue in the database, appearing **instantly** on later clicks.
+  Because the cost of a call is dominated by the fixed headless overhead (~23k tokens regardless of
+  content), this is several times cheaper and faster. Batch size: `_UOE_BATCH` / `_WRITING_BATCH`
+  in `app/llm_client.py`.
+- **Practice mistakes** — focus mode: the app shows one of your mistakes (picked at random, weighted
+  by how often your weak topics come up) together with its explanation, and generates a **set of
+  5 exercises** for it. Buttons: *Exercise* (another set for the same mistake), *Another mistake*
+  (switch to a new one). Under the explanation you also get **I disagree** (object to the
+  explanation) and **Delete mistake** — you deal with a mistake where you see it, without hunting
+  for the entry in the log.
+  At the top there is a **Daily goal** — how many mistakes you want to clear per day. A mistake
+  counts (+1) only after **5 correctly solved exercises** for it, counted **cumulatively within the
+  day** — 3/5 in one go and 2/5 later also does it. Progress shows under the goal ("Correct
+  exercises needed for this mistake: 3/5"). The threshold is `DRILL_CORRECT_TARGET` in
+  `app/main.py`. Next to the goal is your **streak** (🔥) — consecutive days with the goal met.
 
-  **Opuszczony dzień można odrobić.** Przespanie dnia nie zrywa serii od razu: następny dzień musi
-  pokryć cel za siebie i za każdy zaległy dzień — po jednym opuszczonym dniu to `2 × cel` różnych
-  błędów, po dwóch `3 × cel`. Licznik nad paskiem pokazuje wtedy ten podniesiony cel, a pod serią
-  pojawia się ostrzeżenie („⚠️ Zaległość z 2 dni — zalicz dziś 15 różnych błędów, inaczej seria
-  przepada"). Zasady:
-  - **trzy dni pod rząd bez ćwiczeń = seria pęka** nieodwracalnie (limit `GRACE_DAYS` w `app/streak.py`);
-  - rozliczenie jest **wszystko albo nic** w obrębie dnia — 10 z wymaganych 15 nie zmniejsza długu
-    na jutro, taki dzień liczy się po prostu jako zwykły zaliczony i zaczyna nową serię;
-  - **odrobione dni nie wchodzą do licznika** — po dwóch przespanych dniach i spłacie seria rośnie
-    o 1, bo 🔥 pokazuje dni, w których naprawdę ćwiczyłeś;
-  - dzisiejszy dzień ma jak dotąd czas do końca doby — dopóki trwa, seria stoi (choć oznaczona
-    jako zagrożona), a nie zeruje się o północy.
+  **A missed day can be made up.** Sleeping through a day does not break the streak immediately: the
+  next day has to cover the goal for itself and for every missed day — after one missed day that is
+  `2 × goal` distinct mistakes, after two `3 × goal`. The counter above the bar then shows this
+  raised goal, and a warning appears under the streak ("⚠️ 2 missed days — clear 15 different
+  mistakes today or the streak is gone"). The rules:
+  - **three days in a row without practice = the streak breaks** irreversibly (`GRACE_DAYS` in
+    `app/streak.py`);
+  - settlement is **all or nothing** within a day — 10 out of the required 15 does not reduce
+    tomorrow's debt; such a day simply counts as an ordinary completed day and starts a new streak;
+  - **made-up days do not enter the counter** — after two missed days and repayment the streak grows
+    by 1, because 🔥 shows days you genuinely practised;
+  - today always has until midnight — while it lasts the streak holds (though flagged at risk)
+    rather than resetting at 00:00.
 
-  Uwaga na skalę: przy celu 5 błędów dziennie oznacza to 25 poprawnych ćwiczeń — a przy dwudniowej
-  zaległości 15 błędów, czyli 75 ćwiczeń w jednym dniu. Jeśli to za dużo, obniż cel w polu
-  *Dzienny cel* (reguła serii liczy się zawsze od aktualnej wartości celu).
-- **Sprawdź z zewnątrz** — wklej zadanie z książki i swoją odpowiedź; aplikacja sprawdzi je i zaproponuje
-  błędy do zatwierdzenia.
-- **Moje błędy** — przegląd słabych punktów i pełny dziennik błędów. Przy każdym błędzie przycisk
-  **Ćwicz ten błąd** przenosi do zakładki *Ćwicz błędy* z tym błędem i od razu generuje do niego ćwiczenie,
-  a **Usuń błąd** (z potwierdzeniem w miejscu) wyrzuca go z dziennika.
-- **Statystyki** — dwie sekcje: *Nauka* (wygenerowane ćwiczenia, sprawdzone odpowiedzi, skuteczność,
-  powtórki, liczba błędów, podział wg typu zadania) oraz *Zużycie Claude* (liczba wywołań, tokeny
-  wejściowe/wyjściowe/cache, **szacowany koszt wg stawek API** i podział wg rodzaju wywołania).
-  Statystyki użycia zbierane są **od teraz** (z koperty JSON każdego wywołania `claude`); nie obejmują
-  wcześniejszych wywołań (import, testy). **Uwaga:** tryb headless niesie narzut systemowego promptu
-  Claude Code (~kilkadziesiąt tys. tokenów cache na wywołanie), więc oszacowany koszt to **górna
-  granica** — aplikacja na kluczu API z lekkim promptem zużyłaby wyraźnie mniej. Dlatego obok
-  pokazywany jest też **szacunek kosztu na API bez narzutu** (tylko realny prompt + odpowiedź,
-  wyceniony po cenniku modelu — Opus oraz taniej: Sonnet 5), który daje realniejszą liczbę do
-  decyzji o migracji na API. Cennik jest w `app/pricing.py`; jeśli użyty model nie ma
-  **potwierdzonej** stawki, szacunek jest wyraźnie oznaczony jako założony (zamiast podawać
-  liczbę jako pewnik).
+  A note on scale: at a goal of 5 mistakes a day that means 25 correct exercises — and with a
+  two-day backlog, 15 mistakes, i.e. 75 exercises in one day. If that is too much, lower the
+  *Daily goal* (the streak rule always uses the current goal value).
+- **Check external** — paste a task from a book along with your answer; the app marks it and proposes
+  mistakes for you to confirm.
+- **My mistakes** — an overview of *Weak points* and the full *Mistake log*. Each entry has
+  **Practice this mistake**, which jumps to *Practice mistakes* with that entry and generates an
+  exercise straight away, and **Delete mistake** (with in-place confirmation), which drops it
+  from the log.
+- **Statistics** — two sections: *Learning* (exercises generated, answers checked, accuracy, reviews,
+  mistakes logged, breakdown by task type) and *Claude usage* (call count, input/output/cache tokens,
+  **estimated cost at API rates**, and a breakdown by call type).
+  Usage statistics are collected **from now on** (from the JSON envelope of each `claude` call);
+  they do not cover earlier calls (imports, tests). **Note:** headless mode carries the overhead of
+  Claude Code's system prompt (tens of thousands of cache tokens per call), so the estimated cost is
+  an **upper bound** — the same app on an API key with a lean prompt would use noticeably less. That
+  is why an **API estimate without the overhead** is shown alongside (real prompt + response only,
+  priced by the model's rates — the model used, and a cheaper one: Sonnet 5), which gives a more
+  realistic number for deciding whether to migrate to the API. Rates live in `app/pricing.py`; if
+  a model has no **confirmed** rate, the estimate is clearly marked as assumed rather than presented
+  as fact.
 
-### Cykl życia błędu: nic nie wchodzi i nic nie wychodzi samo
+### The life of a mistake: nothing enters and nothing leaves on its own
 
-**Ocena nie zapisuje błędów do dziennika.** Zwraca je jako **propozycje** — przy każdej jest
-przycisk **+ Dodaj do dziennika**, a nad listą pasek z przypomnieniem i (gdy propozycji jest
-więcej) **+ Dodaj wszystkie**. Przy zadaniach wieloczęściowych przycisk stoi przy tej luce,
-z której błąd pochodzi; propozycje niepowiązane z żadną luką lądują w osobnej sekcji, żeby nic
-nie przepadło po cichu. Zapisywane jest natomiast **podejście** (do statystyk skuteczności) —
-niezależnie od tego, co zatwierdzisz.
+**Marking does not write mistakes to the log.** It returns them as **proposals** — each has an
+**Add to log** button, and above the list sits a reminder bar with (when there is more than one)
+**Add all**. In multi-item tasks the button sits next to the gap the mistake came from; proposals
+not tied to any gap go into a separate section so nothing disappears quietly. What *is* saved is the
+**attempt** (for accuracy statistics), regardless of what you confirm.
 
-Dlaczego tak: łatwiej zatwierdzić trzy trafne wpisy, niż potem szukać w dzienniku dziesięciu
-śmieci do usunięcia. Skutki uboczne, o których warto wiedzieć: *słabe punkty*, dobór tematów
-i licznik „Błędy w dzienniku" widzą **tylko zatwierdzone** błędy, a temat propozycji jest
-sprowadzany do taksonomii już przy ocenie — zatwierdzasz dokładnie to, co zostanie zapisane
-(serwer normalizuje go ponownie przy zapisie, bo dane z przeglądarki nie są wiarygodne).
+The reasoning: confirming three accurate entries is easier than later digging ten junk ones out of
+the log. Side effects worth knowing: *Weak points*, topic selection and the "Mistakes logged"
+counter see **only confirmed** mistakes, and a proposal's topic is normalised to the taxonomy at
+marking time — you confirm exactly what will be stored (the server normalises it again on write,
+because data from the browser is not trustworthy).
 
-Zastrzeżenie (**Nie zgadzam się**) dotyczy wpisów, które **są** w dzienniku — propozycji nie
-trzeba podważać, wystarczy jej nie zatwierdzać.
+Objecting (**I disagree**) applies to entries that **are** in the log — a proposal does not need to
+be challenged, you can simply not confirm it.
 
-Błąd raz zapisany **zostaje w dzienniku na zawsze** — nie ma automatycznego wygaszania po
-n-krotnym przerobieniu. Tabela `reviews` notuje tylko, że danego dnia zaliczyłeś błąd do celu,
-i **nie wpływa na dobór**: `_choose_focus_error` waży wyłącznie liczbą i świeżością wpisów
-w temacie. Praktyczny skutek: błąd opanowany dziesięć razy może w „Ćwicz błędy" wracać tak samo
-często jak nowy.
+Once logged, a mistake **stays in the log forever** — there is no automatic retirement after n
+repetitions. The `reviews` table only records that you cleared a mistake toward the goal on a given
+day, and it **does not affect selection**: `_choose_focus_error` weighs only the count and recency of
+entries in a topic. Practical consequence: a mistake you have mastered ten times can come back in
+*Practice mistakes* as often as a fresh one.
 
-Dlatego dziennik porządkujesz sam, **ręcznie**:
+So you keep the log tidy **by hand**:
 
-- w zakładce *Moje błędy* — przycisk **Usuń błąd** przy każdym wpisie,
-- w zakładce *Ćwicz błędy* — ten sam przycisk **przy błędzie, który właśnie ćwiczysz**, żeby nie szukać
-  go potem w setkach innych wpisów.
+- in *My mistakes* — the **Delete mistake** button on every entry,
+- in *Practice mistakes* — the same button **on the mistake you are currently drilling**, so you do
+  not have to find it later among hundreds of others.
 
-Oba wymagają potwierdzenia (**Na pewno? / Anuluj**), świadomie bez okienka przeglądarki.
-Usunięcie **nie cofa dziś zdobytego celu ani serii** — powtórki zostają w `reviews`, bo praca,
-którą naprawdę wykonałeś, powinna zostać policzona. Zmienia się natomiast lista *słabych punktów*,
-bo liczona jest z dziennika na bieżąco.
+Both require confirmation (**Yes, delete / Cancel**), deliberately without a browser dialog.
+Deleting **does not undo the goal or streak you earned today** — reviews stay in `reviews`, because
+work you genuinely did should stay counted. What does change is the *Weak points* list, since it is
+computed from the log on the fly.
 
-### Zastrzeżenie do wyjaśnienia („Nie zgadzam się")
+### Objecting to an explanation ("I disagree")
 
-Model czasem myli się w samym wyjaśnieniu — np. powołuje się na słowo, którego w zadaniu nie było.
-Dlatego przy każdym wyjaśnieniu (komentarz do luki, omówienie wariantu, wpis w dzienniku błędów)
-jest link **Nie zgadzam się**. Rozwija pole na komentarz — napisz, co się nie zgadza —
-i wysyła zastrzeżenie do ponownej weryfikacji wraz z **dokładną treścią zadania i Twoimi
-odpowiedziami**, żeby model mógł sprawdzić, czy nie zmyślił cytatu.
+The model sometimes gets the explanation itself wrong — for instance quoting a word that was never
+in the task. So every explanation (a comment on a gap, a walkthrough of an option, an entry in the
+mistake log) carries an **I disagree** link. It opens a comment field — say what is wrong — and
+sends the objection for re-checking together with **the exact task text and your answers**, so the
+model can verify whether it invented the quote.
 
-Weryfikacja rozstrzyga **dwie niezależne rzeczy**, bo mieszanie ich było źródłem błędnych
-werdyktów:
+The re-check decides **two independent things**, because conflating them was a source of bad
+verdicts:
 
-1. **Czy wyjaśnienie było błędne** (`verdict`: `upheld` / `rejected`) — zmyślony cytat wystarcza,
-   żeby uznać zastrzeżenie, nawet jeśli sama reguła gramatyczna była prawdziwa.
-2. **Czy Twoja odpowiedź była jednak dopuszczalna** (`student_was_right`) — to osobna sprawa.
-   Najczęstszy przypadek: wyjaśnienie było wadliwe, ale odpowiedź nadal błędna.
+1. **Whether the explanation was wrong** (`verdict`: `upheld` / `rejected`) — an invented quote is
+   enough to uphold the objection, even if the grammar rule itself was true.
+2. **Whether your answer was acceptable after all** (`student_was_right`) — a separate matter. The
+   most common case: the explanation was faulty but the answer still wrong.
 
-Co się dzieje dalej:
+What happens next:
 
-- **Zastrzeżenie uznane** → dostajesz **poprawione wyjaśnienie** (od razu, bez zmian w danych).
-- **Dodatkowo model przyzna, że Twoja odpowiedź była dopuszczalna** → pojawia się przycisk
-  **Popraw ocenę**. Dopiero jego kliknięcie usuwa błędny wpis z dziennika i przelicza wynik
-  podejścia. Nic nie zmienia się bez Twojego potwierdzenia, a każde zastrzeżenie jest zapisane
-  w tabeli `disputes` (jednorazowe zastosowanie).
-- **Zastrzeżenie odrzucone** → wyjaśnienie zostaje, z uzasadnieniem dlaczego. Prompt jawnie
-  zakazuje ustępowania z uprzejmości — inaczej dałoby się wygadać z każdego prawdziwego błędu
-  i dziennik przestałby być wiarygodny.
+- **Objection accepted** → you get a **corrected explanation** (immediately, with no data changes).
+- **The model additionally concedes your answer was acceptable** → an **Apply correction** button
+  appears. Only clicking it removes the faulty entry from the log and recomputes the attempt's score.
+  Nothing changes without your confirmation, and every objection is recorded in the `disputes` table
+  (applied once).
+- **Objection rejected** → the explanation stands, with reasons. The prompt explicitly forbids
+  conceding out of politeness — otherwise you could talk your way out of every real mistake and the
+  log would stop being trustworthy.
 
-## Uruchomienie w Dockerze (z autostartem po włączeniu laptopa)
+## Running in Docker (with autostart when the laptop boots)
 
-Jednorazowo:
+One-off:
 
 ```bash
 docker compose up -d --build
 ```
 
-Aplikacja jest dostępna pod **http://localhost:8008**.
+The app is then available at **http://localhost:8008**.
 
-### Jak działa autostart
+### How autostart works
 
-Kontener ma politykę `restart: unless-stopped`, a demon Dockera jest włączony w systemd
-(`systemctl is-enabled docker` → `enabled`). Po włączeniu laptopa demon startuje i wznawia
-kontener, jeśli działał w momencie wyłączania komputera. Dwa zachowania warte zapamiętania:
+The container has the `restart: unless-stopped` policy, and the Docker daemon is enabled in systemd
+(`systemctl is-enabled docker` → `enabled`). When the laptop boots, the daemon starts and resumes the
+container if it was running when the machine was shut down. Two behaviours worth remembering:
 
-- `docker compose stop` (albo `docker kill`) to **zatrzymanie na Twoje życzenie** — po takim
-  zatrzymaniu kontener nie wróci sam, także po restarcie systemu. Wznawiasz go przez
-  `docker compose start`.
-- Jeśli wolisz, żeby wracał *zawsze*, nawet po ręcznym zatrzymaniu, zmień politykę
-  w `compose.yaml` na `restart: always`.
+- `docker compose stop` (or `docker kill`) is **a stop you asked for** — after it the container will
+  not come back on its own, not even after a system restart. Resume it with `docker compose start`.
+- If you would rather it always came back, even after a manual stop, change the policy in
+  `compose.yaml` to `restart: always`.
 
-### Co jest montowane i dlaczego
+### What is mounted and why
 
-Obraz **nie zawiera** Claude Code — binarka i konfiguracja są montowane z hosta, więc
-kontener korzysta z Twojego logowania z subskrypcji i nie potrzebuje klucza API:
+The image **does not contain** Claude Code — the binary and the configuration are mounted from the
+host, so the container uses your subscription login and needs no API key:
 
-| Montowanie | Tryb | Po co |
+| Mount | Mode | Why |
 |---|---|---|
-| `./data` | zapis | baza SQLite (dziennik błędów, postępy, statystyki) zostaje na hoście |
-| `~/.local/bin/claude` + `~/.local/share/claude` | odczyt | natywna binarka Claude Code (aktualizacja na hoście działa po restarcie kontenera) |
-| `~/.claude` | **zapis** | poświadczenia; Claude Code odświeża wygasający token, więc montowanie tylko do odczytu zepsułoby autoryzację po jego wygaśnięciu |
+| `./data` | write | the SQLite database (mistake log, progress, statistics) stays on the host |
+| `~/.local/bin/claude` + `~/.local/share/claude` | read | the native Claude Code binary (updating on the host takes effect after a container restart) |
+| `~/.claude` | **write** | credentials; Claude Code refreshes an expiring token, so mounting read-only would break authorisation once it expires |
 
-#### Dlaczego ścieżki w kontenerze są takie same jak na hoście
+#### Why the paths inside the container match the host
 
-`~/.local/bin/claude` to **absolutny** symlink (→ `/home/<user>/.local/share/claude/versions/X.Y.Z`).
-Gdyby kontener montował te katalogi pod inną ścieżką, symlink wskazywałby w pustkę i `claude` nie
-uruchomiłby się. Dlatego katalog domowy w obrazie jest równy `${HOME}` hosta — `compose.yaml`
-podstawia go jako argument budowania `APP_HOME`. W kodzie nie ma żadnej zaszytej nazwy użytkownika.
+`~/.local/bin/claude` is an **absolute** symlink (→ `/home/<user>/.local/share/claude/versions/X.Y.Z`).
+If the container mounted those directories at a different path, the symlink would point at nothing
+and `claude` would not start. That is why the home directory in the image equals the host's
+`${HOME}` — `compose.yaml` passes it in as the `APP_HOME` build argument. No username is hardcoded
+anywhere in the code.
 
-Z tego samego powodu kontener działa jako UID/GID **1000**: musi odczytać
-`~/.claude/.credentials.json` (prawa 0600) i zapisać bazę w `./data`. Jeśli Twój użytkownik ma
-inny UID (sprawdź: `id -u`), zbuduj obraz tak:
+For the same reason the container runs as UID/GID **1000**: it has to read
+`~/.claude/.credentials.json` (mode 0600) and write the database in `./data`. If your user has a
+different UID (check with `id -u`), build like this:
 
 ```bash
 export APP_UID=$(id -u) APP_GID=$(id -g)
 docker compose up -d --build
 ```
 
-### Codzienne polecenia
+### Everyday commands
 
 ```bash
-docker compose logs -f          # podgląd logów
-docker compose ps               # stan i zdrowie kontenera
-docker compose up -d --build    # po zmianie kodu: przebuduj i wznów
-docker compose stop             # zatrzymaj (nie wróci sam)
-docker compose start            # wznów
-docker compose down             # usuń kontener (dane w ./data zostają)
+docker compose logs -f          # follow the logs
+docker compose ps               # container state and health
+docker compose up -d --build    # after a code change: rebuild and resume
+docker compose stop             # stop (will not come back on its own)
+docker compose start            # resume
+docker compose down             # remove the container (data in ./data stays)
 ```
 
-### O czym warto wiedzieć
+### Things worth knowing
 
-- **Nie uruchamiaj jednocześnie kontenera i `uvicorn` na hoście** — oba pisałyby do tej samej
-  bazy SQLite z dwóch procesów, co grozi błędami „database is locked".
-- Port jest wystawiony **tylko na `127.0.0.1`**. Aplikacja nie ma logowania i korzysta z Twojej
-  subskrypcji, więc nie powinna być widoczna dla innych urządzeń w sieci.
-- Kontener zapisuje też do `~/.claude` (odświeżony token, historia wywołań) — dzieli ten katalog
-  z Twoim interaktywnym Claude Code. Wywołania z aplikacji liczą się do limitów tej samej subskrypcji.
-- Sprawdzenie po najbliższym restarcie laptopa (nie mogłem tego zweryfikować bez uprawnień roota):
-  `docker compose ps` powinno pokazać `Up ... (healthy)`.
+- **Do not run the container and a host `uvicorn` at the same time** — both would write to the same
+  SQLite database from two processes, risking "database is locked" errors.
+- The port is published **on `127.0.0.1` only**. The app has no authentication and uses your
+  subscription, so it should not be visible to other devices on the network.
+- The container also writes to `~/.claude` (refreshed token, call history) — it shares that directory
+  with your interactive Claude Code. Calls from the app count against the same subscription limits.
+- To verify after the next laptop restart: `docker compose ps` should show `Up ... (healthy)`.
 
-## Testy
+## Tests
 
 ```bash
 python3 -m pytest -q
 ```
 
-Pokrycie: warstwa bazy (w tym regresja współbieżności i migracji kolejki), logika doboru
-zadań (`srs`), reguła serii wraz z odrabianiem zaległości (`streak` — moduł jest czysty, więc
-testy budują historię dni bez bazy), parsowanie odpowiedzi modelu i deterministyczna ocena luk,
-endpointy HTTP (FastAPI TestClient, bez wywoływania modelu) oraz import wcześniejszych błędów.
+Coverage: the database layer (including a concurrency regression and queue migrations), task
+selection logic (`srs`), the streak rule with backlog repayment (`streak` — the module is pure, so
+the tests build day histories without a database), parsing of model responses and deterministic gap
+marking, the HTTP endpoints (FastAPI TestClient, without calling the model), and importing past
+mistakes.
 
-Dodatkowo test przejścia frontendu bez przeglądarki (atrapa DOM + `fetch`), który przechodzi
-wszystkie zakładki i sprawdza, że żadna ścieżka nie wywala się na wyjątku:
+There is also a browser-free frontend walkthrough (a DOM and `fetch` stub) that visits every tab and
+checks that no path blows up on an exception:
 
 ```bash
 node tests/smoke_frontend.js
 ```
 
-## Konfiguracja (zmienne środowiskowe)
+## Configuration (environment variables)
 
-- `FCE_CLAUDE_BIN` — ścieżka do binarki `claude` (domyślnie `claude`).
-- `FCE_LLM_TIMEOUT` — limit czasu wywołania modelu w sekundach (domyślnie 180).
-- `FCE_DB_PATH` — ścieżka pliku bazy SQLite (domyślnie `data/fce.db`).
+- `FCE_CLAUDE_BIN` — path to the `claude` binary (default: `claude`).
+- `FCE_LLM_TIMEOUT` — model call timeout in seconds (default: 180).
+- `FCE_DB_PATH` — path to the SQLite database file (default: `data/fce.db`).
 
-## Uwagi
+## Notes
 
-- Wywołania modelu **liczą się do limitów Twojej subskrypcji** (Pro/Max). Dla nauki osobistej to zwykle bez znaczenia.
-- Uporządkowany JSON jest wymuszany promptem i parsowany z jedną ponowną próbą (nie gwarantowany schematem).
-- Latencja pojedynczego sprawdzenia to zwykle ~2–5 s (widać wskaźnik ładowania).
-- Aby w przyszłości przejść na **klucz API**, wystarczy podmienić funkcję `_invoke` w `app/llm_client.py`.
+- Model calls **count against your subscription limits** (Pro/Max). For personal study that is
+  usually immaterial.
+- Well-formed JSON is enforced by the prompt and parsed with one retry (not guaranteed by a schema).
+- A single check usually takes ~2–5 s (a loading indicator is shown).
+- To move to an **API key** later, it is enough to swap the `_invoke` function in `app/llm_client.py`.
 
-## Licencja
+## License
 
-[MIT](LICENSE) — rób z tym, co chcesz, zachowaj tylko notę o prawach autorskich. Bez gwarancji.
+[MIT](LICENSE) — do what you like with it, just keep the copyright notice. No warranty.
 
-Aplikacja jest narzędziem do nauki, nie oficjalnym produktem Cambridge Assessment English.
-„B2 First" i „FCE" to znaki towarowe ich właścicieli i użyto ich tu wyłącznie opisowo.
+This app is a study tool, not an official Cambridge Assessment English product. "B2 First" and "FCE"
+are trademarks of their respective owners and are used here descriptively only.
