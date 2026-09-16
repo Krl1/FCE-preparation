@@ -22,3 +22,6 @@ venv/
 .vscode/
 .idea/
 .DS_Store
+
+# Izolowane workspace na czas implementacji (superpowers:using-git-worktrees)
+.worktrees/
