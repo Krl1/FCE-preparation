@@ -11,8 +11,14 @@ from app import grouping
 
 
 def test_normalize_rule_ignores_case_punctuation_and_spacing():
-    assert grouping.normalize_rule("  Depend + ON!  ") == "depend + on"
+    assert grouping.normalize_rule("  Depend + ON!  ") == "depend on"
     assert grouping.normalize_rule("depend on") == grouping.normalize_rule("Depend, on.")
+
+
+def test_normalize_rule_merges_plus_notation_with_plain_spacing():
+    """'+' to notacja zapisu reguły, nie jej treść — klucz ma je zrównać."""
+    assert grouping.normalize_rule("depend + on") == grouping.normalize_rule("depend on")
+    assert grouping.normalize_rule("make + noun") == grouping.normalize_rule("make noun")
 
 
 def test_normalize_rule_of_blank_is_empty():
@@ -51,7 +57,7 @@ def test_error_not_sent_is_ignored():
 def test_duplicate_new_groups_are_merged_by_normalized_rule():
     out = {"assignments": [
         {"error_id": 1, "new_group": {"rule": "depend + on", "explanation": "a", "topic": "prepositions"}},
-        {"error_id": 2, "new_group": {"rule": "Depend + ON.", "explanation": "b", "topic": "prepositions"}},
+        {"error_id": 2, "new_group": {"rule": "Depend ON.", "explanation": "b", "topic": "prepositions"}},
     ]}
     plan = grouping.plan_assignments(out, [1, 2], set())
     assert len(plan.new_groups) == 1

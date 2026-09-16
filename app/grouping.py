@@ -18,8 +18,10 @@ from dataclasses import dataclass
 from . import fce_taxonomy as tax
 
 _WS = re.compile(r"\s+")
-# Zostawiamy '+', bo reguły często mają postać "depend + on".
-_PUNCT = re.compile(r"[^\w\s+]", re.UNICODE)
+# Klucz jest wyłącznie wewnętrzny (deduplikacja), nigdy nie jest pokazywany — wyświetlamy
+# oryginalne `rule`. Dlatego zrzucamy też '+': model zapisze tę samą regułę raz jako
+# "depend + on", raz jako "depend on", a to ma trafić do jednej grupy.
+_PUNCT = re.compile(r"[^\w\s]", re.UNICODE)
 
 
 def normalize_rule(rule: str | None) -> str:
