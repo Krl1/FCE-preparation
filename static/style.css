@@ -309,7 +309,7 @@ h2 { font-size: 1.05rem; }
 
 /* Widok grup błędów */
 .groups-actions { gap: .5rem; align-items: center; }
-.group-item { border: 1px solid var(--line); border-radius: 8px; padding: .75rem; margin: .6rem 0; background: #fff; }
+.group-item { border: 1px solid var(--line); border-radius: 8px; padding: .75rem; margin: .6rem 0; background: var(--surface); }
 .group-item .rule { font-weight: 700; margin: .3rem 0; }
 .group-item .why { color: var(--muted); font-size: .92rem; }
 .btn-sm {

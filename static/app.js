@@ -1079,34 +1079,72 @@ function groupItemEl(group) {
     input.value = group.rule;
     const save = elem("button", "btn-sm", t("groups.renameSave"));
     save.addEventListener("click", () => withBusy("loader.saving", save, async () => {
-      await api(`/api/groups/${group.id}`, {
-        method: "PATCH",
-        body: JSON.stringify({ rule: input.value, explanation: group.explanation }),
-      });
-      loadGroups();
+      try {
+        await api(`/api/groups/${group.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ rule: input.value, explanation: group.explanation }),
+        });
+        loadGroups();
+      } catch (e) {
+        item.appendChild(elem("div", "error-banner", t("error.prefix") + e.message));
+      }
     }));
     rename.replaceWith(input, save);
+    input.focus();
   });
   row.appendChild(rename);
 
-  const del = elem("button", "btn-sm danger", t("groups.delete"));
-  del.addEventListener("click", () => withBusy("loader.deleting", del, async () => {
-    await api(`/api/groups/${group.id}`, { method: "DELETE" });
-    loadGroups();
-  }));
-  row.appendChild(del);
+  row.appendChild(deleteGroupWidget(group));
 
   item.appendChild(row);
   return item;
 }
 
-// Pusta grupa ZOSTAJE — pytamy, zamiast kasować po cichu. `container` to widoczny
-// element, obok którego wstawiamy pytanie — #groups-list bywa ukryty (tryb "Wpisy"
-// albo zupełnie inna zakładka), a niewidoczne przyciski zablokowałyby nakładkę
-// ładowania na zawsze.
+/** Usunięcie grupy, dwustopniowo (klik → potwierdzenie) — ten sam wzorzec
+ *  co `deleteErrorWidget`, żeby kasowanie grupy nie różniło się zachowaniem
+ *  od kasowania wpisu. */
+function deleteGroupWidget(group) {
+  const wrap = elem("div", "err-delete");
+  const btn = elem("button", "delete-btn", "🗑 " + t("groups.delete"));
+  const confirmBox = elem("span", "delete-confirm hidden");
+  const yes = elem("button", "delete-yes", t("errors.deleteYes"));
+  const no = elem("button", "delete-no", t("errors.deleteCancel"));
+  confirmBox.appendChild(elem("span", "delete-q", t("errors.deleteConfirm")));
+  confirmBox.appendChild(yes);
+  confirmBox.appendChild(no);
+
+  btn.addEventListener("click", () => {
+    btn.classList.add("hidden");
+    confirmBox.classList.remove("hidden");
+    yes.focus();
+  });
+  no.addEventListener("click", () => {
+    confirmBox.classList.add("hidden");
+    btn.classList.remove("hidden");
+  });
+  yes.addEventListener("click", () => withBusy("loader.deleting", yes, async () => {
+    try {
+      await api(`/api/groups/${group.id}`, { method: "DELETE" });
+      loadGroups();
+    } catch (e) {
+      wrap.appendChild(elem("div", "error-banner", t("error.prefix") + e.message));
+    }
+  }));
+
+  wrap.appendChild(btn);
+  wrap.appendChild(confirmBox);
+  return wrap;
+}
+
+// Pusta grupa ZOSTAJE — pytamy, zamiast kasować po cichu. `container` to WYMAGANY
+// widoczny element, obok którego wstawiamy pytanie — #groups-list bywa ukryty (tryb
+// "Wpisy" albo zupełnie inna zakładka), a niewidoczne przyciski zablokowałyby
+// nakładkę ładowania na zawsze. Brak awaryjnego fallbacku na #groups-list jest
+// celowy: przyszły wołający, który pominie `container`, ma dostać głośny błąd
+// zamiast po cichu odtworzyć to samo zawieszenie.
 function offerOrphanCleanup(groupId, rule, container) {
   if (groupId === null || groupId === undefined) return Promise.resolve();
-  const box = container || $("#groups-list");
   return new Promise((resolve) => {
     const ask = elem("div", "orphan-ask");
     ask.appendChild(elem("span", "", t("groups.orphaned").replace("{rule}", rule || "")));
@@ -1114,31 +1152,43 @@ function offerOrphanCleanup(groupId, rule, container) {
     const drop = elem("button", "btn-sm danger", t("groups.orphanDelete"));
     keep.addEventListener("click", () => { ask.remove(); resolve(); });
     drop.addEventListener("click", () => withBusy("loader.deleting", drop, async () => {
-      await api(`/api/groups/${groupId}`, { method: "DELETE" });
-      ask.remove();
-      resolve();
+      try {
+        await api(`/api/groups/${groupId}`, { method: "DELETE" });
+        ask.remove();
+        resolve();
+      } catch (e) {
+        ask.appendChild(elem("div", "error-banner", t("error.prefix") + e.message));
+      }
     }));
     ask.appendChild(keep);
     ask.appendChild(drop);
-    box.prepend(ask);
+    container.prepend(ask);
   });
 }
 
 $("#btn-group-assign").addEventListener("click", () =>
   withBusy("loader.loading", $("#btn-group-assign"), async () => {
-    const out = await api("/api/groups/assign?lang=" + LANG, { method: "POST" });
-    await loadGroups();
-    $("#groups-ungrouped").textContent = t("groups.assigned")
-      .replace("{assigned}", out.assigned)
-      .replace("{created}", out.created)
-      .replace("{unassigned}", out.unassigned);
+    try {
+      const out = await api("/api/groups/assign?lang=" + LANG, { method: "POST" });
+      await loadGroups();
+      $("#groups-ungrouped").textContent = t("groups.assigned")
+        .replace("{assigned}", out.assigned)
+        .replace("{created}", out.created)
+        .replace("{unassigned}", out.unassigned);
+    } catch (e) {
+      showError("#groups-list", e.message);
+    }
   }));
 
 $("#btn-group-regroup").addEventListener("click", () => {
   if (!window.confirm(t("groups.regroupConfirm"))) return;
   return withBusy("loader.loading", $("#btn-group-regroup"), async () => {
-    await api("/api/groups/regroup?lang=" + LANG, { method: "POST" });
-    await loadGroups();
+    try {
+      await api("/api/groups/regroup?lang=" + LANG, { method: "POST" });
+      await loadGroups();
+    } catch (e) {
+      showError("#groups-list", e.message);
+    }
   });
 });
 
