@@ -663,6 +663,25 @@ def test_groups_endpoint_reports_ungrouped_count(app_ctx):
     assert body["ungrouped"] == 1
 
 
+def test_group_members_endpoint_lists_contexts(app_ctx, monkeypatch):
+    client, main_mod = app_ctx
+    eid = _post_error(client)
+    _stub_llm(main_mod, monkeypatch, {"assignments": [
+        {"error_id": eid, "new_group": {"rule": "r", "explanation": "e",
+                                        "topic": "prepositions"}}]})
+    client.post("/api/groups/assign")
+    gid = client.get("/api/groups").json()["groups"][0]["id"]
+
+    members = client.get(f"/api/groups/{gid}/members").json()
+    assert [m["id"] for m in members] == [eid]
+    assert members[0]["topic_label"]   # frontend renderuje etykietę, nie identyfikator
+
+
+def test_group_members_of_missing_group_is_404(app_ctx):
+    client, _ = app_ctx
+    assert client.get("/api/groups/999/members").status_code == 404
+
+
 def test_assign_creates_groups_from_model_output(app_ctx, monkeypatch):
     client, main_mod = app_ctx
     eid = _post_error(client)
@@ -687,6 +706,29 @@ def test_assign_with_invented_group_id_leaves_error_ungrouped(app_ctx, monkeypat
     out = client.post("/api/groups/assign").json()
     assert out == {"assigned": 0, "created": 0, "unassigned": 1}
     assert client.get("/api/groups").json()["ungrouped"] == 1
+
+
+def test_second_assign_attaches_to_group_created_by_the_first(app_ctx, monkeypatch):
+    """Sedno porcjowania: druga porcja ma dopiąć się do grupy z pierwszej,
+    zamiast tworzyć tę samą regułę po raz drugi."""
+    client, main_mod = app_ctx
+    first = _post_error(client, student="depends from")
+    _stub_llm(main_mod, monkeypatch, {"assignments": [
+        {"error_id": first, "new_group": {"rule": "depend + on", "explanation": "e",
+                                          "topic": "prepositions"}}]})
+    client.post("/api/groups/assign")
+    gid = client.get("/api/groups").json()["groups"][0]["id"]
+
+    second = _post_error(client, student="it depends from weather")
+    _stub_llm(main_mod, monkeypatch, {"assignments": [
+        {"error_id": second, "group_id": gid}]})
+    out = client.post("/api/groups/assign").json()
+    assert out == {"assigned": 1, "created": 0, "unassigned": 0}
+
+    body = client.get("/api/groups").json()
+    assert len(body["groups"]) == 1          # nie powstała druga, bliźniacza grupa
+    assert body["groups"][0]["member_count"] == 2
+    assert body["ungrouped"] == 0
 
 
 def test_assign_without_ungrouped_errors_does_not_call_model(app_ctx, monkeypatch):
@@ -744,6 +786,7 @@ def test_deleting_last_member_keeps_group_and_reports_it(app_ctx, monkeypatch):
     gid = client.get("/api/groups").json()["groups"][0]["id"]
     out = client.delete(f"/api/errors/{eid}").json()
     assert out["emptied_group_id"] == gid
+    assert out["emptied_group_rule"] == "r"
     groups = client.get("/api/groups").json()["groups"]
     assert len(groups) == 1
     assert groups[0]["member_count"] == 0
@@ -766,6 +809,13 @@ def test_patch_error_group_detaches_and_reports_orphan(app_ctx, monkeypatch):
     out = client.patch(f"/api/errors/{eid}/group", json={"group_id": None}).json()
     assert out["group_id"] is None
     assert out["emptied_group_id"] == gid
+
+
+def test_patch_error_group_to_missing_group_is_404(app_ctx):
+    client, _ = app_ctx
+    eid = _post_error(client)
+    assert client.patch(f"/api/errors/{eid}/group",
+                        json={"group_id": 999}).status_code == 404
 
 
 def test_regroup_rebuilds_from_scratch(app_ctx, monkeypatch):
