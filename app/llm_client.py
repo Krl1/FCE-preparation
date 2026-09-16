@@ -343,12 +343,16 @@ _DRILL_TYPES = [
 
 
 def generate_drill(topic: str, student_text: str, correct_text: str, explanation: str,
-                   lang: str = "pl") -> tuple[str, GeneratedExercise]:
+                   lang: str = "pl", contexts: list[str] | None = None) -> tuple[str, GeneratedExercise]:
     """Generuje zestaw ćwiczeń celowanych w KONKRETNY błąd ucznia (jedno wywołanie modelu).
 
     Zwraca `(exercise_type, GeneratedExercise)` — typ wybiera model spośród części
     Use of English, a zadanie zawiera `ITEMS_PER_EXERCISE` niezależnych pozycji,
     każda w innym kontekście.
+
+    `contexts` to dodatkowe zdania, w których uczeń złamał tę samą regułę — podawane
+    w trybie grupowym. Są dodatkiem podnoszącym jakość zadań, nie warunkiem: grupa bez
+    wpisów nadal daje się ćwiczyć z samej reguły i wyjaśnienia.
     """
     lang_name = _lang_name(lang)
     topic_lbl = tax.topic_label(topic, "en")
@@ -359,6 +363,11 @@ def generate_drill(topic: str, student_text: str, correct_text: str, explanation
         '"items": [{"number": int, "question_text": str, "options": [str, str, str, str]|null, '
         '"key_word": str|null, "stem": str|null, "answer": str, "answer_notes": str}]}'
     )
+    extra = ""
+    if contexts:
+        joined = "\n".join(f"- {c}" for c in contexts[:8])
+        extra = ("\nTa sama reguła została złamana także w tych zdaniach — użyj ich jako "
+                 f"materiału na konteksty, ale NIE powtarzaj ich dosłownie:\n{joined}\n")
     prompt = (
         f"Uczeń przygotowujący się do FCE popełnił konkretny błąd. Ułóż {n} KRÓTKICH ćwiczeń, "
         "które ćwiczą DOKŁADNIE ten punkt gramatyczny/leksykalny, każde w INNYM, nowym kontekście "
@@ -374,6 +383,7 @@ def generate_drill(topic: str, student_text: str, correct_text: str, explanation
         "podaj 'key_word'; dla word formation podaj 'stem'. Nieużywane pola ustaw na null.\n"
         f"Trudność stopniuj rosnąco. 'answer_notes' to najwyżej jedno krótkie zdanie.\n"
         f"Treść ćwiczeń po angielsku; pole 'instructions' w języku: {lang_name}.\n"
+        f"{extra}"
         f"Zwróć TYLKO obiekt JSON o kształcie: {shape}"
     )
     data = _call_json(prompt, kind="drill")

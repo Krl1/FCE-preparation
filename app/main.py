@@ -310,14 +310,20 @@ def get_topic_stats(lang: str = Query(default="pl")) -> list[dict]:
 
 # --- Zakładka „Ćwicz błędy" (tryb skupienia na pojedynczym błędzie) -------------------
 
-def _progress(error_id: int | None = None) -> dict:
-    """Postęp dziennego celu. Z `error_id` dołącza też postęp ćwiczeń do tego błędu."""
+def _progress(error_id: int | None = None, group_id: int | None = None) -> dict:
+    """Postęp dziennego celu. Z `error_id` lub `group_id` dołącza też postęp ćwiczeń
+    do tej jednostki — próg jest wspólny, bo grupa liczy się jak jeden błąd."""
     goal = db.get_int_setting(conn, "daily_goal", DEFAULT_DAILY_GOAL)
     out = {"done": db.reviews_done_today(conn), "goal": goal,
            **streak.state(db.reviews_per_day(conn), goal)}
     if error_id is not None:
         out["drill"] = {
             "correct": db.drill_correct_today(conn, error_id),
+            "target": DRILL_CORRECT_TARGET,
+        }
+    elif group_id is not None:
+        out["drill"] = {
+            "correct": db.group_drill_correct_today(conn, group_id),
             "target": DRILL_CORRECT_TARGET,
         }
     return out
@@ -342,44 +348,92 @@ def _choose_focus_error(exclude_id: int | None = None) -> dict | None:
     return random.choice(errs) if errs else None
 
 
+def _choose_focus_group(exclude_id: int | None = None) -> dict | None:
+    """Losuje grupę ważoną częstością tematów (srs) + losowość w obrębie tematu.
+
+    Ta sama mechanika co `_choose_focus_error`, tylko materiałem są grupy."""
+    counts = db.group_topic_counts(conn)
+    if not counts:
+        return None
+    candidates = [c["topic"] for c in counts]
+    topic = srs.choose_topic(candidates, counts) or candidates[0]
+    groups = [g for g in db.list_groups(conn) if g["topic"] == topic]
+    if exclude_id is not None:
+        remaining = [g for g in groups if g["id"] != exclude_id]
+        groups = remaining or [g for g in db.list_groups(conn) if g["id"] != exclude_id] or groups
+    return random.choice(groups) if groups else None
+
+
 @app.get("/api/tips/focus")
 def tips_focus(lang: str = Query(default="pl"),
+               mode: str = Query(default="error"),
                exclude: int | None = Query(default=None)) -> dict:
+    if mode == "group":
+        grp = _choose_focus_group(exclude)
+        if grp is None:
+            return {"error": None, "group": None, "progress": _progress()}
+        grp["topic_label"] = tax.topic_label(grp["topic"], lang)
+        return {"error": None, "group": grp,
+                "progress": _progress(group_id=grp["id"])}
+
     err = _choose_focus_error(exclude)
     if err is None:
-        return {"error": None, "progress": _progress()}
+        return {"error": None, "group": None, "progress": _progress()}
     err["topic_label"] = tax.topic_label(err["topic"], lang)
-    return {"error": err, "progress": _progress(err["id"])}
+    return {"error": err, "group": None, "progress": _progress(err["id"])}
 
 
 @app.post("/api/tips/exercise", response_model=ExercisePublic)
 def tips_exercise(req: TipExerciseRequest) -> ExercisePublic:
-    err = db.get_error(conn, req.error_id)
-    if err is None:
-        raise HTTPException(status_code=404, detail="Nie znaleziono błędu o tym id.")
+    if req.group_id is not None:
+        grp = db.get_group(conn, req.group_id)
+        if grp is None:
+            raise HTTPException(status_code=404, detail="Nie znaleziono grupy o tym id.")
+        members = db.list_group_members(conn, req.group_id)
+        # Pusta grupa też daje się ćwiczyć — konteksty są dodatkiem, nie warunkiem.
+        contexts = [f"{m['student_text']} → {m['correct_text']}" for m in members]
+        topic, student_text = grp["topic"], grp["rule"]
+        correct_text, explanation = grp["rule"], grp["explanation"]
+    else:
+        err = db.get_error(conn, req.error_id)
+        if err is None:
+            raise HTTPException(status_code=404, detail="Nie znaleziono błędu o tym id.")
+        contexts = None
+        topic, student_text = err["topic"], err["student_text"]
+        correct_text, explanation = err["correct_text"], err["explanation"]
+
     try:
         ex_type, generated = llm_client.generate_drill(
-            err["topic"], err["student_text"], err["correct_text"], err["explanation"], lang=req.lang
+            topic, student_text, correct_text, explanation, lang=req.lang, contexts=contexts
         )
     except llm_client.LLMError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
-    return _store_and_publish(ex_type, err["topic"], generated, "drill")
+    return _store_and_publish(ex_type, topic, generated, "drill")
 
 
 @app.post("/api/tips/complete")
 def tips_complete(req: CompleteRequest) -> dict:
-    """Zapisuje wynik zestawu ćwiczeń do błędu. Błąd liczy się do dziennego celu
-    dopiero po uzbieraniu `DRILL_CORRECT_TARGET` poprawnych ćwiczeń w danym dniu
-    (narastająco — nie trzeba trafić wszystkich w jednym podejściu)."""
-    if db.get_error(conn, req.error_id) is None:
-        raise HTTPException(status_code=404, detail="Nie znaleziono błędu o tym id.")
-
+    """Zapisuje wynik zestawu ćwiczeń do jednostki (błędu albo grupy). Jednostka liczy
+    się do dziennego celu po uzbieraniu `DRILL_CORRECT_TARGET` poprawnych ćwiczeń
+    w danym dniu — narastająco, i tak samo dla obu trybów."""
     total = max(0, req.total_items)
     correct = max(0, min(req.correct_items, total))
+
+    if req.group_id is not None:
+        if db.get_group(conn, req.group_id) is None:
+            raise HTTPException(status_code=404, detail="Nie znaleziono grupy o tym id.")
+        if total:
+            db.insert_group_drill_score(conn, group_id=req.group_id,
+                                        correct_items=correct, total_items=total)
+        if db.group_drill_correct_today(conn, req.group_id) >= DRILL_CORRECT_TARGET:
+            db.insert_group_review(conn, req.group_id)
+        return _progress(group_id=req.group_id)
+
+    if db.get_error(conn, req.error_id) is None:
+        raise HTTPException(status_code=404, detail="Nie znaleziono błędu o tym id.")
     if total:
         db.insert_drill_score(conn, error_id=req.error_id,
                               correct_items=correct, total_items=total)
-
     if db.drill_correct_today(conn, req.error_id) >= DRILL_CORRECT_TARGET:
         db.insert_review(conn, req.error_id)  # idempotentne w obrębie dnia
     return _progress(req.error_id)

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 # --- Generowanie zadań -------------------------------------------------------
@@ -174,15 +174,31 @@ class GradeRequest(BaseModel):
 
 
 class TipExerciseRequest(BaseModel):
-    error_id: int
+    """Ćwiczenie do jednostki: pojedynczego błędu ALBO grupy. Dokładnie jedno z pól."""
+    error_id: Optional[int] = None
+    group_id: Optional[int] = None
     lang: str = "pl"
+
+    @model_validator(mode="after")
+    def exactly_one_unit(self):
+        if (self.error_id is None) == (self.group_id is None):
+            raise ValueError("Podaj dokładnie jedno: error_id albo group_id.")
+        return self
 
 
 class CompleteRequest(BaseModel):
-    error_id: int
+    """Wynik zestawu ćwiczeń do jednostki: pojedynczego błędu ALBO grupy."""
+    error_id: Optional[int] = None
+    group_id: Optional[int] = None
     # Ile ćwiczeń z zestawu uczeń rozwiązał poprawnie (i ile ich było).
     correct_items: int = 1
     total_items: int = 1
+
+    @model_validator(mode="after")
+    def exactly_one_unit(self):
+        if (self.error_id is None) == (self.group_id is None):
+            raise ValueError("Podaj dokładnie jedno: error_id albo group_id.")
+        return self
 
 
 class GoalRequest(BaseModel):

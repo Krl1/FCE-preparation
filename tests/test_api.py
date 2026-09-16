@@ -832,3 +832,60 @@ def test_regroup_rebuilds_from_scratch(app_ctx, monkeypatch):
     groups = client.get("/api/groups").json()["groups"]
     assert len(groups) == 1
     assert groups[0]["rule"] == "druga"
+
+
+# --- Tryb grupowy w „Ćwicz błędy" ---------------------------------------------
+
+def _make_group(client, main_mod, monkeypatch, rule="depend + on"):
+    eid = _post_error(client)
+    _stub_llm(main_mod, monkeypatch, {"assignments": [
+        {"error_id": eid, "new_group": {"rule": rule, "explanation": "e",
+                                        "topic": "prepositions"}}]})
+    client.post("/api/groups/assign")
+    return client.get("/api/groups").json()["groups"][0]["id"], eid
+
+
+def test_focus_group_mode_returns_a_group(app_ctx, monkeypatch):
+    client, main_mod = app_ctx
+    gid, _ = _make_group(client, main_mod, monkeypatch)
+    body = client.get("/api/tips/focus?mode=group").json()
+    assert body["group"]["id"] == gid
+    assert body["error"] is None
+
+
+def test_focus_group_mode_with_no_groups_returns_null(app_ctx):
+    client, _ = app_ctx
+    body = client.get("/api/tips/focus?mode=group").json()
+    assert body["group"] is None
+
+
+def test_focus_default_mode_is_unchanged(app_ctx):
+    client, _ = app_ctx
+    _post_error(client)
+    body = client.get("/api/tips/focus").json()
+    assert body["error"] is not None
+    assert body["group"] is None
+
+
+def test_completing_a_group_counts_one_toward_the_goal(app_ctx, monkeypatch):
+    client, main_mod = app_ctx
+    gid, _ = _make_group(client, main_mod, monkeypatch)
+    target = main_mod.DRILL_CORRECT_TARGET
+    out = client.post("/api/tips/complete",
+                      json={"group_id": gid, "correct_items": target,
+                            "total_items": target}).json()
+    assert out["done"] == 1
+
+
+def test_partial_group_drill_does_not_count_yet(app_ctx, monkeypatch):
+    client, main_mod = app_ctx
+    gid, _ = _make_group(client, main_mod, monkeypatch)
+    out = client.post("/api/tips/complete",
+                      json={"group_id": gid, "correct_items": 1, "total_items": 5}).json()
+    assert out["done"] == 0
+
+
+def test_complete_requires_exactly_one_unit(app_ctx):
+    client, _ = app_ctx
+    assert client.post("/api/tips/complete",
+                       json={"correct_items": 1, "total_items": 1}).status_code == 422

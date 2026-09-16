@@ -346,3 +346,35 @@ def test_group_errors_prompt_enumerates_valid_topics(monkeypatch):
     assert "prepositions" in seen["prompt"]
     assert "false_friends" in seen["prompt"]
     assert "error_id" in seen["prompt"]
+
+
+def test_generate_drill_includes_group_contexts(monkeypatch):
+    seen = {}
+
+    def fake_call(prompt, kind="other"):
+        seen["prompt"] = prompt
+        return {"exercise_type": "uoe_part2_open_cloze", "instructions": "i",
+                "items": [{"number": n, "question_text": "q", "options": None,
+                           "key_word": None, "stem": None, "answer": "a",
+                           "answer_notes": "n"} for n in range(1, 6)]}
+
+    monkeypatch.setattr(llm_client, "_call_json", fake_call)
+    llm_client.generate_drill("prepositions", "depends from", "depends on", "kalka",
+                              contexts=["it depends from weather", "depends from him"])
+    assert "it depends from weather" in seen["prompt"]
+    assert "depends from him" in seen["prompt"]
+
+
+def test_generate_drill_without_contexts_keeps_old_prompt_shape(monkeypatch):
+    seen = {}
+
+    def fake_call(prompt, kind="other"):
+        seen["prompt"] = prompt
+        return {"exercise_type": "uoe_part2_open_cloze", "instructions": "i",
+                "items": [{"number": n, "question_text": "q", "options": None,
+                           "key_word": None, "stem": None, "answer": "a",
+                           "answer_notes": "n"} for n in range(1, 6)]}
+
+    monkeypatch.setattr(llm_client, "_call_json", fake_call)
+    llm_client.generate_drill("prepositions", "depends from", "depends on", "kalka")
+    assert "depends from" in seen["prompt"]
