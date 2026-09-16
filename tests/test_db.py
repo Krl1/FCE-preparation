@@ -206,3 +206,143 @@ def test_concurrent_access_does_not_lose_writes(conn):
 
     assert failures == []
     assert len(db.list_errors(conn, limit=10_000)) == threads * ops
+
+
+# --- Grupy błędów -------------------------------------------------------------
+
+def _err(conn, topic="prepositions", student="depends from", correct="depends on"):
+    return db.insert_error(conn, source="test", exercise_type="imported", topic=topic,
+                           student_text=student, correct_text=correct,
+                           explanation="kalka z polskiego", severity="minor")
+
+
+def test_insert_and_get_group(conn):
+    gid = db.insert_group(conn, rule="depend + on", explanation="zawsze 'on'",
+                          topic="prepositions")
+    g = db.get_group(conn, gid)
+    assert g["rule"] == "depend + on"
+    assert g["topic"] == "prepositions"
+    assert g["created_at"] and g["updated_at"]
+
+
+def test_get_missing_group_returns_none(conn):
+    assert db.get_group(conn, 999) is None
+
+
+def test_list_groups_carries_member_count(conn):
+    gid = db.insert_group(conn, rule="r", explanation="e", topic="articles")
+    db.set_error_group(conn, _err(conn), gid)
+    db.set_error_group(conn, _err(conn), gid)
+    rows = db.list_groups(conn)
+    assert len(rows) == 1
+    assert rows[0]["member_count"] == 2
+
+
+def test_empty_group_is_listed_with_zero_members(conn):
+    db.insert_group(conn, rule="r", explanation="e", topic="articles")
+    assert db.list_groups(conn)[0]["member_count"] == 0
+
+
+def test_update_group_changes_rule_and_bumps_updated_at(conn):
+    gid = db.insert_group(conn, rule="stara", explanation="e", topic="articles")
+    before = db.get_group(conn, gid)["updated_at"]
+    assert db.update_group(conn, gid, rule="nowa", explanation="e2") is True
+    after = db.get_group(conn, gid)
+    assert after["rule"] == "nowa"
+    assert after["explanation"] == "e2"
+    assert after["updated_at"] >= before
+
+
+def test_update_missing_group_returns_false(conn):
+    assert db.update_group(conn, 999, rule="x", explanation="y") is False
+
+
+def test_delete_group_returns_members_to_ungrouped(conn):
+    gid = db.insert_group(conn, rule="r", explanation="e", topic="articles")
+    eid = _err(conn)
+    db.set_error_group(conn, eid, gid)
+    assert db.delete_group(conn, gid) is True
+    assert db.get_group(conn, gid) is None
+    assert db.group_of_error(conn, eid) is None
+    assert [e["id"] for e in db.list_ungrouped_errors(conn)] == [eid]
+
+
+def test_group_reviews_survive_group_deletion(conn):
+    """Usunięcie grupy nie cofa zdobytego celu — tak samo jak usunięcie błędu."""
+    gid = db.insert_group(conn, rule="r", explanation="e", topic="articles")
+    db.insert_group_review(conn, gid)
+    assert db.reviews_done_today(conn) == 1
+    db.delete_group(conn, gid)
+    assert db.reviews_done_today(conn) == 1
+
+
+def test_deleting_last_member_keeps_the_group(conn):
+    """Pusta grupa zostaje — nic nie znika samo, o usunięciu decyduje uczeń."""
+    gid = db.insert_group(conn, rule="r", explanation="e", topic="articles")
+    eid = _err(conn)
+    db.set_error_group(conn, eid, gid)
+    db.delete_error(conn, eid)
+    assert db.get_group(conn, gid) is not None
+    assert db.group_member_count(conn, gid) == 0
+
+
+def test_set_error_group_to_none_detaches(conn):
+    gid = db.insert_group(conn, rule="r", explanation="e", topic="articles")
+    eid = _err(conn)
+    db.set_error_group(conn, eid, gid)
+    assert db.set_error_group(conn, eid, None) is True
+    assert db.group_of_error(conn, eid) is None
+    assert db.group_member_count(conn, gid) == 0
+
+
+def test_clear_all_groups_removes_groups_and_assignments(conn):
+    gid = db.insert_group(conn, rule="r", explanation="e", topic="articles")
+    eid = _err(conn)
+    db.set_error_group(conn, eid, gid)
+    db.clear_all_groups(conn)
+    assert db.list_groups(conn) == []
+    assert db.group_of_error(conn, eid) is None
+
+
+def test_list_ungrouped_skips_assigned_errors(conn):
+    gid = db.insert_group(conn, rule="r", explanation="e", topic="articles")
+    assigned = _err(conn)
+    loose = _err(conn)
+    db.set_error_group(conn, assigned, gid)
+    assert [e["id"] for e in db.list_ungrouped_errors(conn)] == [loose]
+
+
+def test_group_drill_and_review_count_toward_the_day(conn):
+    gid = db.insert_group(conn, rule="r", explanation="e", topic="articles")
+    db.insert_group_drill_score(conn, group_id=gid, correct_items=3, total_items=5)
+    db.insert_group_drill_score(conn, group_id=gid, correct_items=2, total_items=5)
+    assert db.group_drill_correct_today(conn, gid) == 5
+    db.insert_group_review(conn, gid)
+    db.insert_group_review(conn, gid)  # idempotentne w obrębie dnia
+    assert db.reviews_done_today(conn) == 1
+
+
+def test_reviews_done_today_sums_errors_and_groups(conn):
+    eid = _err(conn)
+    gid = db.insert_group(conn, rule="r", explanation="e", topic="articles")
+    db.insert_review(conn, eid)
+    db.insert_group_review(conn, gid)
+    assert db.reviews_done_today(conn) == 2
+
+
+def test_reviews_per_day_sums_both_sources(conn):
+    eid = _err(conn)
+    gid = db.insert_group(conn, rule="r", explanation="e", topic="articles")
+    db.insert_review(conn, eid)
+    db.insert_group_review(conn, gid)
+    per_day = db.reviews_per_day(conn)
+    assert sum(per_day.values()) == 2
+
+
+def test_group_topic_counts_feeds_srs(conn):
+    gid = db.insert_group(conn, rule="r", explanation="e", topic="prepositions")
+    db.set_error_group(conn, _err(conn), gid)
+    rows = db.group_topic_counts(conn)
+    assert rows[0]["topic"] == "prepositions"
+    assert rows[0]["count"] == 1
+    assert rows[0]["last_seen"]
