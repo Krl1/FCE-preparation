@@ -287,3 +287,43 @@ def test_grade_items_prompt_demands_item_number(monkeypatch):
     monkeypatch.setattr(llm_client, "_invoke", spy)
     llm_client.grade_items("uoe_part2_open_cloze", "t", FIVE_GAPS, ["-"] * 5)
     assert "item_number" in seen["prompt"]
+
+
+# --- Grupowanie ---------------------------------------------------------------
+
+def test_group_errors_passes_errors_and_groups_into_prompt(monkeypatch):
+    seen = {}
+
+    def fake_call(prompt, kind="other"):
+        seen["prompt"] = prompt
+        seen["kind"] = kind
+        return {"assignments": [{"error_id": 1, "group_id": 7}]}
+
+    monkeypatch.setattr(llm_client, "_call_json", fake_call)
+    out = llm_client.group_errors(
+        errors=[{"id": 1, "topic": "prepositions", "student_text": "depends from",
+                 "correct_text": "depends on", "explanation": "kalka"}],
+        existing_groups=[{"id": 7, "rule": "depend + on", "topic": "prepositions"}],
+    )
+    assert out == {"assignments": [{"error_id": 1, "group_id": 7}]}
+    assert seen["kind"] == "group"
+    assert "depends from" in seen["prompt"]
+    assert "depend + on" in seen["prompt"]
+    assert "7" in seen["prompt"]
+
+
+def test_group_errors_without_existing_groups_still_builds_prompt(monkeypatch):
+    monkeypatch.setattr(llm_client, "_call_json",
+                        lambda prompt, kind="other": {"assignments": []})
+    assert llm_client.group_errors(errors=[{"id": 1, "topic": "articles",
+                                            "student_text": "a", "correct_text": "b",
+                                            "explanation": "c"}],
+                                   existing_groups=[]) == {"assignments": []}
+
+
+def test_group_errors_with_no_errors_skips_the_model(monkeypatch):
+    def explode(prompt, kind="other"):
+        raise AssertionError("model nie powinien być wołany dla pustej listy")
+
+    monkeypatch.setattr(llm_client, "_call_json", explode)
+    assert llm_client.group_errors(errors=[], existing_groups=[]) == {"assignments": []}

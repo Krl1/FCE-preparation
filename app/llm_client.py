@@ -662,6 +662,55 @@ def extract_errors_from_text(text: str) -> list[ErrorItem]:
     return [ErrorItem.model_validate(e) for e in data.get("errors", [])]
 
 
+# --- Grupowanie błędów w reguły ----------------------------------------------
+
+def _group_line(err: dict) -> str:
+    explanation = str(err.get("explanation") or "")[:200]
+    return (f"- id={err['id']} | temat={err.get('topic', '')} | "
+            f"błędnie: {err.get('student_text', '')} | poprawnie: {err.get('correct_text', '')} | "
+            f"uwaga: {explanation}")
+
+
+def group_errors(errors: list[dict], existing_groups: list[dict], lang: str = "pl") -> dict:
+    """Przypisuje błędy do grup-reguł. Jedno wywołanie na porcję.
+
+    Zwraca SUROWY słownik od modelu — walidacja (wymyślone id, duplikaty, pominięcia)
+    należy do `app/grouping.py`, żeby dało się ją testować bez wywoływania modelu.
+    Pusta lista wejściowa nie woła modelu w ogóle: to najczęstszy przypadek przy
+    przyrostowym scalaniu i nie ma powodu płacić za nic.
+    """
+    if not errors:
+        return {"assignments": []}
+
+    lang_name = _lang_name(lang)
+    known = "\n".join(
+        f"- id={g['id']} | reguła: {g['rule']} | temat={g.get('topic', '')}"
+        for g in existing_groups
+    ) or "(brak — wszystkie grupy trzeba dopiero utworzyć)"
+    items = "\n".join(_group_line(e) for e in errors)
+    shape = ('{"assignments": [{"error_id": int, "group_id": int|null, '
+             '"new_group": {"rule": str, "explanation": str, "topic": str}|null}]}')
+
+    prompt = (
+        f"{_EXAMINER_SYSTEM}\n\n"
+        "Grupujesz błędy ucznia w REGUŁY. Jedna reguła to jedno zagadnienie językowe, "
+        "które uczeń łamie — ta sama reguła może wystąpić w wielu różnych zdaniach.\n\n"
+        f"ISTNIEJĄCE GRUPY:\n{known}\n\n"
+        f"BŁĘDY DO PRZYPISANIA:\n{items}\n\n"
+        "Dla KAŻDEGO błędu z listy zwróć dokładnie jeden wpis:\n"
+        "- jeśli pasuje do istniejącej grupy → podaj jej 'group_id' i 'new_group': null,\n"
+        "- jeśli nie pasuje do żadnej → 'group_id': null i opisz 'new_group'.\n"
+        "Nie wymyślaj identyfikatorów spoza listy istniejących grup. "
+        "Nie twórz grupy na jeden błąd, jeśli pasuje on do istniejącej. "
+        "Grupa może łączyć błędy z różnych tematów, jeśli łamią tę samą regułę.\n"
+        f"'rule' to krótka nazwa reguły (do 60 znaków), np. \"depend + on\". "
+        f"'explanation' to jedno zdanie po {lang_name}. "
+        f"'topic' to identyfikator tematu z taksonomii FCE, małymi literami.\n\n"
+        f"Zwróć WYŁĄCZNIE JSON w kształcie: {shape}"
+    )
+    return _call_json(prompt, kind="group")
+
+
 def review_dispute(*, disputed_text: str, user_comment: str, exercise_context: str,
                    student_answers_text: str, lang: str = "pl") -> dict:
     """Weryfikuje zastrzeżenie ucznia do wyjaśnienia wystawionego przy ocenie.
