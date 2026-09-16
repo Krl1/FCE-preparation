@@ -140,12 +140,27 @@ does not — it is parsed locally).
   A note on scale: at a goal of 5 mistakes a day that means 25 correct exercises — and with a
   two-day backlog, 15 mistakes, i.e. 75 exercises in one day. If that is too much, lower the
   *Daily goal* (the streak rule always uses the current goal value).
+
+  The **Individual mistakes / Groups** switch decides what you get to work on. Group mode
+  lets you move faster through many related slips: instead of a single sentence the model
+  sees the rule and several contexts you broke it in. A group counts as **one mistake**
+  toward the daily goal, so the 🔥 streak stays comparable between modes.
 - **Check external** — paste a task from a book along with your answer; the app marks it and proposes
   mistakes for you to confirm.
 - **My mistakes** — an overview of *Weak points* and the full *Mistake log*. Each entry has
   **Practice this mistake**, which jumps to *Practice mistakes* with that entry and generates an
   exercise straight away, and **Delete mistake** (with in-place confirmation), which drops it
   from the log.
+
+  The **Entries / Groups** switch shows the same log in two views. A group is one rule
+  together with the contexts you broke it in — **Merge new** assigns entries that have no
+  group yet, and **Regroup everything** recomputes the split from scratch (it discards
+  manual edits and any empty groups you chose to keep, so it asks for confirmation). Groups
+  may span topics when the entries break the same rule. **Contexts** expands a group to the
+  entries behind it, where **Detach** returns a single entry to the unassigned pool;
+  **Rename** fixes the rule's name. **An empty group stays** — when you
+  remove its last entry the app asks whether to delete the group too; a rule with no
+  entries can still be practised.
 - **Statistics** — two sections: *Learning* (exercises generated, answers checked, accuracy, reviews,
   mistakes logged, breakdown by task type) and *Claude usage* (call count, input/output/cache tokens,
   **estimated cost at API rates**, and a breakdown by call type).

@@ -5,6 +5,7 @@
 
 import importlib
 import json
+import random
 import sys
 
 import pytest
@@ -509,7 +510,7 @@ def test_delete_error_removes_it_from_journal_and_weak_points(app_ctx):
     drop = main_mod.db.insert_error(main_mod.conn, source="s", exercise_type="t", topic="articles",
                                     student_text="do usunięcia", correct_text="b", explanation="e")
 
-    assert client.delete(f"/api/errors/{drop}").json() == {"deleted": drop}
+    assert client.delete(f"/api/errors/{drop}").json()["deleted"] == drop
     ids = [e["id"] for e in client.get("/api/errors").json()]
     assert ids == [keep]
     # „Słabe punkty" liczone są z dziennika, więc temat bez błędów znika z listy.
@@ -641,3 +642,344 @@ def test_each_wrong_gap_can_be_confirmed_separately(app_ctx, monkeypatch):
 
     stored = sorted(e["correct_text"] for e in main_mod.db.list_errors(main_mod.conn))
     assert stored == ["The", "the", "the"], "w dzienniku muszą wylądować luki 2, 4 i 5"
+
+
+# --- Grupy błędów -------------------------------------------------------------
+
+def _post_error(client, student="depends from", topic="prepositions"):
+    res = client.post("/api/errors", json={
+        "topic": topic, "student_text": student, "correct_text": "depends on",
+        "explanation": "kalka z polskiego", "severity": "minor",
+        "exercise_type": "imported",
+    })
+    assert res.status_code == 200
+    return res.json()["id"]
+
+
+def test_groups_endpoint_reports_ungrouped_count(app_ctx):
+    client, _ = app_ctx
+    _post_error(client)
+    body = client.get("/api/groups").json()
+    assert body["groups"] == []
+    assert body["ungrouped"] == 1
+
+
+def test_group_members_endpoint_lists_contexts(app_ctx, monkeypatch):
+    client, main_mod = app_ctx
+    eid = _post_error(client)
+    _stub_llm(main_mod, monkeypatch, {"assignments": [
+        {"error_id": eid, "new_group": {"rule": "r", "explanation": "e",
+                                        "topic": "prepositions"}}]})
+    client.post("/api/groups/assign")
+    gid = client.get("/api/groups").json()["groups"][0]["id"]
+
+    members = client.get(f"/api/groups/{gid}/members").json()
+    assert [m["id"] for m in members] == [eid]
+    assert members[0]["topic_label"]   # frontend renderuje etykietę, nie identyfikator
+
+
+def test_group_members_of_missing_group_is_404(app_ctx):
+    client, _ = app_ctx
+    assert client.get("/api/groups/999/members").status_code == 404
+
+
+def test_assign_creates_groups_from_model_output(app_ctx, monkeypatch):
+    client, main_mod = app_ctx
+    eid = _post_error(client)
+    _stub_llm(main_mod, monkeypatch, {"assignments": [
+        {"error_id": eid, "group_id": None,
+         "new_group": {"rule": "depend + on", "explanation": "zawsze 'on'",
+                       "topic": "prepositions"}},
+    ]})
+    out = client.post("/api/groups/assign").json()
+    assert out == {"assigned": 0, "created": 1, "unassigned": 0}
+    body = client.get("/api/groups").json()
+    assert body["ungrouped"] == 0
+    assert body["groups"][0]["rule"] == "depend + on"
+    assert body["groups"][0]["member_count"] == 1
+
+
+def test_assign_with_invented_group_id_leaves_error_ungrouped(app_ctx, monkeypatch):
+    client, main_mod = app_ctx
+    eid = _post_error(client)
+    _stub_llm(main_mod, monkeypatch,
+              {"assignments": [{"error_id": eid, "group_id": 999}]})
+    out = client.post("/api/groups/assign").json()
+    assert out == {"assigned": 0, "created": 0, "unassigned": 1}
+    assert client.get("/api/groups").json()["ungrouped"] == 1
+
+
+def test_second_assign_attaches_to_group_created_by_the_first(app_ctx, monkeypatch):
+    """Sedno porcjowania: druga porcja ma dopiąć się do grupy z pierwszej,
+    zamiast tworzyć tę samą regułę po raz drugi."""
+    client, main_mod = app_ctx
+    first = _post_error(client, student="depends from")
+    _stub_llm(main_mod, monkeypatch, {"assignments": [
+        {"error_id": first, "new_group": {"rule": "depend + on", "explanation": "e",
+                                          "topic": "prepositions"}}]})
+    client.post("/api/groups/assign")
+    gid = client.get("/api/groups").json()["groups"][0]["id"]
+
+    second = _post_error(client, student="it depends from weather")
+    _stub_llm(main_mod, monkeypatch, {"assignments": [
+        {"error_id": second, "group_id": gid}]})
+    out = client.post("/api/groups/assign").json()
+    assert out == {"assigned": 1, "created": 0, "unassigned": 0}
+
+    body = client.get("/api/groups").json()
+    assert len(body["groups"]) == 1          # nie powstała druga, bliźniacza grupa
+    assert body["groups"][0]["member_count"] == 2
+    assert body["ungrouped"] == 0
+
+
+def test_assign_without_ungrouped_errors_does_not_call_model(app_ctx, monkeypatch):
+    client, main_mod = app_ctx
+
+    def explode(prompt, kind="other"):
+        raise AssertionError("model nie powinien być wołany")
+
+    monkeypatch.setattr(main_mod.llm_client, "_invoke", explode)
+    assert client.post("/api/groups/assign").json() == {
+        "assigned": 0, "created": 0, "unassigned": 0}
+
+
+def test_patch_group_renames_rule(app_ctx, monkeypatch):
+    client, main_mod = app_ctx
+    eid = _post_error(client)
+    _stub_llm(main_mod, monkeypatch, {"assignments": [
+        {"error_id": eid, "new_group": {"rule": "stara", "explanation": "e",
+                                        "topic": "prepositions"}}]})
+    client.post("/api/groups/assign")
+    gid = client.get("/api/groups").json()["groups"][0]["id"]
+    assert client.patch(f"/api/groups/{gid}",
+                        json={"rule": "nowa", "explanation": "e2"}).status_code == 200
+    assert client.get("/api/groups").json()["groups"][0]["rule"] == "nowa"
+
+
+def test_patch_missing_group_is_404(app_ctx):
+    client, _ = app_ctx
+    assert client.patch("/api/groups/999", json={"rule": "a", "explanation": "b"}
+                        ).status_code == 404
+
+
+def test_delete_group_returns_members_to_ungrouped(app_ctx, monkeypatch):
+    client, main_mod = app_ctx
+    eid = _post_error(client)
+    _stub_llm(main_mod, monkeypatch, {"assignments": [
+        {"error_id": eid, "new_group": {"rule": "r", "explanation": "e",
+                                        "topic": "prepositions"}}]})
+    client.post("/api/groups/assign")
+    gid = client.get("/api/groups").json()["groups"][0]["id"]
+    assert client.delete(f"/api/groups/{gid}").status_code == 200
+    body = client.get("/api/groups").json()
+    assert body["groups"] == []
+    assert body["ungrouped"] == 1
+
+
+def test_deleting_last_member_keeps_group_and_reports_it(app_ctx, monkeypatch):
+    """Pusta grupa zostaje; endpoint tylko sygnalizuje, że osierociała."""
+    client, main_mod = app_ctx
+    eid = _post_error(client)
+    _stub_llm(main_mod, monkeypatch, {"assignments": [
+        {"error_id": eid, "new_group": {"rule": "r", "explanation": "e",
+                                        "topic": "prepositions"}}]})
+    client.post("/api/groups/assign")
+    gid = client.get("/api/groups").json()["groups"][0]["id"]
+    out = client.delete(f"/api/errors/{eid}").json()
+    assert out["emptied_group_id"] == gid
+    assert out["emptied_group_rule"] == "r"
+    groups = client.get("/api/groups").json()["groups"]
+    assert len(groups) == 1
+    assert groups[0]["member_count"] == 0
+
+
+def test_deleting_error_without_group_reports_no_orphan(app_ctx):
+    client, _ = app_ctx
+    eid = _post_error(client)
+    assert client.delete(f"/api/errors/{eid}").json()["emptied_group_id"] is None
+
+
+def test_patch_error_group_detaches_and_reports_orphan(app_ctx, monkeypatch):
+    client, main_mod = app_ctx
+    eid = _post_error(client)
+    _stub_llm(main_mod, monkeypatch, {"assignments": [
+        {"error_id": eid, "new_group": {"rule": "r", "explanation": "e",
+                                        "topic": "prepositions"}}]})
+    client.post("/api/groups/assign")
+    gid = client.get("/api/groups").json()["groups"][0]["id"]
+    out = client.patch(f"/api/errors/{eid}/group", json={"group_id": None}).json()
+    assert out["group_id"] is None
+    assert out["emptied_group_id"] == gid
+    # Nazwa reguły leci tak samo jak przy DELETE /api/errors/{id} — frontend ma tam
+    # jedno wspólne pytanie „usunąć grupę X?" i nie może zostać z pustym cudzysłowem.
+    assert out["emptied_group_rule"] == "r"
+
+
+def test_patch_error_group_without_orphan_reports_no_rule(app_ctx, monkeypatch):
+    client, main_mod = app_ctx
+    kept = _post_error(client)
+    moved = _post_error(client, student="discuss about")
+    _stub_llm(main_mod, monkeypatch, {"assignments": [
+        {"error_id": kept, "new_group": {"rule": "r", "explanation": "e",
+                                         "topic": "prepositions"}},
+        {"error_id": moved, "new_group": {"rule": "r", "explanation": "e",
+                                          "topic": "prepositions"}}]})
+    client.post("/api/groups/assign")
+    gid = client.get("/api/groups").json()["groups"][0]["id"]
+    out = client.patch(f"/api/errors/{moved}/group", json={"group_id": None}).json()
+    assert out["emptied_group_id"] is None
+    assert out["emptied_group_rule"] is None
+    assert client.get("/api/groups").json()["groups"][0]["id"] == gid
+
+
+def test_patch_error_group_to_missing_group_is_404(app_ctx):
+    client, _ = app_ctx
+    eid = _post_error(client)
+    assert client.patch(f"/api/errors/{eid}/group",
+                        json={"group_id": 999}).status_code == 404
+
+
+def test_regroup_rebuilds_from_scratch(app_ctx, monkeypatch):
+    client, main_mod = app_ctx
+    eid = _post_error(client)
+    _stub_llm(main_mod, monkeypatch, {"assignments": [
+        {"error_id": eid, "new_group": {"rule": "pierwsza", "explanation": "e",
+                                        "topic": "prepositions"}}]})
+    client.post("/api/groups/assign")
+    _stub_llm(main_mod, monkeypatch, {"assignments": [
+        {"error_id": eid, "new_group": {"rule": "druga", "explanation": "e",
+                                        "topic": "prepositions"}}]})
+    client.post("/api/groups/regroup")
+    groups = client.get("/api/groups").json()["groups"]
+    assert len(groups) == 1
+    assert groups[0]["rule"] == "druga"
+
+
+# --- Tryb grupowy w „Ćwicz błędy" ---------------------------------------------
+
+def _make_group(client, main_mod, monkeypatch, rule="depend + on"):
+    eid = _post_error(client)
+    _stub_llm(main_mod, monkeypatch, {"assignments": [
+        {"error_id": eid, "new_group": {"rule": rule, "explanation": "e",
+                                        "topic": "prepositions"}}]})
+    client.post("/api/groups/assign")
+    return client.get("/api/groups").json()["groups"][0]["id"], eid
+
+
+def test_focus_group_mode_returns_a_group(app_ctx, monkeypatch):
+    client, main_mod = app_ctx
+    gid, _ = _make_group(client, main_mod, monkeypatch)
+    body = client.get("/api/tips/focus?mode=group").json()
+    assert body["group"]["id"] == gid
+    assert body["error"] is None
+
+
+def test_focus_group_mode_prefers_the_group_with_more_members(app_ctx):
+    """Spec: „waga z liczby wpisów w grupie". Reguła złamana pięć razy ma wracać
+    częściej niż jednorazowe potknięcie — równomierne losowanie to gubiło."""
+    client, main_mod = app_ctx
+    conn = main_mod.conn
+    big = main_mod.db.insert_group(conn, rule="duża", explanation="e", topic="prepositions")
+    small = main_mod.db.insert_group(conn, rule="mała", explanation="e", topic="prepositions")
+    for i in range(5):
+        main_mod.db.set_error_group(conn, _post_error(client, student=f"zdanie {i}"), big)
+    main_mod.db.set_error_group(conn, _post_error(client, student="raz"), small)
+
+    random.seed(20260916)
+    picks = [client.get("/api/tips/focus?mode=group").json()["group"]["id"]
+             for _ in range(60)]
+    # Wagi 6:2 — przy równomiernym losowaniu (30:30) ten próg nie przechodzi.
+    assert picks.count(big) >= 2 * picks.count(small)
+    assert picks.count(small) > 0, "pojedyncze potknięcie nadal musi mieć szansę"
+
+
+def test_focus_group_mode_can_still_draw_an_empty_group(app_ctx):
+    """Pusta grupa to reguła przerobiona do czysta, a nie śmieć — nadal daje się ćwiczyć."""
+    client, main_mod = app_ctx
+    gid = main_mod.db.insert_group(main_mod.conn, rule="pusta", explanation="e",
+                                   topic="prepositions")
+    body = client.get("/api/tips/focus?mode=group").json()
+    assert body["group"]["id"] == gid
+
+
+def test_focus_group_mode_with_no_groups_returns_null(app_ctx):
+    client, _ = app_ctx
+    body = client.get("/api/tips/focus?mode=group").json()
+    assert body["group"] is None
+
+
+def test_focus_default_mode_is_unchanged(app_ctx):
+    client, _ = app_ctx
+    _post_error(client)
+    body = client.get("/api/tips/focus").json()
+    assert body["error"] is not None
+    assert body["group"] is None
+
+
+def test_completing_a_group_counts_one_toward_the_goal(app_ctx, monkeypatch):
+    client, main_mod = app_ctx
+    gid, _ = _make_group(client, main_mod, monkeypatch)
+    target = main_mod.DRILL_CORRECT_TARGET
+    out = client.post("/api/tips/complete",
+                      json={"group_id": gid, "correct_items": target,
+                            "total_items": target}).json()
+    assert out["done"] == 1
+
+
+def test_partial_group_drill_does_not_count_yet(app_ctx, monkeypatch):
+    client, main_mod = app_ctx
+    gid, _ = _make_group(client, main_mod, monkeypatch)
+    target = main_mod.DRILL_CORRECT_TARGET
+    out = client.post("/api/tips/complete",
+                      json={"group_id": gid, "correct_items": 1, "total_items": target}).json()
+    assert out["done"] == 0
+
+
+def test_complete_requires_exactly_one_unit(app_ctx):
+    client, _ = app_ctx
+    assert client.post("/api/tips/complete",
+                       json={"correct_items": 1, "total_items": 1}).status_code == 422
+
+
+def test_group_exercise_uses_rule_framing_not_a_fake_wrong_version(app_ctx, monkeypatch):
+    """Grupa to reguła — prompt nie może podawać 'wersji błędnej' równej 'poprawnej'."""
+    client, main_mod = app_ctx
+    gid, _ = _make_group(client, main_mod, monkeypatch)
+    seen = {}
+
+    def fake_invoke(prompt, kind="other"):
+        seen["prompt"] = prompt
+        return json.dumps({
+            "exercise_type": "uoe_part2_open_cloze", "instructions": "i",
+            "items": [{"number": n, "question_text": "q ______", "options": None,
+                       "key_word": None, "stem": None, "answer": "a",
+                       "answer_notes": "n"} for n in range(1, 6)],
+        })
+
+    monkeypatch.setattr(main_mod.llm_client, "_invoke", fake_invoke)
+    assert client.post("/api/tips/exercise", json={"group_id": gid}).status_code == 200
+    assert "Reguła:" in seen["prompt"]
+    assert "Wersja błędna" not in seen["prompt"]
+
+
+def test_empty_group_can_still_be_drilled(app_ctx, monkeypatch):
+    """Grupa bez wpisów to reguła przerobiona do czysta — nadal ma się dać ćwiczyć."""
+    client, main_mod = app_ctx
+    gid, eid = _make_group(client, main_mod, monkeypatch)
+    client.delete(f"/api/errors/{eid}")
+    assert client.get("/api/groups").json()["groups"][0]["member_count"] == 0
+
+    monkeypatch.setattr(main_mod.llm_client, "_invoke", lambda prompt, kind="other": json.dumps({
+        "exercise_type": "uoe_part2_open_cloze", "instructions": "i",
+        "items": [{"number": n, "question_text": "q ______", "options": None,
+                   "key_word": None, "stem": None, "answer": "a",
+                   "answer_notes": "n"} for n in range(1, 6)],
+    }))
+    assert client.post("/api/tips/exercise", json={"group_id": gid}).status_code == 200
+
+
+def test_exercise_requires_exactly_one_unit(app_ctx):
+    client, _ = app_ctx
+    assert client.post("/api/tips/exercise", json={"lang": "pl"}).status_code == 422
+    assert client.post("/api/tips/exercise",
+                       json={"error_id": 1, "group_id": 1}).status_code == 422

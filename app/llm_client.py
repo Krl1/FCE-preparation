@@ -343,12 +343,20 @@ _DRILL_TYPES = [
 
 
 def generate_drill(topic: str, student_text: str, correct_text: str, explanation: str,
-                   lang: str = "pl") -> tuple[str, GeneratedExercise]:
+                   lang: str = "pl", contexts: list[str] | None = None,
+                   rule: str | None = None) -> tuple[str, GeneratedExercise]:
     """Generuje zestaw ćwiczeń celowanych w KONKRETNY błąd ucznia (jedno wywołanie modelu).
 
     Zwraca `(exercise_type, GeneratedExercise)` — typ wybiera model spośród części
     Use of English, a zadanie zawiera `ITEMS_PER_EXERCISE` niezależnych pozycji,
     każda w innym kontekście.
+
+    `contexts` to dodatkowe zdania, w których uczeń złamał tę samą regułę — podawane
+    w trybie grupowym. Są dodatkiem podnoszącym jakość zadań, nie warunkiem: grupa bez
+    wpisów nadal daje się ćwiczyć z samej reguły i wyjaśnienia.
+
+    `rule` ustawione oznacza, że jednostką ćwiczenia jest REGUŁA (tryb grupowy),
+    a nie pojedyncza pomyłka — `student_text`/`correct_text` są wtedy ignorowane.
     """
     lang_name = _lang_name(lang)
     topic_lbl = tax.topic_label(topic, "en")
@@ -359,21 +367,43 @@ def generate_drill(topic: str, student_text: str, correct_text: str, explanation
         '"items": [{"number": int, "question_text": str, "options": [str, str, str, str]|null, '
         '"key_word": str|null, "stem": str|null, "answer": str, "answer_notes": str}]}'
     )
+    extra = ""
+    if contexts:
+        joined = "\n".join(f"- {c}" for c in contexts[:8])
+        extra = ("\nTa sama reguła została złamana także w tych zdaniach — użyj ich jako "
+                 f"materiału na konteksty, ale NIE powtarzaj ich dosłownie:\n{joined}\n")
+    if rule:
+        # Tryb grupowy: jednostką nauki jest REGUŁA, nie pojedyncza pomyłka. Podanie
+        # "wersji błędnej" i "poprawnej" dałoby tu ten sam napis, czyli instrukcję
+        # sprzeczną samą ze sobą — dlatego grupa dostaje własne ramy.
+        intro = (
+            f"Uczeń przygotowujący się do FCE wielokrotnie łamie JEDNĄ regułę. Ułóż {n} KRÓTKICH "
+            "ćwiczeń, które ćwiczą DOKŁADNIE tę regułę, każde w INNYM, nowym kontekście "
+            "(nie powielaj kontekstów między pozycjami).\n\n"
+            f"Reguła — temat: {topic_lbl}\n"
+            f"Reguła: {rule}\n"
+            f"Wyjaśnienie: {explanation}\n\n"
+        )
+    else:
+        intro = (
+            f"Uczeń przygotowujący się do FCE popełnił konkretny błąd. Ułóż {n} KRÓTKICH ćwiczeń, "
+            "które ćwiczą DOKŁADNIE ten punkt gramatyczny/leksykalny, każde w INNYM, nowym kontekście "
+            "(nie powielaj zdania z błędu ani kontekstów między pozycjami).\n\n"
+            f"Błąd — temat: {topic_lbl}\n"
+            f"Wersja błędna: {student_text}\n"
+            f"Wersja poprawna: {correct_text}\n"
+            f"Wyjaśnienie: {explanation}\n\n"
+        )
     prompt = (
-        f"Uczeń przygotowujący się do FCE popełnił konkretny błąd. Ułóż {n} KRÓTKICH ćwiczeń, "
-        "które ćwiczą DOKŁADNIE ten punkt gramatyczny/leksykalny, każde w INNYM, nowym kontekście "
-        "(nie powielaj zdania z błędu ani kontekstów między pozycjami).\n\n"
-        f"Błąd — temat: {topic_lbl}\n"
-        f"Wersja błędna: {student_text}\n"
-        f"Wersja poprawna: {correct_text}\n"
-        f"Wyjaśnienie: {explanation}\n\n"
-        f"Pole 'exercise_type' MUSI być jednym z: {types} — wybierz jeden typ dla całego zestawu.\n"
+        intro
+        + f"Pole 'exercise_type' MUSI być jednym z: {types} — wybierz jeden typ dla całego zestawu.\n"
         "Każda pozycja w 'items' ma własne 'question_text' (jedno zdanie po angielsku z luką ______) "
         "oraz 'answer'. Dla multiple-choice podaj w pozycji dokładnie 4 'options' (z prefiksami "
         "A/B/C/D, 'answer' zapisane identycznie jak wybrany wariant); dla key word transformation "
         "podaj 'key_word'; dla word formation podaj 'stem'. Nieużywane pola ustaw na null.\n"
         f"Trudność stopniuj rosnąco. 'answer_notes' to najwyżej jedno krótkie zdanie.\n"
         f"Treść ćwiczeń po angielsku; pole 'instructions' w języku: {lang_name}.\n"
+        f"{extra}"
         f"Zwróć TYLKO obiekt JSON o kształcie: {shape}"
     )
     data = _call_json(prompt, kind="drill")
@@ -660,6 +690,64 @@ def extract_errors_from_text(text: str) -> list[ErrorItem]:
     )
     data = _call_json(prompt, kind="extract")
     return [ErrorItem.model_validate(e) for e in data.get("errors", [])]
+
+
+# --- Grupowanie błędów w reguły ----------------------------------------------
+
+def _group_line(err: dict) -> str:
+    explanation = str(err.get("explanation") or "")[:200]
+    return (f"- id={err['id']} | temat={err.get('topic', '')} | "
+            f"błędnie: {err.get('student_text', '')} | poprawnie: {err.get('correct_text', '')} | "
+            f"uwaga: {explanation}")
+
+
+def group_errors(errors: list[dict], existing_groups: list[dict], lang: str = "pl") -> dict:
+    """Przypisuje błędy do grup-reguł. Jedno wywołanie na porcję.
+
+    Zwraca SUROWY słownik od modelu — walidacja (wymyślone id, duplikaty, pominięcia)
+    należy do `app/grouping.py`, żeby dało się ją testować bez wywoływania modelu.
+    Pusta lista wejściowa nie woła modelu w ogóle: to najczęstszy przypadek przy
+    przyrostowym scalaniu i nie ma powodu płacić za nic.
+    """
+    if not errors:
+        return {"assignments": []}
+
+    lang_name = _lang_name(lang)
+    valid_topics = ", ".join(tax.TOPICS.keys())
+    known = "\n".join(
+        f"- id={g['id']} | reguła: {g['rule']} | temat={g.get('topic', '')}"
+        for g in existing_groups
+    ) or "(brak — wszystkie grupy trzeba dopiero utworzyć)"
+    items = "\n".join(_group_line(e) for e in errors)
+    shape = ('{"assignments": [{"error_id": int, "group_id": int|null, '
+             '"new_group": {"rule": str, "explanation": str, "topic": str}|null}]}')
+
+    prompt = (
+        f"{_EXAMINER_SYSTEM}\n\n"
+        "Grupujesz błędy ucznia w REGUŁY. Jedna reguła to jedno zagadnienie językowe, "
+        "które uczeń łamie — ta sama reguła może wystąpić w wielu różnych zdaniach.\n\n"
+        f"ISTNIEJĄCE GRUPY:\n{known}\n\n"
+        f"BŁĘDY DO PRZYPISANIA:\n{items}\n\n"
+        "Dla KAŻDEGO błędu z listy zwróć dokładnie jeden wpis:\n"
+        "- jeśli pasuje do istniejącej grupy → podaj jej 'group_id' i 'new_group': null,\n"
+        "- jeśli nie pasuje do żadnej → 'group_id': null i opisz 'new_group'.\n"
+        "Nie wymyślaj identyfikatorów spoza listy istniejących grup. "
+        "W polu 'error_id' podaj dokładnie to id, które stoi przy błędzie na liście — nie numeruj od nowa. "
+        "Nie twórz grupy na jeden błąd, jeśli pasuje on do istniejącej. "
+        # Bez tego zdania każdy błąd z porcji jest oceniany w izolacji: pierwsza porcja
+        # nie widzi ŻADNYCH grup, więc dwa złamania tej samej reguły zakładają dwie
+        # osobne grupy. Scala je dopiero `normalize_rule`, a to wymaga, żeby model
+        # napisał tę samą nazwę — czyli trzeba go o to wprost poprosić.
+        "Kilka błędów z TEJ listy może należeć do JEDNEJ nowej grupy: użyj wtedy "
+        "dokładnie tej samej nazwy 'rule' w każdym z nich. "
+        "Nie zakładaj osobnej grupy na jeden błąd, jeśli inny błąd z listy łamie tę samą regułę. "
+        "Grupa może łączyć błędy z różnych tematów, jeśli łamią tę samą regułę.\n"
+        f"'rule' to krótka nazwa reguły (do 60 znaków), np. \"depend + on\". "
+        f"'explanation' to jedno zdanie po {lang_name}. "
+        f"Pole 'topic' nowej grupy MUSI być jednym z: {valid_topics}.\n\n"
+        f"Zwróć WYŁĄCZNIE JSON w kształcie: {shape}"
+    )
+    return _call_json(prompt, kind="group")
 
 
 def review_dispute(*, disputed_text: str, user_comment: str, exercise_context: str,

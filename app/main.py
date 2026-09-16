@@ -15,17 +15,19 @@ from fastapi.staticfiles import StaticFiles
 
 from . import db
 from . import fce_taxonomy as tax
-from . import llm_client, pricing, srs, streak
+from . import grouping, llm_client, pricing, srs, streak
 from .models import (
     CompleteRequest,
     DisputeRequest,
     ErrorCreate,
+    ErrorGroupUpdate,
     ExercisePublic,
     GeneratedExercise,
     GenerateRequest,
     GoalRequest,
     GradeRequest,
     GradingResult,
+    GroupUpdate,
     TipExerciseRequest,
 )
 
@@ -272,16 +274,38 @@ def add_error(req: ErrorCreate, lang: str = Query(default="pl")) -> dict:
     return {"id": error_id, "topic": topic, "topic_label": tax.topic_label(topic, lang)}
 
 
+def _emptied_group(previous: int | None, new_group_id: int | None = None) -> tuple:
+    """Grupa, która właśnie została bez wpisów: `(id, rule)` albo `(None, None)`.
+
+    Wspólne dla `remove_error` i `patch_error_group` — obie ścieżki kończą się tym
+    samym pytaniem w interfejsie, więc muszą zgłaszać osierocenie identycznie.
+    Nazwa reguły leci razem z id, żeby frontend mógł zapytać „usunąć grupę X?"
+    bez dodatkowego zapytania o listę grup.
+    """
+    if previous is None or previous == new_group_id:
+        return None, None
+    if db.group_member_count(conn, previous) != 0:
+        return None, None
+    grp = db.get_group(conn, previous)
+    return previous, (grp["rule"] if grp else None)
+
+
 @app.delete("/api/errors/{error_id}")
 def remove_error(error_id: int) -> dict:
     """Usuwa wpis z dziennika (np. gdy błąd jest opanowany albo zapisany omyłkowo).
 
     Zapisane powtórki zostają — dzienny postęp i seria opierają się na tym, co
     naprawdę przerobiłeś, więc usunięcie błędu nie cofa dziś zdobytego celu.
+
+    `emptied_group_id` niesie informację, że po tym usunięciu grupa została pusta.
+    Grupa ZOSTAJE — frontend tylko pyta, czy usunąć ją razem z wpisem.
     """
+    previous = db.group_of_error(conn, error_id)
     if not db.delete_error(conn, error_id):
         raise HTTPException(status_code=404, detail="Nie znaleziono błędu o tym id.")
-    return {"deleted": error_id}
+    emptied, emptied_rule = _emptied_group(previous)
+    return {"deleted": error_id, "emptied_group_id": emptied,
+            "emptied_group_rule": emptied_rule}
 
 
 @app.get("/api/stats/topics")
@@ -295,14 +319,20 @@ def get_topic_stats(lang: str = Query(default="pl")) -> list[dict]:
 
 # --- Zakładka „Ćwicz błędy" (tryb skupienia na pojedynczym błędzie) -------------------
 
-def _progress(error_id: int | None = None) -> dict:
-    """Postęp dziennego celu. Z `error_id` dołącza też postęp ćwiczeń do tego błędu."""
+def _progress(error_id: int | None = None, group_id: int | None = None) -> dict:
+    """Postęp dziennego celu. Z `error_id` lub `group_id` dołącza też postęp ćwiczeń
+    do tej jednostki — próg jest wspólny, bo grupa liczy się jak jeden błąd."""
     goal = db.get_int_setting(conn, "daily_goal", DEFAULT_DAILY_GOAL)
     out = {"done": db.reviews_done_today(conn), "goal": goal,
            **streak.state(db.reviews_per_day(conn), goal)}
     if error_id is not None:
         out["drill"] = {
             "correct": db.drill_correct_today(conn, error_id),
+            "target": DRILL_CORRECT_TARGET,
+        }
+    elif group_id is not None:
+        out["drill"] = {
+            "correct": db.group_drill_correct_today(conn, group_id),
             "target": DRILL_CORRECT_TARGET,
         }
     return out
@@ -327,18 +357,69 @@ def _choose_focus_error(exclude_id: int | None = None) -> dict | None:
     return random.choice(errs) if errs else None
 
 
+def _pick_group(groups: list[dict]) -> dict:
+    """Losuje grupę ważoną LICZBĄ jej wpisów — reguła złamana sześć razy ma wracać
+    częściej niż jednorazowe potknięcie (spec: „waga z liczby wpisów w grupie").
+    Baza 1.0 to ta sama eksploracja co `srs.BASE_WEIGHT`: pusta grupa nadal daje się
+    wylosować, bo pustą grupę nadal da się ćwiczyć."""
+    weights = [1.0 + float(g.get("member_count") or 0) for g in groups]
+    return random.choices(groups, weights=weights, k=1)[0]
+
+
+def _choose_focus_group(exclude_id: int | None = None) -> dict | None:
+    """Losuje grupę ważoną częstością tematów (srs) + liczbą wpisów w obrębie tematu.
+
+    Ta sama mechanika co `_choose_focus_error`, tylko materiałem są grupy, a w obrębie
+    tematu losowanie nie jest równomierne (patrz `_pick_group`)."""
+    counts = db.group_topic_counts(conn)
+    if not counts:
+        return None
+    candidates = [c["topic"] for c in counts]
+    topic = srs.choose_topic(candidates, counts) or candidates[0]
+    groups = [g for g in db.list_groups(conn) if g["topic"] == topic]
+    if exclude_id is not None:
+        remaining = [g for g in groups if g["id"] != exclude_id]
+        groups = remaining or [g for g in db.list_groups(conn) if g["id"] != exclude_id] or groups
+    return _pick_group(groups) if groups else None
+
+
 @app.get("/api/tips/focus")
 def tips_focus(lang: str = Query(default="pl"),
+               mode: str = Query(default="error"),
                exclude: int | None = Query(default=None)) -> dict:
+    if mode == "group":
+        grp = _choose_focus_group(exclude)
+        if grp is None:
+            return {"error": None, "group": None, "progress": _progress()}
+        grp["topic_label"] = tax.topic_label(grp["topic"], lang)
+        return {"error": None, "group": grp,
+                "progress": _progress(group_id=grp["id"])}
+
     err = _choose_focus_error(exclude)
     if err is None:
-        return {"error": None, "progress": _progress()}
+        return {"error": None, "group": None, "progress": _progress()}
     err["topic_label"] = tax.topic_label(err["topic"], lang)
-    return {"error": err, "progress": _progress(err["id"])}
+    return {"error": err, "group": None, "progress": _progress(err["id"])}
 
 
 @app.post("/api/tips/exercise", response_model=ExercisePublic)
 def tips_exercise(req: TipExerciseRequest) -> ExercisePublic:
+    if req.group_id is not None:
+        grp = db.get_group(conn, req.group_id)
+        if grp is None:
+            raise HTTPException(status_code=404, detail="Nie znaleziono grupy o tym id.")
+        members = db.list_group_members(conn, req.group_id)
+        # Pusta grupa też daje się ćwiczyć — konteksty są dodatkiem, nie warunkiem.
+        contexts = [f"{m['student_text']} → {m['correct_text']}" for m in members]
+        try:
+            ex_type, generated = llm_client.generate_drill(
+                grp["topic"], "", "", grp["explanation"],
+                lang=req.lang, contexts=contexts, rule=grp["rule"],
+            )
+        except llm_client.LLMError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        return _store_and_publish(ex_type, grp["topic"], generated, "drill")
+
     err = db.get_error(conn, req.error_id)
     if err is None:
         raise HTTPException(status_code=404, detail="Nie znaleziono błędu o tym id.")
@@ -353,18 +434,27 @@ def tips_exercise(req: TipExerciseRequest) -> ExercisePublic:
 
 @app.post("/api/tips/complete")
 def tips_complete(req: CompleteRequest) -> dict:
-    """Zapisuje wynik zestawu ćwiczeń do błędu. Błąd liczy się do dziennego celu
-    dopiero po uzbieraniu `DRILL_CORRECT_TARGET` poprawnych ćwiczeń w danym dniu
-    (narastająco — nie trzeba trafić wszystkich w jednym podejściu)."""
-    if db.get_error(conn, req.error_id) is None:
-        raise HTTPException(status_code=404, detail="Nie znaleziono błędu o tym id.")
-
+    """Zapisuje wynik zestawu ćwiczeń do jednostki (błędu albo grupy). Jednostka liczy
+    się do dziennego celu po uzbieraniu `DRILL_CORRECT_TARGET` poprawnych ćwiczeń
+    w danym dniu — narastająco, i tak samo dla obu trybów."""
     total = max(0, req.total_items)
     correct = max(0, min(req.correct_items, total))
+
+    if req.group_id is not None:
+        if db.get_group(conn, req.group_id) is None:
+            raise HTTPException(status_code=404, detail="Nie znaleziono grupy o tym id.")
+        if total:
+            db.insert_group_drill_score(conn, group_id=req.group_id,
+                                        correct_items=correct, total_items=total)
+        if db.group_drill_correct_today(conn, req.group_id) >= DRILL_CORRECT_TARGET:
+            db.insert_group_review(conn, req.group_id)
+        return _progress(group_id=req.group_id)
+
+    if db.get_error(conn, req.error_id) is None:
+        raise HTTPException(status_code=404, detail="Nie znaleziono błędu o tym id.")
     if total:
         db.insert_drill_score(conn, error_id=req.error_id,
                               correct_items=correct, total_items=total)
-
     if db.drill_correct_today(conn, req.error_id) >= DRILL_CORRECT_TARGET:
         db.insert_review(conn, req.error_id)  # idempotentne w obrębie dnia
     return _progress(req.error_id)
@@ -380,6 +470,113 @@ def tips_goal(req: GoalRequest) -> dict:
     goal = max(1, min(50, req.goal))
     db.set_setting(conn, "daily_goal", str(goal))
     return _progress()
+
+
+# --- Grupy błędów -------------------------------------------------------------
+
+# Porcja jednego wywołania modelu. 196 wpisów w jednym żądaniu grozi obcięciem
+# odpowiedzi przy FCE_LLM_TIMEOUT = 180 s, więc pierwszy przebieg idzie porcjami.
+GROUP_CHUNK_SIZE = 60
+
+
+def _run_grouping(lang: str) -> dict:
+    """Przypisuje wszystkie nieprzypisane wpisy, porcjami. Każda porcja widzi grupy
+    utworzone przez poprzednie, więc druga porcja może dopiąć się do świeżej reguły."""
+    pending = db.list_ungrouped_errors(conn)
+    assigned = created = unassigned = 0
+
+    for chunk in grouping.chunks(pending, GROUP_CHUNK_SIZE):
+        existing = db.list_groups(conn)
+        try:
+            raw = llm_client.group_errors(
+                errors=chunk,
+                existing_groups=[{"id": g["id"], "rule": g["rule"], "topic": g["topic"]}
+                                 for g in existing],
+                lang=lang,
+            )
+        except llm_client.LLMError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+        plan = grouping.plan_assignments(
+            raw, [e["id"] for e in chunk], {g["id"] for g in existing}
+        )
+        for error_id, group_id in plan.to_existing.items():
+            db.set_error_group(conn, error_id, group_id)
+            assigned += 1
+        for new in plan.new_groups:
+            group_id = db.insert_group(conn, rule=new.rule, explanation=new.explanation,
+                                       topic=new.topic)
+            created += 1
+            for error_id in new.error_ids:
+                db.set_error_group(conn, error_id, group_id)
+        unassigned += len(plan.unassigned)
+
+    return {"assigned": assigned, "created": created, "unassigned": unassigned}
+
+
+@app.get("/api/groups")
+def get_groups(lang: str = Query(default="pl")) -> dict:
+    groups = db.list_groups(conn)
+    for g in groups:
+        g["topic_label"] = tax.topic_label(g["topic"], lang)
+    return {"groups": groups, "ungrouped": db.count_ungrouped_errors(conn)}
+
+
+@app.get("/api/groups/{group_id}/members")
+def get_group_members(group_id: int, lang: str = Query(default="pl")) -> list[dict]:
+    if db.get_group(conn, group_id) is None:
+        raise HTTPException(status_code=404, detail="Nie znaleziono grupy o tym id.")
+    members = db.list_group_members(conn, group_id)
+    for m in members:
+        m["topic_label"] = tax.topic_label(m["topic"], lang)
+    return members
+
+
+@app.post("/api/groups/assign")
+def assign_groups(lang: str = Query(default="pl")) -> dict:
+    """Przyrostowe scalanie: bierze tylko wpisy bez grupy."""
+    return _run_grouping(lang)
+
+
+@app.post("/api/groups/regroup")
+def regroup_all(lang: str = Query(default="pl")) -> dict:
+    """Pełne przeliczenie od zera. KASUJE ręczne poprawki i puste grupy — frontend
+    pyta o potwierdzenie, zanim tu trafi."""
+    db.clear_all_groups(conn)
+    return _run_grouping(lang)
+
+
+@app.patch("/api/groups/{group_id}")
+def patch_group(group_id: int, req: GroupUpdate) -> dict:
+    if not db.update_group(conn, group_id, rule=req.rule, explanation=req.explanation):
+        raise HTTPException(status_code=404, detail="Nie znaleziono grupy o tym id.")
+    return {"updated": group_id}
+
+
+@app.delete("/api/groups/{group_id}")
+def remove_group(group_id: int) -> dict:
+    """Usuwa grupę; jej wpisy wracają do nieprzypisanych. Zaliczenia zostają."""
+    if not db.delete_group(conn, group_id):
+        raise HTTPException(status_code=404, detail="Nie znaleziono grupy o tym id.")
+    return {"deleted": group_id}
+
+
+@app.patch("/api/errors/{error_id}/group")
+def patch_error_group(error_id: int, req: ErrorGroupUpdate) -> dict:
+    """Przepina wpis do innej grupy albo go odpina.
+
+    `emptied_group_id` mówi frontendowi, że stara grupa właśnie osierociała — pusta
+    grupa ZOSTAJE, a o jej usunięciu decyduje uczeń."""
+    if db.get_error(conn, error_id) is None:
+        raise HTTPException(status_code=404, detail="Nie znaleziono błędu o tym id.")
+    if req.group_id is not None and db.get_group(conn, req.group_id) is None:
+        raise HTTPException(status_code=404, detail="Nie znaleziono grupy o tym id.")
+
+    previous = db.group_of_error(conn, error_id)
+    db.set_error_group(conn, error_id, req.group_id)
+    emptied, emptied_rule = _emptied_group(previous, req.group_id)
+    return {"error_id": error_id, "group_id": req.group_id,
+            "emptied_group_id": emptied, "emptied_group_rule": emptied_rule}
 
 
 # --- Zastrzeżenia do wyjaśnień ------------------------------------------------

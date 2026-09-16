@@ -115,6 +115,28 @@ const I18N = {
     "kind.explain": "Wyjaśnienia",
     "kind.extract": "Import (ekstrakcja)",
     "kind.other": "Inne",
+    "groups.modeItems": "Wpisy",
+    "groups.modeGroups": "Grupy",
+    "groups.drillErrors": "Pojedyncze błędy",
+    "groups.drillGroups": "Grupy",
+    "groups.assign": "Scal nowe",
+    "groups.regroup": "Przegrupuj wszystko",
+    "groups.regroupConfirm": "Przegrupowanie liczy wszystko od nowa i kasuje ręczne poprawki oraz puste grupy. Na pewno?",
+    "groups.ungrouped": "Nieprzypisane wpisy: {n}",
+    "groups.members": "{n} wpisów",
+    "groups.empty": "Brak grup — użyj „Scal nowe\", żeby je utworzyć.",
+    "groups.noneYet": "Nie ma jeszcze grup — użyj „Scal nowe\" w zakładce Moje błędy.",
+    "groups.emptyGroup": "Grupa bez wpisów",
+    "groups.rename": "Zmień nazwę",
+    "groups.renameSave": "Zapisz",
+    "groups.delete": "Usuń grupę",
+    "groups.detach": "Odepnij",
+    "groups.contexts": "Konteksty",
+    "groups.practiceThis": "Ćwicz tę grupę",
+    "groups.orphaned": "Grupa „{rule}\" została bez wpisów. Usunąć ją także?",
+    "groups.orphanKeep": "Zostaw",
+    "groups.orphanDelete": "Usuń grupę",
+    "groups.assigned": "Dopięto: {assigned}, nowych grup: {created}, bez przypisania: {unassigned}",
   },
   en: {
     "app.title": "FCE Trainer",
@@ -228,6 +250,28 @@ const I18N = {
     "kind.explain": "Explanations",
     "kind.extract": "Import (extraction)",
     "kind.other": "Other",
+    "groups.modeItems": "Entries",
+    "groups.modeGroups": "Groups",
+    "groups.drillErrors": "Individual mistakes",
+    "groups.drillGroups": "Groups",
+    "groups.assign": "Merge new",
+    "groups.regroup": "Regroup everything",
+    "groups.regroupConfirm": "Regrouping recomputes from scratch and discards manual edits and empty groups. Are you sure?",
+    "groups.ungrouped": "Unassigned entries: {n}",
+    "groups.members": "{n} entries",
+    "groups.empty": "No groups yet — use \"Merge new\" to create them.",
+    "groups.noneYet": "No groups yet — use \"Merge new\" in the My mistakes tab.",
+    "groups.emptyGroup": "Group with no entries",
+    "groups.rename": "Rename",
+    "groups.renameSave": "Save",
+    "groups.delete": "Delete group",
+    "groups.detach": "Detach",
+    "groups.contexts": "Contexts",
+    "groups.practiceThis": "Practise this group",
+    "groups.orphaned": "Group \"{rule}\" is now empty. Delete it as well?",
+    "groups.orphanKeep": "Keep",
+    "groups.orphanDelete": "Delete group",
+    "groups.assigned": "Attached: {assigned}, new groups: {created}, unassigned: {unassigned}",
   },
 };
 
@@ -241,6 +285,8 @@ let TOPIC_LABELS = {}; // id -> {pl, en}
 let currentExercise = null;
 let tipsError = null;
 let tipsExercise = null;
+let tipsMode = "error";   // "error" | "group"
+let tipsGroup = null;
 
 const $ = (sel) => document.querySelector(sel);
 
@@ -357,13 +403,20 @@ function setLang(lang) {
   applyStaticI18n();
   fillTypeSelects();
   populateTopics();
-  if ($("#view-errors").classList.contains("is-active")) loadErrors();
+  if ($("#view-errors").classList.contains("is-active")) {
+    loadErrors();
+    // Panel grup ma własne etykiety tematów i liczniki wpisów — bez tego zostałyby
+    // w poprzednim języku, bo `loadErrors` go nie dotyka.
+    if (!$("#groups-pane").classList.contains("hidden")) loadGroups();
+  }
   if ($("#view-stats").classList.contains("is-active")) loadStats();
   if ($("#view-tips").classList.contains("is-active")) {
-    // Nie pobieramy nowego błędu — to zgubiłoby rozwiązywane ćwiczenie.
-    // Przerysowujemy tylko etykiety bieżącego fokusu.
-    if (tipsError) {
-      $("#tips-topic").textContent = topicLabel(tipsError.topic);
+    // Nie pobieramy nowej jednostki — to zgubiłoby rozwiązywane ćwiczenie.
+    // Przerysowujemy tylko etykiety bieżącego fokusu — w OBU trybach, bo w trybie
+    // grupowym `tipsError` jest zawsze null i sam warunek na nim odesłałby po nową grupę.
+    const unit = tipsError || tipsGroup;
+    if (unit) {
+      $("#tips-topic").textContent = topicLabel(unit.topic);
       $("#tips-generate").textContent = tipsExercise ? t("tips.more") : t("tips.generate");
       refreshProgress();
     } else {
@@ -757,14 +810,22 @@ function deleteErrorWidget(errorId, onDone) {
     confirmBox.classList.add("hidden");
     btn.classList.remove("hidden");
   });
-  yes.addEventListener("click", () => withBusy("loader.deleting", yes, async () => {
+  // Pytanie o osieroconą grupę zadajemy PO wyjściu z `withBusy` — nakładka ładowania
+  // jest `position: fixed; inset: 0` i przechwyciłaby kliknięcia w „Zostaw" / „Usuń grupę",
+  // więc pytanie zadane wewnątrz busy nie dałoby się odkliknąć myszą.
+  yes.addEventListener("click", async () => {
+    let out;
     try {
-      await api("/api/errors/" + errorId, { method: "DELETE" });
-      if (onDone) onDone();
+      out = await withBusy("loader.deleting", yes, () =>
+        api("/api/errors/" + errorId, { method: "DELETE" }));
     } catch (e) {
       wrap.appendChild(elem("div", "error-banner", t("error.prefix") + e.message));
+      return;
     }
-  }));
+    if (!out) return;   // withBusy zwraca undefined przy podwójnym kliknięciu
+    await offerOrphanCleanup(out.emptied_group_id, out.emptied_group_rule, wrap);
+    if (onDone) onDone();
+  });
 
   wrap.appendChild(btn);
   wrap.appendChild(confirmBox);
@@ -997,15 +1058,263 @@ function renderErrorsList(errors) {
     errItemEl(err, { date: true, practiceBtn: true, deleteBtn: true })));
 }
 
+// --- Grupy błędów -------------------------------------------------------------
+
+function loadGroups() {
+  return withBusy("loader.loading", null, async () => {
+    try {
+      renderGroupsList(await api("/api/groups?lang=" + LANG));
+    } catch (e) {
+      showError("#groups-list", e.message);
+    }
+  });
+}
+
+function renderGroupsList(body) {
+  $("#groups-ungrouped").textContent =
+    t("groups.ungrouped").replace("{n}", body.ungrouped);
+  const box = $("#groups-list");
+  box.innerHTML = "";
+  if (!body.groups.length) {
+    box.appendChild(elem("p", "stat-empty", t("groups.empty")));
+    return;
+  }
+  body.groups.forEach((g) => box.appendChild(groupItemEl(g)));
+}
+
+function groupItemEl(group) {
+  const count = group.member_count === 0
+    ? t("groups.emptyGroup")
+    : t("groups.members").replace("{n}", group.member_count);
+  const item = elHtml("div", "group-item",
+    `<div class="topic">${esc(group.topic_label || topicLabel(group.topic))}` +
+    `<span class="badge minor">${esc(count)}</span></div>` +
+    `<div class="rule">${esc(group.rule)}</div>` +
+    `<div class="why">${esc(group.explanation)}</div>`);
+
+  const row = elem("div", "err-actions");
+
+  const practise = elem("button", "practice-btn", t("groups.practiceThis"));
+  practise.addEventListener("click", () => focusOnGroup(group));
+  row.insertBefore(practise, row.firstChild);
+
+  // Konteksty grupy: po co ta reguła istnieje widać dopiero po wpisach, które ją złamały.
+  // Pobieramy je LENIWIE i raz na rozwinięcie — lista grup potrafi mieć kilkadziesiąt kafli.
+  const members = elem("div", "group-members hidden");
+  let membersLoaded = false;
+  const expand = elem("button", "btn-sm group-expand", "▸ " + t("groups.contexts"));
+  expand.addEventListener("click", async () => {
+    if (!members.classList.contains("hidden")) {
+      members.classList.add("hidden");
+      expand.textContent = "▸ " + t("groups.contexts");
+      return;
+    }
+    if (!membersLoaded) {
+      let rows;
+      try {
+        rows = await withBusy("loader.loading", expand, () =>
+          api(`/api/groups/${group.id}/members?lang=${LANG}`));
+      } catch (e) {
+        item.appendChild(elem("div", "error-banner", t("error.prefix") + e.message));
+        return;
+      }
+      if (!rows) return;   // podwójne kliknięcie
+      members.innerHTML = "";
+      if (!rows.length) members.appendChild(elem("p", "stat-empty", t("groups.emptyGroup")));
+      rows.forEach((m) => members.appendChild(groupMemberEl(m)));
+      membersLoaded = true;
+    }
+    members.classList.remove("hidden");
+    expand.textContent = "▾ " + t("groups.contexts");
+  });
+  row.appendChild(expand);
+
+  const rename = elem("button", "btn-sm", t("groups.rename"));
+  rename.addEventListener("click", () => {
+    const input = elem("input", "rule-input");
+    input.value = group.rule;
+    const save = elem("button", "btn-sm", t("groups.renameSave"));
+    save.addEventListener("click", () => withBusy("loader.saving", save, async () => {
+      try {
+        await api(`/api/groups/${group.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ rule: input.value, explanation: group.explanation }),
+        });
+        loadGroups();
+      } catch (e) {
+        item.appendChild(elem("div", "error-banner", t("error.prefix") + e.message));
+      }
+    }));
+    rename.replaceWith(input, save);
+    input.focus();
+  });
+  row.appendChild(rename);
+
+  row.appendChild(deleteGroupWidget(group));
+
+  item.appendChild(row);
+  item.appendChild(members);
+  return item;
+}
+
+/** Kontekst grupy: ten sam kafel co w dzienniku (`err-item`), ale jedyną akcją jest
+ *  odpięcie wpisu — zastrzeżenia i kasowanie zostają tam, gdzie widać cały wpis. */
+function groupMemberEl(member) {
+  const item = elHtml("div", "err-item",
+    `<div class="topic">${esc(member.topic_label || topicLabel(member.topic))}</div>` +
+    `<div class="diff"><span class="from">${esc(member.student_text)}</span> → ` +
+    `<span class="to">${esc(member.correct_text)}</span></div>`);
+
+  const row = elem("div", "err-actions");
+  const detach = elem("button", "btn-sm detach-btn", t("groups.detach"));
+  detach.addEventListener("click", async () => {
+    let out;
+    try {
+      out = await withBusy("loader.saving", detach, () =>
+        api(`/api/errors/${member.id}/group`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ group_id: null }),
+        }));
+    } catch (e) {
+      item.appendChild(elem("div", "error-banner", t("error.prefix") + e.message));
+      return;
+    }
+    if (!out) return;   // withBusy zwraca undefined przy podwójnym kliknięciu
+    // Pusta grupa ZOSTAJE — pytamy POZA nakładką, dokładnie jak przy usuwaniu wpisu.
+    await offerOrphanCleanup(out.emptied_group_id, out.emptied_group_rule, item);
+    loadGroups();
+  });
+  row.appendChild(detach);
+  item.appendChild(row);
+  return item;
+}
+
+/** Usunięcie grupy, dwustopniowo (klik → potwierdzenie) — ten sam wzorzec
+ *  co `deleteErrorWidget`, żeby kasowanie grupy nie różniło się zachowaniem
+ *  od kasowania wpisu. */
+function deleteGroupWidget(group) {
+  const wrap = elem("div", "err-delete");
+  const btn = elem("button", "delete-btn", "🗑 " + t("groups.delete"));
+  const confirmBox = elem("span", "delete-confirm hidden");
+  const yes = elem("button", "delete-yes", t("errors.deleteYes"));
+  const no = elem("button", "delete-no", t("errors.deleteCancel"));
+  confirmBox.appendChild(elem("span", "delete-q", t("errors.deleteConfirm")));
+  confirmBox.appendChild(yes);
+  confirmBox.appendChild(no);
+
+  btn.addEventListener("click", () => {
+    btn.classList.add("hidden");
+    confirmBox.classList.remove("hidden");
+    yes.focus();
+  });
+  no.addEventListener("click", () => {
+    confirmBox.classList.add("hidden");
+    btn.classList.remove("hidden");
+  });
+  yes.addEventListener("click", () => withBusy("loader.deleting", yes, async () => {
+    try {
+      await api(`/api/groups/${group.id}`, { method: "DELETE" });
+      loadGroups();
+    } catch (e) {
+      wrap.appendChild(elem("div", "error-banner", t("error.prefix") + e.message));
+    }
+  }));
+
+  wrap.appendChild(btn);
+  wrap.appendChild(confirmBox);
+  return wrap;
+}
+
+// Pusta grupa ZOSTAJE — pytamy, zamiast kasować po cichu. `container` to WYMAGANY
+// widoczny element, obok którego wstawiamy pytanie — #groups-list bywa ukryty (tryb
+// "Wpisy" albo zupełnie inna zakładka), a niewidoczne przyciski zablokowałyby
+// nakładkę ładowania na zawsze. Brak awaryjnego fallbacku na #groups-list jest
+// celowy: przyszły wołający, który pominie `container`, ma dostać głośny błąd
+// zamiast po cichu odtworzyć to samo zawieszenie.
+function offerOrphanCleanup(groupId, rule, container) {
+  if (groupId === null || groupId === undefined) return Promise.resolve();
+  return new Promise((resolve) => {
+    const ask = elem("div", "orphan-ask");
+    ask.appendChild(elem("span", "", t("groups.orphaned").replace("{rule}", rule || "")));
+    const keep = elem("button", "btn-sm orphan-keep", t("groups.orphanKeep"));
+    const drop = elem("button", "btn-sm danger orphan-drop", t("groups.orphanDelete"));
+    keep.addEventListener("click", () => { ask.remove(); resolve(); });
+    drop.addEventListener("click", () => withBusy("loader.deleting", drop, async () => {
+      try {
+        await api(`/api/groups/${groupId}`, { method: "DELETE" });
+        ask.remove();
+      } catch (e) {
+        ask.appendChild(elem("div", "error-banner", t("error.prefix") + e.message));
+      } finally {
+        // ZAWSZE rozwiązujemy: nierozwiązana obietnica zawiesiłaby wołającego
+        // (i jego nakładkę) na zawsze, a nieudane usunięcie grupy to zwykły błąd.
+        resolve();
+      }
+    }));
+    ask.appendChild(keep);
+    ask.appendChild(drop);
+    container.prepend(ask);
+  });
+}
+
+$("#btn-group-assign").addEventListener("click", () =>
+  withBusy("loader.loading", $("#btn-group-assign"), async () => {
+    try {
+      const out = await api("/api/groups/assign?lang=" + LANG, { method: "POST" });
+      await loadGroups();
+      $("#groups-ungrouped").textContent = t("groups.assigned")
+        .replace("{assigned}", out.assigned)
+        .replace("{created}", out.created)
+        .replace("{unassigned}", out.unassigned);
+    } catch (e) {
+      showError("#groups-list", e.message);
+    }
+  }));
+
+$("#btn-group-regroup").addEventListener("click", () => {
+  if (!window.confirm(t("groups.regroupConfirm"))) return;
+  return withBusy("loader.loading", $("#btn-group-regroup"), async () => {
+    try {
+      await api("/api/groups/regroup?lang=" + LANG, { method: "POST" });
+      await loadGroups();
+    } catch (e) {
+      showError("#groups-list", e.message);
+    }
+  });
+});
+
+function setErrorsMode(mode) {
+  const groups = mode === "groups";
+  $("#errors-list").classList.toggle("hidden", groups);
+  $("#groups-pane").classList.toggle("hidden", !groups);
+  $("#errors-mode-items").classList.toggle("is-active", !groups);
+  $("#errors-mode-groups").classList.toggle("is-active", groups);
+  if (groups) loadGroups();
+}
+
+$("#errors-mode-items").addEventListener("click", () => setErrorsMode("items"));
+$("#errors-mode-groups").addEventListener("click", () => setErrorsMode("groups"));
+
 // --- Ćwicz błędy (tryb skupienia) ---------------------------------------------------
 
 function loadTips(exclude) {
   return withBusy("loader.loading", null, async () => {
     try {
-      const url = "/api/tips/focus?lang=" + LANG + (exclude ? "&exclude=" + exclude : "");
-      const data = await api(url);
-      renderGoal(data.progress);
-      setFocus(data.error);
+      const qs = `/api/tips/focus?lang=${LANG}&mode=${tipsMode}` +
+        (exclude ? `&exclude=${exclude}` : "");
+      const body = await api(qs);
+      if (tipsMode === "group") {
+        tipsGroup = body.group;
+        tipsError = null;
+        setFocusGroup(body.group);
+      } else {
+        tipsError = body.error;
+        tipsGroup = null;
+        setFocus(body.error);
+      }
+      renderGoal(body.progress);
     } catch (e) {
       showError("#tips-result", e.message);
     }
@@ -1066,7 +1375,10 @@ function setFocus(err) {
   $("#tips-exercise-area").classList.add("hidden");
   $("#tips-result").classList.add("hidden");
   $("#tips-generate").textContent = t("tips.generate");
+  // Karta wraca do wyglądu „błędnie → poprawnie" (patrz `setFocusGroup`).
+  $("#tips-focus").classList.toggle("is-group", false);
   if (!err) {
+    $("#tips-empty-text").textContent = t("tips.empty");
     $("#tips-focus").classList.add("hidden");
     $("#tips-empty").classList.remove("hidden");
     return;
@@ -1093,15 +1405,100 @@ function renderFocusFeedback(err) {
   box.appendChild(deleteErrorWidget(err.id, () => loadTips()));
 }
 
-/** Skok z „Moje błędy" do „Ćwicz błędy" z konkretnym błędem + od razu ćwiczenie. */
+/** Odpowiednik `setFocus` dla trybu grupowego — wypełnia te same sloty karty
+ *  `#tips-focus`, bez podmiany innerHTML (żeby nie zagnieździć .focus-card w sobie
+ *  i nie zgubić przycisków "Inny błąd" / "Ćwiczenie"). */
+function setFocusGroup(group) {
+  tipsGroup = group;
+  tipsExercise = null;
+  $("#tips-exercise-area").classList.add("hidden");
+  $("#tips-result").classList.add("hidden");
+  $("#tips-generate").textContent = t("tips.generate");
+  // Karta trzyma REGUŁĘ, a nie parę „błędnie → poprawnie": klasa zdejmuje ze slotu
+  // `.from` czerwień i przekreślenie, a ze slotu `.to` wyróżnienie na zielono.
+  $("#tips-focus").classList.toggle("is-group", true);
+  if (!group) {
+    // NIE „dziennik jest pusty" — błędów może być dwieście, brakuje tylko grup.
+    $("#tips-empty-text").textContent = t("groups.noneYet");
+    $("#tips-focus").classList.add("hidden");
+    $("#tips-empty").classList.remove("hidden");
+    return;
+  }
+  $("#tips-empty").classList.add("hidden");
+  $("#tips-topic").textContent = group.topic_label || topicLabel(group.topic);
+  // Grupa to reguła, nie para "błędnie → poprawnie": w polu docelowym pokazujemy,
+  // ile kontekstów ma grupa, a pusta grupa mówi o tym wprost.
+  $("#tips-from").textContent = group.rule;
+  $("#tips-to").textContent = group.member_count === 0
+    ? t("groups.emptyGroup")
+    : t("groups.members").replace("{n}", group.member_count);
+  $("#tips-why").textContent = group.explanation || "";
+  // Zastrzeżenia dotyczą wpisów w dzienniku, nie grup — slot zostaje pusty.
+  $("#tips-feedback").innerHTML = "";
+  $("#tips-focus").classList.remove("hidden");
+}
+
+/** Skok z „Moje błędy" do „Ćwicz błędy" z konkretnym błędem + od razu ćwiczenie.
+ *  Wymusza tryb pojedynczych błędów — inaczej mógłby zostać w trybie grupowym
+ *  z nieaktualną grupą, a "Ćwiczenie" wysłałoby zapytanie o tę starą grupę. */
 async function focusOnError(err) {
+  tipsMode = "error";
+  $("#tips-mode-errors").classList.add("is-active");
+  $("#tips-mode-groups").classList.remove("is-active");
   activateTab("tips");
+  tipsGroup = null;
   setFocus(err);
   await refreshProgress();
   $("#tips-generate").click();
 }
 
-$("#tips-new").addEventListener("click", () => loadTips(tipsError ? tipsError.id : undefined));
+/** Skok z widoku grup do „Ćwicz błędy" w trybie grupowym z konkretną grupą. */
+async function focusOnGroup(group) {
+  tipsMode = "group";
+  $("#tips-mode-errors").classList.remove("is-active");
+  $("#tips-mode-groups").classList.add("is-active");
+  activateTab("tips");
+  tipsGroup = group;
+  tipsError = null;
+  setFocusGroup(group);
+  await refreshProgress();
+}
+
+/** Przełącznik trybu ćwiczenia: pojedyncze błędy vs. grupy. Czyści stan drugiego
+ *  trybu, żeby nieaktualny błąd/grupa nie przeciekł do zapytań nowego trybu. */
+function setTipsMode(mode) {
+  tipsMode = mode;
+  tipsError = null;
+  tipsGroup = null;
+  $("#tips-mode-errors").classList.toggle("is-active", mode === "error");
+  $("#tips-mode-groups").classList.toggle("is-active", mode === "group");
+  loadTips();
+}
+
+$("#tips-mode-errors").addEventListener("click", () => setTipsMode("error"));
+$("#tips-mode-groups").addEventListener("click", () => setTipsMode("group"));
+
+/** Jednostka do WYGENEROWANIA ćwiczenia — czytana z bieżącego fokusu. */
+function tipsUnitBody() {
+  return tipsMode === "group" ? { group_id: tipsGroup && tipsGroup.id }
+                              : { error_id: tipsError && tipsError.id };
+}
+
+/** Jednostka do ZALICZENIA — brana z ĆWICZENIA, nie z bieżącego fokusu.
+ *  Zaliczamy tę jednostkę, dla której zadanie powstało: między wygenerowaniem
+ *  a sprawdzeniem fokus mógł się zmienić (przełącznik trybu zeruje go synchronicznie,
+ *  zanim loadTips zdąży się rozwiązać), a praca ucznia ma zostać policzona. */
+function tipsGradeBody(ex) {
+  return ex && ex._unit ? { ...ex._unit } : tipsUnitBody();
+}
+
+/** Id jednostki aktualnie na ekranie — do pominięcia przy losowaniu następnej. */
+function tipsCurrentId() {
+  const unit = tipsMode === "group" ? tipsGroup : tipsError;
+  return unit ? unit.id : undefined;
+}
+
+$("#tips-new").addEventListener("click", () => loadTips(tipsCurrentId()));
 
 $("#tips-goal-save").addEventListener("click", () =>
   withBusy("loader.loading", $("#tips-goal-save"), async () => {
@@ -1115,15 +1512,18 @@ $("#tips-goal-save").addEventListener("click", () =>
 
 $("#tips-generate").addEventListener("click", () =>
   withBusy("loader.generating", $("#tips-generate"), async () => {
-    if (!tipsError) return;
+    if (tipsMode === "group" ? !tipsGroup : !tipsError) return;
     tipsExercise = null;
+    // Czytamy jednostkę PRZED `await` — fokus mógłby się zmienić w trakcie oczekiwania
+    // na odpowiedź, a zaliczyć trzeba tę jednostkę, dla której zadanie faktycznie powstało.
+    const unit = tipsUnitBody();
     try {
       const ex = await api("/api/tips/exercise", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ error_id: tipsError.id, lang: LANG }),
+        body: JSON.stringify({ ...unit, lang: LANG }),
       });
-      // Zapamiętujemy błąd źródłowy — do celu zaliczamy TEN błąd, nie bieżący fokus.
-      ex.error_id = tipsError.id;
+      // Zapamiętujemy jednostkę źródłową — do celu zaliczamy TĘ jednostkę, nie bieżący fokus.
+      ex._unit = unit;
       tipsExercise = ex;
       $("#tips-result").classList.add("hidden");
       renderExerciseInto(TIPS_UI, ex);
@@ -1132,9 +1532,13 @@ $("#tips-generate").addEventListener("click", () =>
 
 $("#tips-grade").addEventListener("click", async () => {
   if (!tipsExercise) return;
+  // Migawka PRZED `await` — globalny `tipsExercise` mógłby się zmienić w trakcie
+  // oceniania (np. przełącznik trybu kończy się dopiero teraz), a zaliczyć trzeba
+  // dokładnie to ćwiczenie, które właśnie oceniamy, nie to, co jest globalnie aktualne.
+  const ex = tipsExercise;
   let result;
   try {
-    result = await gradeExercise(TIPS_UI, tipsExercise);
+    result = await gradeExercise(TIPS_UI, ex);
   } catch (e) {
     showError("#tips-result", e.message);
     return;
@@ -1151,9 +1555,7 @@ $("#tips-grade").addEventListener("click", async () => {
   try {
     const progress = await api("/api/tips/complete", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        error_id: tipsExercise.error_id, correct_items: correct, total_items: total,
-      }),
+      body: JSON.stringify({ ...tipsGradeBody(ex), correct_items: correct, total_items: total }),
     });
     renderGoal(progress);
   } catch (_) { /* ocena jest ważniejsza niż licznik */ }

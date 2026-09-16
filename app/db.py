@@ -116,6 +116,38 @@ CREATE TABLE IF NOT EXISTS disputes (
 );
 
 CREATE INDEX IF NOT EXISTS idx_disputes_created ON disputes(created_at);
+
+-- Grupy błędów: jedna reguła wraz z kontekstami, w których została złamana.
+-- Grupa jest dodatkowym widokiem nad dziennikiem — nie zastępuje wpisów i niczego nie kasuje.
+CREATE TABLE IF NOT EXISTS error_groups (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at  TEXT NOT NULL,
+    updated_at  TEXT NOT NULL,
+    rule        TEXT NOT NULL,
+    explanation TEXT NOT NULL,
+    topic       TEXT NOT NULL
+);
+
+-- Zaliczenia grup są w osobnych tabelach zamiast w `reviews`/`drill_scores`, bo
+-- `reviews.error_id` jest NOT NULL, a zdjęcie tego w SQLite wymaga przebudowy tabeli.
+-- Na żywej bazie z realną historią serii to ryzyko bez pokrycia.
+CREATE TABLE IF NOT EXISTS group_reviews (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    group_id   INTEGER NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_group_reviews_created ON group_reviews(created_at);
+
+CREATE TABLE IF NOT EXISTS group_drill_scores (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    group_id      INTEGER NOT NULL,
+    created_at    TEXT NOT NULL,
+    correct_items INTEGER NOT NULL,
+    total_items   INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_group_drill ON group_drill_scores(group_id, created_at);
 """
 
 
@@ -182,6 +214,12 @@ def _migrate(conn: sqlite3.Connection) -> None:
     if done is None:
         conn.execute("UPDATE exercises SET served_at = created_at WHERE served_at IS NULL")
         conn.execute("INSERT INTO settings (key, value) VALUES ('served_at_backfilled', '1')")
+
+    err_cols = {r["name"] for r in conn.execute("PRAGMA table_info(errors)")}
+    if "group_id" not in err_cols:
+        # NULL = wpis nieprzypisany (przyszedł po ostatnim przebiegu grupowania).
+        conn.execute("ALTER TABLE errors ADD COLUMN group_id INTEGER")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_errors_group ON errors(group_id)")
     conn.commit()
 
 
@@ -380,10 +418,15 @@ def drill_correct_today(conn: sqlite3.Connection, error_id: int) -> int:
 
 @_synchronized
 def reviews_done_today(conn: sqlite3.Connection) -> int:
-    """Liczba różnych błędów przerobionych dzisiaj (postęp dziennego celu)."""
+    """Ile różnych jednostek przerobiono dziś — wpisów ORAZ grup.
+
+    Grupa liczy się jak jeden błąd, więc oba źródła po prostu się sumują."""
     row = conn.execute(
-        "SELECT COUNT(DISTINCT error_id) AS n FROM reviews WHERE substr(created_at, 1, 10) = ?",
-        (_today(),),
+        "SELECT (SELECT COUNT(DISTINCT error_id) FROM reviews "
+        "        WHERE substr(created_at, 1, 10) = ?) "
+        "     + (SELECT COUNT(DISTINCT group_id) FROM group_reviews "
+        "        WHERE substr(created_at, 1, 10) = ?) AS n",
+        (_today(), _today()),
     ).fetchone()
     return int(row["n"])
 
@@ -461,12 +504,18 @@ def dispute_stats(conn: sqlite3.Connection) -> dict:
 
 @_synchronized
 def reviews_per_day(conn: sqlite3.Connection) -> dict[str, int]:
-    """Mapa 'YYYY-MM-DD' -> liczba różnych błędów przerobionych tego dnia.
+    """Mapa 'YYYY-MM-DD' -> liczba różnych jednostek przerobionych tego dnia.
 
-    Materiał dla `streak.state()` — sama reguła serii siedzi w `app/streak.py`."""
+    Sumuje wpisy i grupy. Materiał dla `streak.state()` — sama reguła serii siedzi
+    w `app/streak.py` i nie wie nic o tym podziale."""
     rows = conn.execute(
-        "SELECT substr(created_at, 1, 10) AS day, COUNT(DISTINCT error_id) AS n "
-        "FROM reviews GROUP BY day"
+        "SELECT day, SUM(n) AS n FROM ("
+        "  SELECT substr(created_at, 1, 10) AS day, COUNT(DISTINCT error_id) AS n "
+        "  FROM reviews GROUP BY day "
+        "  UNION ALL "
+        "  SELECT substr(created_at, 1, 10) AS day, COUNT(DISTINCT group_id) AS n "
+        "  FROM group_reviews GROUP BY day"
+        ") GROUP BY day"
     ).fetchall()
     return {r["day"]: int(r["n"]) for r in rows}
 
@@ -573,3 +622,170 @@ def learning_stats(conn: sqlite3.Connection) -> dict:
         "reviews_total": int(reviews_total),
         "errors_logged": int(errors_logged),
     }
+
+
+# --- Grupy błędów -------------------------------------------------------------
+
+@_synchronized
+def insert_group(conn: sqlite3.Connection, *, rule: str, explanation: str, topic: str) -> int:
+    now = _now()
+    cur = conn.execute(
+        "INSERT INTO error_groups (created_at, updated_at, rule, explanation, topic) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (now, now, rule, explanation, topic),
+    )
+    conn.commit()
+    return int(cur.lastrowid)
+
+
+@_synchronized
+def get_group(conn: sqlite3.Connection, group_id: int) -> Optional[dict]:
+    row = conn.execute("SELECT * FROM error_groups WHERE id = ?", (group_id,)).fetchone()
+    return dict(row) if row else None
+
+
+@_synchronized
+def list_groups(conn: sqlite3.Connection) -> list[dict]:
+    """Grupy z licznikiem wpisów. Pusta grupa (`member_count = 0`) też jest zwracana —
+    zostaje w widoku, dopóki uczeń sam jej nie usunie."""
+    rows = conn.execute(
+        "SELECT g.*, (SELECT COUNT(*) FROM errors e WHERE e.group_id = g.id) AS member_count "
+        "FROM error_groups g ORDER BY g.updated_at DESC, g.id DESC"
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+@_synchronized
+def update_group(conn: sqlite3.Connection, group_id: int, *, rule: str, explanation: str) -> bool:
+    cur = conn.execute(
+        "UPDATE error_groups SET rule = ?, explanation = ?, updated_at = ? WHERE id = ?",
+        (rule, explanation, _now(), group_id),
+    )
+    conn.commit()
+    return cur.rowcount > 0
+
+
+@_synchronized
+def delete_group(conn: sqlite3.Connection, group_id: int) -> bool:
+    """Usuwa grupę; jej wpisy wracają do puli nieprzypisanych. Zaliczenia w
+    `group_reviews` zostają — usunięcie nie cofa zdobytego celu ani serii."""
+    conn.execute("UPDATE errors SET group_id = NULL WHERE group_id = ?", (group_id,))
+    cur = conn.execute("DELETE FROM error_groups WHERE id = ?", (group_id,))
+    conn.commit()
+    return cur.rowcount > 0
+
+
+@_synchronized
+def set_error_group(conn: sqlite3.Connection, error_id: int, group_id: Optional[int]) -> bool:
+    cur = conn.execute("UPDATE errors SET group_id = ? WHERE id = ?", (group_id, error_id))
+    conn.commit()
+    return cur.rowcount > 0
+
+
+@_synchronized
+def group_of_error(conn: sqlite3.Connection, error_id: int) -> Optional[int]:
+    row = conn.execute("SELECT group_id FROM errors WHERE id = ?", (error_id,)).fetchone()
+    if row is None or row["group_id"] is None:
+        return None
+    return int(row["group_id"])
+
+
+@_synchronized
+def group_member_count(conn: sqlite3.Connection, group_id: int) -> int:
+    row = conn.execute(
+        "SELECT COUNT(*) AS n FROM errors WHERE group_id = ?", (group_id,)
+    ).fetchone()
+    return int(row["n"])
+
+
+@_synchronized
+def list_group_members(conn: sqlite3.Connection, group_id: int) -> list[dict]:
+    rows = conn.execute(
+        "SELECT * FROM errors WHERE group_id = ? ORDER BY created_at DESC, id DESC",
+        (group_id,),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+@_synchronized
+def list_ungrouped_errors(conn: sqlite3.Connection, limit: int = 2000) -> list[dict]:
+    rows = conn.execute(
+        "SELECT * FROM errors WHERE group_id IS NULL ORDER BY id LIMIT ?", (limit,)
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+@_synchronized
+def count_ungrouped_errors(conn: sqlite3.Connection) -> int:
+    """Sama LICZBA nieprzypisanych wpisów. Widok grup potrzebuje liczby, nie rekordów,
+    a `list_ungrouped_errors` ściągnęłoby dla niej do 2000 wierszy."""
+    row = conn.execute(
+        "SELECT COUNT(*) AS n FROM errors WHERE group_id IS NULL"
+    ).fetchone()
+    return int(row["n"])
+
+
+@_synchronized
+def clear_all_groups(conn: sqlite3.Connection) -> None:
+    """Czyści grupy i przypisania przed pełnym przegrupowaniem. Zaliczenia zostają."""
+    conn.execute("UPDATE errors SET group_id = NULL")
+    conn.execute("DELETE FROM error_groups")
+    conn.commit()
+
+
+@_synchronized
+def group_reviewed_today(conn: sqlite3.Connection, group_id: int) -> bool:
+    row = conn.execute(
+        "SELECT 1 FROM group_reviews WHERE group_id = ? AND substr(created_at, 1, 10) = ?",
+        (group_id, _today()),
+    ).fetchone()
+    return row is not None
+
+
+@_synchronized
+def insert_group_review(conn: sqlite3.Connection, group_id: int) -> None:
+    """Idempotentne w obrębie dnia — dokładnie jak `insert_review` dla pojedynczego błędu."""
+    if group_reviewed_today(conn, group_id):
+        return
+    conn.execute("INSERT INTO group_reviews (group_id, created_at) VALUES (?, ?)",
+                 (group_id, _now()))
+    conn.commit()
+
+
+@_synchronized
+def insert_group_drill_score(conn: sqlite3.Connection, *, group_id: int,
+                             correct_items: int, total_items: int) -> None:
+    conn.execute(
+        "INSERT INTO group_drill_scores (group_id, created_at, correct_items, total_items) "
+        "VALUES (?, ?, ?, ?)",
+        (group_id, _now(), correct_items, total_items),
+    )
+    conn.commit()
+
+
+@_synchronized
+def group_drill_correct_today(conn: sqlite3.Connection, group_id: int) -> int:
+    row = conn.execute(
+        "SELECT COALESCE(SUM(correct_items), 0) AS n FROM group_drill_scores "
+        "WHERE group_id = ? AND substr(created_at, 1, 10) = ?",
+        (group_id, _today()),
+    ).fetchone()
+    return int(row["n"])
+
+
+@_synchronized
+def group_topic_counts(conn: sqlite3.Connection) -> list[dict]:
+    """Materiał dla `srs.choose_topic` w trybie grupowym: ile grup na temat i jak świeże.
+
+    `last_seen` to data NAJNOWSZEGO WPISU w grupach tego tematu, a nie `updated_at`
+    samej grupy: po przegrupowaniu wszystkie grupy mają ten sam znacznik i świeżość
+    spłaszczyłaby się do stałej dokładnie wtedy, gdy ma najwięcej do powiedzenia.
+    Temat złożony z samych pustych grup ma `last_seen` NULL — `srs` traktuje go
+    wtedy jak najstarszy, czyli bez premii za świeżość."""
+    rows = conn.execute(
+        "SELECT g.topic AS topic, COUNT(*) AS count, "
+        "       MAX((SELECT MAX(e.created_at) FROM errors e WHERE e.group_id = g.id)) "
+        "         AS last_seen "
+        "FROM error_groups g GROUP BY g.topic ORDER BY count DESC"
+    ).fetchall()
+    return [dict(r) for r in rows]

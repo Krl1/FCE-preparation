@@ -1,3 +1,4 @@
+import sqlite3
 import threading
 
 import pytest
@@ -206,3 +207,226 @@ def test_concurrent_access_does_not_lose_writes(conn):
 
     assert failures == []
     assert len(db.list_errors(conn, limit=10_000)) == threads * ops
+
+
+# --- Grupy błędów -------------------------------------------------------------
+
+def _err(conn, topic="prepositions", student="depends from", correct="depends on"):
+    return db.insert_error(conn, source="test", exercise_type="imported", topic=topic,
+                           student_text=student, correct_text=correct,
+                           explanation="kalka z polskiego", severity="minor")
+
+
+def test_insert_and_get_group(conn):
+    gid = db.insert_group(conn, rule="depend + on", explanation="zawsze 'on'",
+                          topic="prepositions")
+    g = db.get_group(conn, gid)
+    assert g["rule"] == "depend + on"
+    assert g["topic"] == "prepositions"
+    assert g["created_at"] and g["updated_at"]
+
+
+def test_get_missing_group_returns_none(conn):
+    assert db.get_group(conn, 999) is None
+
+
+def test_list_groups_carries_member_count(conn):
+    gid = db.insert_group(conn, rule="r", explanation="e", topic="articles")
+    db.set_error_group(conn, _err(conn), gid)
+    db.set_error_group(conn, _err(conn), gid)
+    rows = db.list_groups(conn)
+    assert len(rows) == 1
+    assert rows[0]["member_count"] == 2
+
+
+def test_empty_group_is_listed_with_zero_members(conn):
+    db.insert_group(conn, rule="r", explanation="e", topic="articles")
+    assert db.list_groups(conn)[0]["member_count"] == 0
+
+
+def test_update_group_changes_rule_and_bumps_updated_at(conn):
+    gid = db.insert_group(conn, rule="stara", explanation="e", topic="articles")
+    before = db.get_group(conn, gid)["updated_at"]
+    assert db.update_group(conn, gid, rule="nowa", explanation="e2") is True
+    after = db.get_group(conn, gid)
+    assert after["rule"] == "nowa"
+    assert after["explanation"] == "e2"
+    assert after["updated_at"] >= before
+
+
+def test_update_missing_group_returns_false(conn):
+    assert db.update_group(conn, 999, rule="x", explanation="y") is False
+
+
+def test_delete_group_returns_members_to_ungrouped(conn):
+    gid = db.insert_group(conn, rule="r", explanation="e", topic="articles")
+    eid = _err(conn)
+    db.set_error_group(conn, eid, gid)
+    assert db.delete_group(conn, gid) is True
+    assert db.get_group(conn, gid) is None
+    assert db.group_of_error(conn, eid) is None
+    assert [e["id"] for e in db.list_ungrouped_errors(conn)] == [eid]
+
+
+def test_group_reviews_survive_group_deletion(conn):
+    """Usunięcie grupy nie cofa zdobytego celu — tak samo jak usunięcie błędu."""
+    gid = db.insert_group(conn, rule="r", explanation="e", topic="articles")
+    db.insert_group_review(conn, gid)
+    assert db.reviews_done_today(conn) == 1
+    db.delete_group(conn, gid)
+    assert db.reviews_done_today(conn) == 1
+
+
+def test_deleting_last_member_keeps_the_group(conn):
+    """Pusta grupa zostaje — nic nie znika samo, o usunięciu decyduje uczeń."""
+    gid = db.insert_group(conn, rule="r", explanation="e", topic="articles")
+    eid = _err(conn)
+    db.set_error_group(conn, eid, gid)
+    db.delete_error(conn, eid)
+    assert db.get_group(conn, gid) is not None
+    assert db.group_member_count(conn, gid) == 0
+
+
+def test_set_error_group_to_none_detaches(conn):
+    gid = db.insert_group(conn, rule="r", explanation="e", topic="articles")
+    eid = _err(conn)
+    db.set_error_group(conn, eid, gid)
+    assert db.set_error_group(conn, eid, None) is True
+    assert db.group_of_error(conn, eid) is None
+    assert db.group_member_count(conn, gid) == 0
+
+
+def test_clear_all_groups_removes_groups_and_assignments(conn):
+    gid = db.insert_group(conn, rule="r", explanation="e", topic="articles")
+    eid = _err(conn)
+    db.set_error_group(conn, eid, gid)
+    db.clear_all_groups(conn)
+    assert db.list_groups(conn) == []
+    assert db.group_of_error(conn, eid) is None
+
+
+def test_list_ungrouped_skips_assigned_errors(conn):
+    gid = db.insert_group(conn, rule="r", explanation="e", topic="articles")
+    assigned = _err(conn)
+    loose = _err(conn)
+    db.set_error_group(conn, assigned, gid)
+    assert [e["id"] for e in db.list_ungrouped_errors(conn)] == [loose]
+
+
+def test_group_drill_and_review_count_toward_the_day(conn):
+    gid = db.insert_group(conn, rule="r", explanation="e", topic="articles")
+    db.insert_group_drill_score(conn, group_id=gid, correct_items=3, total_items=5)
+    db.insert_group_drill_score(conn, group_id=gid, correct_items=2, total_items=5)
+    assert db.group_drill_correct_today(conn, gid) == 5
+    db.insert_group_review(conn, gid)
+    db.insert_group_review(conn, gid)  # idempotentne w obrębie dnia
+    assert db.reviews_done_today(conn) == 1
+
+
+def test_reviews_done_today_sums_errors_and_groups(conn):
+    eid = _err(conn)
+    gid = db.insert_group(conn, rule="r", explanation="e", topic="articles")
+    db.insert_review(conn, eid)
+    db.insert_group_review(conn, gid)
+    assert db.reviews_done_today(conn) == 2
+
+
+def test_reviews_per_day_sums_both_sources(conn):
+    eid = _err(conn)
+    gid = db.insert_group(conn, rule="r", explanation="e", topic="articles")
+    db.insert_review(conn, eid)
+    db.insert_group_review(conn, gid)
+    per_day = db.reviews_per_day(conn)
+    assert sum(per_day.values()) == 2
+
+
+def test_group_topic_counts_feeds_srs(conn):
+    gid = db.insert_group(conn, rule="r", explanation="e", topic="prepositions")
+    db.set_error_group(conn, _err(conn), gid)
+    rows = db.group_topic_counts(conn)
+    assert rows[0]["topic"] == "prepositions"
+    assert rows[0]["count"] == 1
+    assert rows[0]["last_seen"]
+
+
+def test_group_topic_counts_freshness_comes_from_members(conn):
+    """`last_seen` ma mówić o wpisach, nie o grupie.
+
+    Po przegrupowaniu wszystkie grupy dostają ten sam `updated_at`, więc świeżość
+    liczona z grupy byłaby stałą dokładnie wtedy, gdy powinna różnicować."""
+    gid = db.insert_group(conn, rule="r", explanation="e", topic="prepositions")
+    eid = _err(conn)
+    db.set_error_group(conn, eid, gid)
+    # Grupa „ruszona" długo po wpisie — świeżość i tak ma pochodzić od wpisu.
+    conn.execute("UPDATE error_groups SET updated_at = ? WHERE id = ?",
+                 ("2099-01-01T00:00:00+00:00", gid))
+    conn.commit()
+    member_created = db.get_error(conn, eid)["created_at"]
+    assert db.group_topic_counts(conn)[0]["last_seen"] == member_created
+
+
+def test_group_topic_counts_of_empty_groups_have_no_freshness(conn):
+    db.insert_group(conn, rule="r", explanation="e", topic="prepositions")
+    assert db.group_topic_counts(conn)[0]["last_seen"] is None
+
+
+def test_count_ungrouped_errors_matches_the_list(conn):
+    gid = db.insert_group(conn, rule="r", explanation="e", topic="articles")
+    db.set_error_group(conn, _err(conn), gid)
+    _err(conn)
+    _err(conn)
+    assert db.count_ungrouped_errors(conn) == 2
+    assert db.count_ungrouped_errors(conn) == len(db.list_ungrouped_errors(conn))
+
+
+def test_new_group_after_clearing_does_not_inherit_drill_score(conn):
+    """Nowa grupa zaczyna od zera, choćby poprzednia była dziś przerobiona do celu.
+
+    `group_drill_scores` przeżywają `clear_all_groups` (praca ma zostać policzona),
+    więc gdyby identyfikatory grup były wznawiane, świeża grupa startowałaby
+    z cudzym postępem i zaliczałaby się bez ani jednego ćwiczenia."""
+    old_gid = db.insert_group(conn, rule="stara", explanation="e", topic="articles")
+    db.insert_group_drill_score(conn, group_id=old_gid, correct_items=5, total_items=5)
+    assert db.group_drill_correct_today(conn, old_gid) == 5
+
+    db.clear_all_groups(conn)
+    new_gid = db.insert_group(conn, rule="nowa", explanation="e", topic="articles")
+    assert new_gid != old_gid
+    assert db.group_drill_correct_today(conn, new_gid) == 0
+
+
+def test_migration_adds_group_id_to_legacy_errors_table(tmp_path):
+    """Migracja na ŻYWEJ bazie: kolumna dochodzi, a istniejące wpisy zostają nietknięte.
+
+    To jedyne miejsce, w którym błąd niszczy dane nie do odzyskania z gita — sprawdzenie
+    ręczne nie wystarcza, bo nie chroni przed regresją."""
+    path = tmp_path / "legacy.db"
+    legacy = sqlite3.connect(path)
+    legacy.executescript(
+        "CREATE TABLE errors ("
+        " id INTEGER PRIMARY KEY AUTOINCREMENT, created_at TEXT NOT NULL,"
+        " source TEXT NOT NULL, exercise_type TEXT NOT NULL, topic TEXT NOT NULL,"
+        " student_text TEXT NOT NULL, correct_text TEXT NOT NULL,"
+        " explanation TEXT NOT NULL, severity TEXT NOT NULL DEFAULT 'minor');"
+    )
+    legacy.execute(
+        "INSERT INTO errors (created_at, source, exercise_type, topic, student_text,"
+        " correct_text, explanation, severity) VALUES"
+        " ('2026-01-01T10:00:00', 'import', 'imported', 'prepositions',"
+        "  'depends from', 'depends on', 'kalka', 'minor')"
+    )
+    legacy.commit()
+    legacy.close()
+
+    conn = db.get_connection(path)
+    try:
+        cols = {r["name"] for r in conn.execute("PRAGMA table_info(errors)")}
+        assert "group_id" in cols
+        rows = list(conn.execute("SELECT student_text, group_id FROM errors"))
+        assert len(rows) == 1
+        assert rows[0]["student_text"] == "depends from"
+        assert rows[0]["group_id"] is None
+        # Ponowne otwarcie nie może próbować dodać kolumny drugi raz.
+        db.get_connection(path).close()
+    finally:
+        conn.close()

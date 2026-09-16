@@ -23,6 +23,8 @@ const htmlIds = new Set([...html.matchAll(/id="([^"]+)"/g)].map((m) => m[1]));
 // Pola odpowiedzi są tworzone dynamicznie, więc nie ma ich w HTML.
 const DYNAMIC_IDS = /^(practice|tips)-answer(-\d+)?$/;
 
+const VIEWS = ["practice", "tips", "external", "errors", "stats"];
+
 const handlers = {};        // "klucz|zdarzenie" -> [fn]
 const nodes = new Map();    // klucz -> atrapa elementu
 const created = [];         // elementy tworzone dynamicznie (przyciski zastrzeżeń itp.)
@@ -32,17 +34,36 @@ const failures = [];
 function makeNode(key) {
   if (nodes.has(key)) return nodes.get(key);
   const children = [];
+  // Klasy są prawdziwym zbiorem, a `className` go przepisuje — dzięki temu warunki
+  // `classList.contains(...)` w aplikacji (która zakładka jest aktywna, czy panel
+  // grup jest schowany, czy nakładka ładowania zniknęła) znaczą w teście to samo,
+  // co w przeglądarce. Węzły ze statycznego HTML dostają klasy startowe niżej.
+  const classes = new Set();
   const node = {
-    __key: key,
+    __key: key, __classes: classes,
     dataset: {}, style: {}, children,
-    className: "", textContent: "", value: key.includes("type") ? "uoe_part1_mcq_cloze" : "",
+    textContent: "", value: key.includes("type") ? "uoe_part1_mcq_cloze" : "",
     selectedIndex: 0, disabled: false, rows: 0, placeholder: "", type: "",
     classList: {
-      add() {}, remove() {}, toggle() {},
-      contains: () => key.includes("view-practice"),
+      add(...cls) { cls.forEach((c) => classes.add(c)); },
+      remove(...cls) { cls.forEach((c) => classes.delete(c)); },
+      toggle(c, force) {
+        const on = force === undefined ? !classes.has(c) : Boolean(force);
+        if (on) classes.add(c); else classes.delete(c);
+        return on;
+      },
+      contains: (c) => classes.has(c),
     },
     set innerHTML(_v) {}, get innerHTML() { return ""; },
     appendChild(c) { children.push(c); return c; },
+    // `insertBefore` jest realne: bez niego kafel grupy wywalał się w połowie budowy,
+    // a błąd znikał w `catch` ładowania listy — czyli widok grup nie był naprawdę testowany.
+    insertBefore(c, ref) {
+      const at = ref ? children.indexOf(ref) : -1;
+      if (at >= 0) children.splice(at, 0, c); else children.push(c);
+      return c;
+    },
+    get firstChild() { return children.length ? children[0] : null; },
     prepend() {}, remove() {}, focus() {},
     click() { (handlers[key + "|click"] || []).forEach((fn) => fn({ preventDefault() {} })); },
     setAttribute() {}, getAttribute: () => null,
@@ -55,6 +76,15 @@ function makeNode(key) {
   // Rejestrujemy je wtedy pod selektorem `#id`, żeby `querySelector` zwracał TEN sam
   // obiekt — inaczej test nie mógłby wpisać do nich wartości i cicho sprawdzałby
   // wyłącznie ścieżkę „brak odpowiedzi".
+  let classNameValue = "";
+  Object.defineProperty(node, "className", {
+    get: () => classNameValue,
+    set(value) {
+      classNameValue = String(value ?? "");
+      classes.clear();
+      classNameValue.split(/\s+/).filter(Boolean).forEach((c) => classes.add(c));
+    },
+  });
   let elementId = "";
   Object.defineProperty(node, "id", {
     get: () => elementId,
@@ -88,9 +118,12 @@ global.document = {
   },
   querySelectorAll(sel) {
     if (sel === ".tab") {
-      return ["practice", "tips", "external", "errors", "stats"].map((v) => {
+      return VIEWS.map((v) => {
         const n = makeNode(".tab:" + v); n.dataset.view = v; return n;
       });
+    }
+    if (sel === ".view") {
+      return VIEWS.map((v) => makeNode("#view-" + v));
     }
     if (sel === ".lang") {
       return ["pl", "en"].map((l) => {
@@ -100,6 +133,14 @@ global.document = {
     return [];
   },
 };
+// Klasy startowe z HTML: bez nich „schowany" panel byłby w atrapie widoczny,
+// a żadna zakładka nie byłaby aktywna.
+for (const tag of html.match(/<[a-zA-Z][^>]*>/g) || []) {
+  const id = /\sid="([^"]+)"/.exec(tag);
+  const cls = /\sclass="([^"]+)"/.exec(tag);
+  if (id && cls) makeNode("#" + id[1]).className = cls[1];
+}
+
 global.localStorage = { getItem: () => "pl", setItem() {} };
 global.window = global;
 
@@ -182,6 +223,10 @@ const routes = {
   "/api/tips/focus": {
     error: { id: 7, topic: "collocations", topic_label: "Kolokacje", student_text: "x",
              correct_text: "y", explanation: "z" },
+    // Atrapa nie czyta `mode` z zapytania (routing tnie na "?"), więc `group` jest
+    // obecne zawsze — w trybie błędów `loadTips` i tak go ignoruje.
+    group: { id: 1, rule: "depend + on", explanation: "e", topic: "prepositions",
+             topic_label: "Przyimki", member_count: 2 },
     progress: { done: 1, goal: 5, streak: 2, required_today: 5, overdue_days: 0,
                at_risk: false, drill: { correct: 0, target: 5 } },
   },
@@ -220,12 +265,27 @@ const routes = {
   "POST /api/errors": { id: 42, topic: "collocations", topic_label: "Kolokacje" },
   "/api/errors/1": { deleted: 1 },   // ręczne usunięcie wpisu z dziennika (DELETE)
   "/api/errors/7": { deleted: 7 },   // ręczne usunięcie błędu w „Ćwicz błędy"
+  "/api/groups": { groups: [{ id: 1, rule: "depend + on", explanation: "e",
+                              topic: "prepositions", topic_label: "Przyimki",
+                              member_count: 2 }], ungrouped: 3 },
+  "/api/groups/1/members": [
+    { id: 11, topic: "collocations", topic_label: "Kolokacje", student_text: "depends from",
+      correct_text: "depends on", explanation: "kalka z polskiego", severity: "minor" },
+  ],
+  // Odpięcie ostatniego wpisu osieraca grupę — odpowiedź niesie też nazwę reguły.
+  "/api/errors/11/group": { error_id: 11, group_id: null, emptied_group_id: 1,
+                            emptied_group_rule: "depend + on" },
+  "/api/groups/assign": { assigned: 1, created: 1, unassigned: 0 },
+  "/api/groups/regroup": { assigned: 0, created: 1, unassigned: 0 },
 };
 
 const calls = [];
 global.fetch = async (url, options) => {
   const method = (options && options.method) || "GET";
-  calls.push(method + " " + url);
+  const body = options && options.body;
+  // Doklejamy ciało żądania (jeśli jest) — potrzebne do sprawdzenia, JAKĄ jednostkę
+  // (group_id/error_id) wysłało zaliczenie, nie tylko na jaką ścieżkę.
+  calls.push(method + " " + url + (body ? " " + body : ""));
   const p = url.split("?")[0];
   // Klucz „METODA ścieżka" ma pierwszeństwo — POST /api/errors zwraca coś innego niż GET.
   const key = [method + " " + p, p].find((k) => k in routes);
@@ -242,6 +302,8 @@ const settle = () => new Promise((r) => setTimeout(r, 15));
 
 const nodeText = (key) => String((nodes.get(key) || {}).textContent ?? "");
 
+const hasClass = (key, cls) => Boolean(nodes.get(key) && nodes.get(key).__classes.has(cls));
+
 const fire = async (key, ev = "click") => {
   const fns = handlers[key + "|" + ev] || [];
   if (!fns.length) { failures.push("brak handlera dla " + key); return; }
@@ -256,6 +318,18 @@ const fireByClass = async (cls, nth = 0) => {
   if (!fns.length) { failures.push("brak handlera na " + cls); return false; }
   for (const fn of fns) await fn({ preventDefault() {} });
   return true;
+};
+
+/** Klika element dynamiczny, uruchamiając TYLKO najnowszy handler i NIE czekając na
+ *  jego zakończenie. Atrapy węzłów są współdzielone (klucz zależy od pozycji w `created`,
+ *  a scenariusze zerują tę listę), więc na jednym węźle leżą też domknięcia z poprzednich
+ *  renderów — a handler, który czeka na odpowiedź użytkownika, zablokowałby `await`. */
+const clickLatestByClass = (cls, nth = 0) => {
+  const hits = created.filter((n) => String(n.className || "").includes(cls));
+  if (!hits[nth]) { failures.push("brak elementu o klasie " + cls); return Promise.resolve(); }
+  const fns = handlers[hits[nth].__key + "|click"] || [];
+  if (!fns.length) { failures.push("brak handlera na " + cls); return Promise.resolve(); }
+  return Promise.resolve(fns[fns.length - 1]({ preventDefault() {} }));
 };
 
 const setInput = (id, value) => {
@@ -409,6 +483,39 @@ const setInput = (id, value) => {
       await fireByClass("delete-yes"); await settle();
       if (!calls.includes("DELETE /api/errors/1")) failures.push("brak wywołania usunięcia błędu");
     }],
+    ["usunięcie ostatniego wpisu grupy → pytanie o osieroconą grupę", async () => {
+      created.length = 0;
+      routes["/api/errors/1"] = { deleted: 1, emptied_group_id: 1,
+                                  emptied_group_rule: "depend + on" };
+      await fire("#btn-refresh-errors"); await settle();
+      await clickLatestByClass("delete-btn");
+      // Handler „Tak, usuń" czeka na odpowiedź o osieroconej grupie, więc NIE czekamy
+      // na jego zakończenie — dokładnie jak przeglądarka, która wraca do pętli zdarzeń.
+      const pending = clickLatestByClass("delete-yes");
+      await settle();
+
+      if (!created.some((n) => String(n.className || "") === "orphan-ask")) {
+        failures.push("brak pytania o osieroconą grupę po usunięciu ostatniego wpisu");
+      }
+      // Sedno regresji: pytanie musi paść PO wyjściu z `withBusy`. Nakładka ładowania
+      // jest `position: fixed; inset: 0` — gdyby jeszcze wisiała, ani „Zostaw", ani
+      // „Usuń grupę" nie dałyby się kliknąć myszą i aplikacja stałaby na „Usuwam…".
+      if (!hasClass("#loader", "hidden")) {
+        failures.push("nakładka ładowania wisi nad pytaniem o osieroconą grupę");
+      }
+
+      const before = calls.length;
+      await clickLatestByClass("orphan-keep");   // „Zostaw” — pusta grupa ZOSTAJE
+      await pending;
+      await settle();
+      if (calls.slice(before).some((c) => c.startsWith("DELETE /api/groups/"))) {
+        failures.push("„Zostaw\" usunęło grupę");
+      }
+      if (!hasClass("#loader", "hidden")) {
+        failures.push("nakładka ładowania została po odpowiedzi na pytanie o grupę");
+      }
+      routes["/api/errors/1"] = { deleted: 1 };
+    }],
     ["usunięcie ćwiczonego błędu (Ćwicz błędy)", async () => {
       created.length = 0;
       await fire(".tab:tips"); await settle();   // setFocus() buduje panel od nowa
@@ -420,6 +527,156 @@ const setInput = (id, value) => {
       await fire(".tab:tips"); await settle();
       await fireByClass("dispute-btn");
       await fireByClass("dispute-send"); await settle();
+    }],
+    ["przełączniki trybu: grupy błędów (Moje błędy) i grupy ćwiczeń (Ćwicz błędy)", async () => {
+      await fire("#errors-mode-groups"); await settle();
+      await fire("#errors-mode-items"); await settle();
+
+      await fire("#tips-mode-groups"); await settle();
+      let before = calls.length;
+      await fire("#tips-new"); await settle();   // „Inny błąd" w trybie grupowym
+      const groupCall = calls.slice(before).find((c) => c.startsWith("GET /api/tips/focus"));
+      if (!groupCall || !groupCall.includes("mode=group") || !groupCall.includes("exclude=1")) {
+        failures.push("Inny błąd (tryb grupowy) nie pominął bieżącej grupy: " +
+          (groupCall || "brak żądania"));
+      }
+
+      await fire("#tips-mode-errors"); await settle();
+      before = calls.length;
+      await fire("#tips-new"); await settle();   // „Inny błąd" w trybie pojedynczym
+      const errCall = calls.slice(before).find((c) => c.startsWith("GET /api/tips/focus"));
+      if (!errCall || !errCall.includes("mode=error") || !errCall.includes("exclude=7")) {
+        failures.push("Inny błąd (tryb pojedynczy) nie pominął bieżącego błędu: " +
+          (errCall || "brak żądania"));
+      }
+    }],
+    ["ochrona zaliczenia: zmiana trybu w trakcie ćwiczenia nie gubi jednostki", async () => {
+      routes["/api/grade"] = {
+        correct: false, score: "4/5", feedback: "ok", errors: [],
+        items: [1, 2, 3, 4, 5].map((n) => ({ number: n, correct: n !== 5, student_option: "have",
+          correct_option: "have", comment: "c", option_notes: null })),
+      };
+
+      await fire("#tips-mode-groups"); await settle();     // fokus: grupa id 1
+      await fire("#tips-generate"); await settle();        // zadanie wygenerowane DLA GRUPY 1
+      [1, 2, 3, 4, 5].forEach((n) => setInput(`tips-answer-${n}`, "have"));
+
+      // Wyścig: przełącznik zeruje tipsGroup/tipsError SYNCHRONICZNIE i odpala loadTips
+      // (asynchronicznie), ale NIE czekamy na jego rozstrzygnięcie — dokładnie w tym oknie
+      // stare ćwiczenie (i jednostka, dla której powstało) musi przetrwać do zaliczenia.
+      await fire("#tips-mode-errors");
+      const before = calls.length;
+      await fire("#tips-grade"); await settle();
+
+      const completeCall = calls.slice(before).find((c) => c.startsWith("POST /api/tips/complete"));
+      if (!completeCall) {
+        failures.push("zaliczenie w trakcie przełączania trybu nie wysłało /api/tips/complete");
+      } else if (!completeCall.includes('"group_id":1')) {
+        failures.push("zaliczenie w trakcie przełączania trybu zgubiło jednostkę (grupę): " + completeCall);
+      }
+
+      routes["/api/grade"] = MULTI_RESULT;
+    }],
+    ["Ćwicz tę grupę: skok z widoku grup do trybu grupowego", async () => {
+      created.length = 0;
+      await fire("#errors-mode-groups"); await settle();
+      const before = calls.length;
+      await clickLatestByClass("practice-btn");   // „Ćwicz tę grupę”
+      await settle();
+      if (!calls.slice(before).some((c) => c.startsWith("GET /api/tips/progress"))) {
+        failures.push("„Ćwicz tę grupę” nie odświeżyło postępu");
+      }
+      if (nodeText("#tips-from") !== "depend + on") {
+        failures.push("karta skupienia nie pokazuje reguły grupy: " + nodeText("#tips-from"));
+      }
+      if (hasClass("#tips-focus", "hidden")) failures.push("„Ćwicz tę grupę” nie pokazało karty");
+      // Bez tej klasy reguła renderowałaby się na czerwono i przekreślona — jak błąd.
+      if (!hasClass("#tips-focus", "is-group")) {
+        failures.push("karta w trybie grupowym nie ma klasy is-group");
+      }
+      await fire("#errors-mode-items"); await settle();
+    }],
+    ["rozwinięcie grupy do kontekstów i odpięcie wpisu", async () => {
+      created.length = 0;
+      await fire("#errors-mode-groups"); await settle();
+
+      const membersCalls = () => calls.filter((c) => c.includes("/api/groups/1/members")).length;
+      await clickLatestByClass("group-expand"); await settle();
+      if (membersCalls() !== 1) failures.push("rozwinięcie grupy nie pobrało kontekstów");
+
+      // Zwinięcie i ponowne rozwinięcie korzysta z tego, co już pobrane.
+      await clickLatestByClass("group-expand"); await settle();
+      await clickLatestByClass("group-expand"); await settle();
+      if (membersCalls() !== 1) {
+        failures.push("ponowne rozwinięcie pobrało konteksty drugi raz: " + membersCalls());
+      }
+
+      const pending = clickLatestByClass("detach-btn");
+      await settle();
+      if (!calls.some((c) => c.startsWith("PATCH /api/errors/11/group"))) {
+        failures.push("„Odepnij” nie wysłało PATCH /api/errors/{id}/group");
+      }
+      if (!created.some((n) => String(n.className || "") === "orphan-ask")) {
+        failures.push("odpięcie ostatniego wpisu nie zapytało o osieroconą grupę");
+      }
+      if (!hasClass("#loader", "hidden")) {
+        failures.push("nakładka ładowania wisi nad pytaniem po odpięciu wpisu");
+      }
+      const before = calls.length;
+      await clickLatestByClass("orphan-keep");   // grupa ZOSTAJE
+      await pending; await settle();
+      if (calls.slice(before).some((c) => c.startsWith("DELETE /api/groups/"))) {
+        failures.push("„Zostaw” po odpięciu usunęło grupę");
+      }
+      await fire("#errors-mode-items"); await settle();
+    }],
+    ["tryb grupowy bez grup: komunikat kieruje do „Scal nowe”", async () => {
+      const normal = routes["/api/tips/focus"];
+      routes["/api/tips/focus"] = { error: null, group: null, progress: normal.progress };
+      await fire(".tab:tips"); await settle();
+      await fire("#tips-mode-groups"); await settle();
+      const msg = nodeText("#tips-empty-text");
+      if (!msg.includes("Scal nowe")) {
+        failures.push("brak wskazówki „Scal nowe” przy braku grup: " + msg);
+      }
+      if (msg.includes("Dziennik błędów jest pusty")) {
+        failures.push("brak grup opisany jako pusty dziennik: " + msg);
+      }
+      // Powrót do trybu błędów przywraca właściwy komunikat pustki.
+      await fire("#tips-mode-errors"); await settle();
+      if (!nodeText("#tips-empty-text").includes("Dziennik błędów jest pusty")) {
+        failures.push("komunikat pustki dziennika nie wrócił: " + nodeText("#tips-empty-text"));
+      }
+      routes["/api/tips/focus"] = normal;
+      await fire("#tips-mode-errors"); await settle();
+    }],
+    ["zmiana języka w trakcie ćwiczenia grupy nie gubi zadania", async () => {
+      await fire(".tab:tips"); await settle();
+      await fire("#tips-mode-groups"); await settle();   // fokus: grupa id 1
+      await fire("#tips-generate"); await settle();      // zadanie DLA GRUPY 1
+      [1, 2, 3, 4, 5].forEach((n) => setInput(`tips-answer-${n}`, "have"));
+
+      const before = calls.length;
+      await fire(".lang:en"); await settle();
+      const refetch = calls.slice(before).find((c) => c.startsWith("GET /api/tips/focus"));
+      if (refetch) {
+        failures.push("zmiana języka pobrała nową grupę i zgubiła ćwiczenie: " + refetch);
+      }
+
+      routes["/api/grade"] = {
+        correct: false, score: "4/5", feedback: "ok", errors: [],
+        items: [1, 2, 3, 4, 5].map((n) => ({ number: n, correct: n !== 5, student_option: "have",
+          correct_option: "have", comment: "c", option_notes: null })),
+      };
+      await fire("#tips-grade"); await settle();
+      const completeCall = calls.slice(before).find((c) => c.startsWith("POST /api/tips/complete"));
+      if (!completeCall || !completeCall.includes('"group_id":1')) {
+        failures.push("ćwiczenie grupy nie przetrwało zmiany języka: " +
+          (completeCall || "brak zaliczenia"));
+      }
+      routes["/api/grade"] = MULTI_RESULT;
+      await fire(".lang:pl"); await settle();
+      await fire("#tips-mode-errors"); await settle();
     }],
     ["Statystyki", async () => fire(".tab:stats")],
     ["zmiana języka EN → PL", async () => { await fire(".lang:en"); await fire(".lang:pl"); }],
