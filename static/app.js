@@ -125,6 +125,7 @@ const I18N = {
     "groups.ungrouped": "Nieprzypisane wpisy: {n}",
     "groups.members": "{n} wpisów",
     "groups.empty": "Brak grup — użyj „Scal nowe\", żeby je utworzyć.",
+    "groups.noneYet": "Nie ma jeszcze grup — użyj „Scal nowe\" w zakładce Moje błędy.",
     "groups.emptyGroup": "Grupa bez wpisów",
     "groups.rename": "Zmień nazwę",
     "groups.renameSave": "Zapisz",
@@ -258,6 +259,7 @@ const I18N = {
     "groups.ungrouped": "Unassigned entries: {n}",
     "groups.members": "{n} entries",
     "groups.empty": "No groups yet — use \"Merge new\" to create them.",
+    "groups.noneYet": "No groups yet — use \"Merge new\" in the My mistakes tab.",
     "groups.emptyGroup": "Group with no entries",
     "groups.rename": "Rename",
     "groups.renameSave": "Save",
@@ -399,13 +401,20 @@ function setLang(lang) {
   applyStaticI18n();
   fillTypeSelects();
   populateTopics();
-  if ($("#view-errors").classList.contains("is-active")) loadErrors();
+  if ($("#view-errors").classList.contains("is-active")) {
+    loadErrors();
+    // Panel grup ma własne etykiety tematów i liczniki wpisów — bez tego zostałyby
+    // w poprzednim języku, bo `loadErrors` go nie dotyka.
+    if (!$("#groups-pane").classList.contains("hidden")) loadGroups();
+  }
   if ($("#view-stats").classList.contains("is-active")) loadStats();
   if ($("#view-tips").classList.contains("is-active")) {
-    // Nie pobieramy nowego błędu — to zgubiłoby rozwiązywane ćwiczenie.
-    // Przerysowujemy tylko etykiety bieżącego fokusu.
-    if (tipsError) {
-      $("#tips-topic").textContent = topicLabel(tipsError.topic);
+    // Nie pobieramy nowej jednostki — to zgubiłoby rozwiązywane ćwiczenie.
+    // Przerysowujemy tylko etykiety bieżącego fokusu — w OBU trybach, bo w trybie
+    // grupowym `tipsError` jest zawsze null i sam warunek na nim odesłałby po nową grupę.
+    const unit = tipsError || tipsGroup;
+    if (unit) {
+      $("#tips-topic").textContent = topicLabel(unit.topic);
       $("#tips-generate").textContent = tipsExercise ? t("tips.more") : t("tips.generate");
       refreshProgress();
     } else {
@@ -1299,7 +1308,10 @@ function setFocus(err) {
   $("#tips-exercise-area").classList.add("hidden");
   $("#tips-result").classList.add("hidden");
   $("#tips-generate").textContent = t("tips.generate");
+  // Karta wraca do wyglądu „błędnie → poprawnie" (patrz `setFocusGroup`).
+  $("#tips-focus").classList.toggle("is-group", false);
   if (!err) {
+    $("#tips-empty-text").textContent = t("tips.empty");
     $("#tips-focus").classList.add("hidden");
     $("#tips-empty").classList.remove("hidden");
     return;
@@ -1335,7 +1347,12 @@ function setFocusGroup(group) {
   $("#tips-exercise-area").classList.add("hidden");
   $("#tips-result").classList.add("hidden");
   $("#tips-generate").textContent = t("tips.generate");
+  // Karta trzyma REGUŁĘ, a nie parę „błędnie → poprawnie": klasa zdejmuje ze slotu
+  // `.from` czerwień i przekreślenie, a ze slotu `.to` wyróżnienie na zielono.
+  $("#tips-focus").classList.toggle("is-group", true);
   if (!group) {
+    // NIE „dziennik jest pusty" — błędów może być dwieście, brakuje tylko grup.
+    $("#tips-empty-text").textContent = t("groups.noneYet");
     $("#tips-focus").classList.add("hidden");
     $("#tips-empty").classList.remove("hidden");
     return;

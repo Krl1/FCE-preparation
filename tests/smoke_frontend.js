@@ -23,6 +23,8 @@ const htmlIds = new Set([...html.matchAll(/id="([^"]+)"/g)].map((m) => m[1]));
 // Pola odpowiedzi są tworzone dynamicznie, więc nie ma ich w HTML.
 const DYNAMIC_IDS = /^(practice|tips)-answer(-\d+)?$/;
 
+const VIEWS = ["practice", "tips", "external", "errors", "stats"];
+
 const handlers = {};        // "klucz|zdarzenie" -> [fn]
 const nodes = new Map();    // klucz -> atrapa elementu
 const created = [];         // elementy tworzone dynamicznie (przyciski zastrzeżeń itp.)
@@ -32,14 +34,15 @@ const failures = [];
 function makeNode(key) {
   if (nodes.has(key)) return nodes.get(key);
   const children = [];
-  // Klasy SĄ zapamiętywane (potrzebne m.in. do sprawdzenia, czy nakładka ładowania
-  // zniknęła), ale `contains` zostaje atrapą zwracającą „aktywna jest zakładka
-  // Ćwicz zadania" — scenariusze opierają się na tym ustalonym stanie.
+  // Klasy są prawdziwym zbiorem, a `className` go przepisuje — dzięki temu warunki
+  // `classList.contains(...)` w aplikacji (która zakładka jest aktywna, czy panel
+  // grup jest schowany, czy nakładka ładowania zniknęła) znaczą w teście to samo,
+  // co w przeglądarce. Węzły ze statycznego HTML dostają klasy startowe niżej.
   const classes = new Set();
   const node = {
     __key: key, __classes: classes,
     dataset: {}, style: {}, children,
-    className: "", textContent: "", value: key.includes("type") ? "uoe_part1_mcq_cloze" : "",
+    textContent: "", value: key.includes("type") ? "uoe_part1_mcq_cloze" : "",
     selectedIndex: 0, disabled: false, rows: 0, placeholder: "", type: "",
     classList: {
       add(...cls) { cls.forEach((c) => classes.add(c)); },
@@ -49,7 +52,7 @@ function makeNode(key) {
         if (on) classes.add(c); else classes.delete(c);
         return on;
       },
-      contains: () => key.includes("view-practice"),
+      contains: (c) => classes.has(c),
     },
     set innerHTML(_v) {}, get innerHTML() { return ""; },
     appendChild(c) { children.push(c); return c; },
@@ -65,6 +68,15 @@ function makeNode(key) {
   // Rejestrujemy je wtedy pod selektorem `#id`, żeby `querySelector` zwracał TEN sam
   // obiekt — inaczej test nie mógłby wpisać do nich wartości i cicho sprawdzałby
   // wyłącznie ścieżkę „brak odpowiedzi".
+  let classNameValue = "";
+  Object.defineProperty(node, "className", {
+    get: () => classNameValue,
+    set(value) {
+      classNameValue = String(value ?? "");
+      classes.clear();
+      classNameValue.split(/\s+/).filter(Boolean).forEach((c) => classes.add(c));
+    },
+  });
   let elementId = "";
   Object.defineProperty(node, "id", {
     get: () => elementId,
@@ -98,9 +110,12 @@ global.document = {
   },
   querySelectorAll(sel) {
     if (sel === ".tab") {
-      return ["practice", "tips", "external", "errors", "stats"].map((v) => {
+      return VIEWS.map((v) => {
         const n = makeNode(".tab:" + v); n.dataset.view = v; return n;
       });
+    }
+    if (sel === ".view") {
+      return VIEWS.map((v) => makeNode("#view-" + v));
     }
     if (sel === ".lang") {
       return ["pl", "en"].map((l) => {
@@ -110,6 +125,14 @@ global.document = {
     return [];
   },
 };
+// Klasy startowe z HTML: bez nich „schowany" panel byłby w atrapie widoczny,
+// a żadna zakładka nie byłaby aktywna.
+for (const tag of html.match(/<[a-zA-Z][^>]*>/g) || []) {
+  const id = /\sid="([^"]+)"/.exec(tag);
+  const cls = /\sclass="([^"]+)"/.exec(tag);
+  if (id && cls) makeNode("#" + id[1]).className = cls[1];
+}
+
 global.localStorage = { getItem: () => "pl", setItem() {} };
 global.window = global;
 
@@ -539,6 +562,73 @@ const setInput = (id, value) => {
       }
 
       routes["/api/grade"] = MULTI_RESULT;
+    }],
+    ["Ćwicz tę grupę: skok z widoku grup do trybu grupowego", async () => {
+      created.length = 0;
+      await fire("#errors-mode-groups"); await settle();
+      const before = calls.length;
+      await clickLatestByClass("practice-btn");   // „Ćwicz tę grupę”
+      await settle();
+      if (!calls.slice(before).some((c) => c.startsWith("GET /api/tips/progress"))) {
+        failures.push("„Ćwicz tę grupę” nie odświeżyło postępu");
+      }
+      if (nodeText("#tips-from") !== "depend + on") {
+        failures.push("karta skupienia nie pokazuje reguły grupy: " + nodeText("#tips-from"));
+      }
+      if (hasClass("#tips-focus", "hidden")) failures.push("„Ćwicz tę grupę” nie pokazało karty");
+      // Bez tej klasy reguła renderowałaby się na czerwono i przekreślona — jak błąd.
+      if (!hasClass("#tips-focus", "is-group")) {
+        failures.push("karta w trybie grupowym nie ma klasy is-group");
+      }
+      await fire("#errors-mode-items"); await settle();
+    }],
+    ["tryb grupowy bez grup: komunikat kieruje do „Scal nowe”", async () => {
+      const normal = routes["/api/tips/focus"];
+      routes["/api/tips/focus"] = { error: null, group: null, progress: normal.progress };
+      await fire(".tab:tips"); await settle();
+      await fire("#tips-mode-groups"); await settle();
+      const msg = nodeText("#tips-empty-text");
+      if (!msg.includes("Scal nowe")) {
+        failures.push("brak wskazówki „Scal nowe” przy braku grup: " + msg);
+      }
+      if (msg.includes("Dziennik błędów jest pusty")) {
+        failures.push("brak grup opisany jako pusty dziennik: " + msg);
+      }
+      // Powrót do trybu błędów przywraca właściwy komunikat pustki.
+      await fire("#tips-mode-errors"); await settle();
+      if (!nodeText("#tips-empty-text").includes("Dziennik błędów jest pusty")) {
+        failures.push("komunikat pustki dziennika nie wrócił: " + nodeText("#tips-empty-text"));
+      }
+      routes["/api/tips/focus"] = normal;
+      await fire("#tips-mode-errors"); await settle();
+    }],
+    ["zmiana języka w trakcie ćwiczenia grupy nie gubi zadania", async () => {
+      await fire(".tab:tips"); await settle();
+      await fire("#tips-mode-groups"); await settle();   // fokus: grupa id 1
+      await fire("#tips-generate"); await settle();      // zadanie DLA GRUPY 1
+      [1, 2, 3, 4, 5].forEach((n) => setInput(`tips-answer-${n}`, "have"));
+
+      const before = calls.length;
+      await fire(".lang:en"); await settle();
+      const refetch = calls.slice(before).find((c) => c.startsWith("GET /api/tips/focus"));
+      if (refetch) {
+        failures.push("zmiana języka pobrała nową grupę i zgubiła ćwiczenie: " + refetch);
+      }
+
+      routes["/api/grade"] = {
+        correct: false, score: "4/5", feedback: "ok", errors: [],
+        items: [1, 2, 3, 4, 5].map((n) => ({ number: n, correct: n !== 5, student_option: "have",
+          correct_option: "have", comment: "c", option_notes: null })),
+      };
+      await fire("#tips-grade"); await settle();
+      const completeCall = calls.slice(before).find((c) => c.startsWith("POST /api/tips/complete"));
+      if (!completeCall || !completeCall.includes('"group_id":1')) {
+        failures.push("ćwiczenie grupy nie przetrwało zmiany języka: " +
+          (completeCall || "brak zaliczenia"));
+      }
+      routes["/api/grade"] = MULTI_RESULT;
+      await fire(".lang:pl"); await settle();
+      await fire("#tips-mode-errors"); await settle();
     }],
     ["Statystyki", async () => fire(".tab:stats")],
     ["zmiana języka EN → PL", async () => { await fire(".lang:en"); await fire(".lang:pl"); }],

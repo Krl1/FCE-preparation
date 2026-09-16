@@ -182,6 +182,12 @@ h2 { font-size: 1.05rem; }
 .focus-card .from { color: var(--bad); text-decoration: line-through; }
 .focus-card .to { color: var(--good); font-weight: 600; }
 .focus-card .why { color: var(--muted); margin: .55rem 0 1.1rem; }
+/* Tryb grupowy: w slotach karty stoi REGUŁA i licznik kontekstów, a nie para
+   „błędnie → poprawnie" — regułę pokazujemy więc zwykłym atramentem, licznik
+   przygaszony, a strzałka między nimi nie ma czego łączyć. */
+.focus-card.is-group .from { color: var(--ink); text-decoration: none; font-weight: 700; }
+.focus-card.is-group .to { color: var(--muted); font-weight: 400; font-size: .9rem; margin-left: .6rem; }
+.focus-card.is-group .arrow { display: none; }
 
 .streak { margin-top: .6rem; font-size: .95rem; color: var(--warn); font-weight: 700; }
 .streak.is-zero { color: var(--muted); font-weight: 400; }
@@ -310,6 +316,7 @@ h2 { font-size: 1.05rem; }
 /* Widok grup błędów */
 .groups-actions { gap: .5rem; align-items: center; }
 .group-item { border: 1px solid var(--line); border-radius: 8px; padding: .75rem; margin: .6rem 0; background: var(--surface); }
+.group-item .topic { font-size: .75rem; text-transform: uppercase; letter-spacing: .5px; color: var(--accent); font-weight: 700; }
 .group-item .rule { font-weight: 700; margin: .3rem 0; }
 .group-item .why { color: var(--muted); font-size: .92rem; }
 .btn-sm {
