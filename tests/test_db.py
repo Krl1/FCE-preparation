@@ -1,3 +1,4 @@
+import sqlite3
 import threading
 
 import pytest
@@ -346,3 +347,40 @@ def test_group_topic_counts_feeds_srs(conn):
     assert rows[0]["topic"] == "prepositions"
     assert rows[0]["count"] == 1
     assert rows[0]["last_seen"]
+
+
+def test_migration_adds_group_id_to_legacy_errors_table(tmp_path):
+    """Migracja na ŻYWEJ bazie: kolumna dochodzi, a istniejące wpisy zostają nietknięte.
+
+    To jedyne miejsce, w którym błąd niszczy dane nie do odzyskania z gita — sprawdzenie
+    ręczne nie wystarcza, bo nie chroni przed regresją."""
+    path = tmp_path / "legacy.db"
+    legacy = sqlite3.connect(path)
+    legacy.executescript(
+        "CREATE TABLE errors ("
+        " id INTEGER PRIMARY KEY AUTOINCREMENT, created_at TEXT NOT NULL,"
+        " source TEXT NOT NULL, exercise_type TEXT NOT NULL, topic TEXT NOT NULL,"
+        " student_text TEXT NOT NULL, correct_text TEXT NOT NULL,"
+        " explanation TEXT NOT NULL, severity TEXT NOT NULL DEFAULT 'minor');"
+    )
+    legacy.execute(
+        "INSERT INTO errors (created_at, source, exercise_type, topic, student_text,"
+        " correct_text, explanation, severity) VALUES"
+        " ('2026-01-01T10:00:00', 'import', 'imported', 'prepositions',"
+        "  'depends from', 'depends on', 'kalka', 'minor')"
+    )
+    legacy.commit()
+    legacy.close()
+
+    conn = db.get_connection(path)
+    try:
+        cols = {r["name"] for r in conn.execute("PRAGMA table_info(errors)")}
+        assert "group_id" in cols
+        rows = list(conn.execute("SELECT student_text, group_id FROM errors"))
+        assert len(rows) == 1
+        assert rows[0]["student_text"] == "depends from"
+        assert rows[0]["group_id"] is None
+        # Ponowne otwarcie nie może próbować dodać kolumny drugi raz.
+        db.get_connection(path).close()
+    finally:
+        conn.close()
