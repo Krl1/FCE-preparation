@@ -110,10 +110,24 @@ Jeden błąd należy do **co najwyżej jednej** grupy.
 
 ### Cykl życia grupy
 
-Grupa jest definiowana przez swoje wpisy, więc **grupa bez wpisów jest usuwana automatycznie**.
-Dzieje się to w trzech miejscach: przy odpięciu ostatniego wpisu, przy przepięciu go do innej
-grupy i przy usunięciu błędu istniejącym `DELETE /api/errors/{id}` — ta ścieżka musi więc
-sprzątać po sobie, inaczej w widoku zostałyby puste reguły.
+**Pusta grupa zostaje.** Nic nie znika samo — ta sama zasada, która rządzi dziennikiem, obowiązuje
+też tutaj. Grupa, która straciła wszystkie wpisy, to reguła przerobiona do czysta, a nie śmieć:
+nadal może mieć wartość w nauce i to uczeń decyduje, czy jest już niepotrzebna.
+
+Gdy z grupy znika ostatni wpis — przez odpięcie, przepięcie do innej grupy albo usunięcie błędu
+istniejącym `DELETE /api/errors/{id}` — interfejs **informuje, że grupa zostanie pusta, i pyta,
+czy usunąć ją razem z wpisem**. Odpowiedź domyślna to zachowanie grupy.
+
+Konsekwencja, która przesądza, że to dobra decyzja: **pustą grupę nadal da się ćwiczyć**. Drill
+buduje się z reguły i wyjaśnienia, a konteksty są dodatkiem podnoszącym jakość zadań, nie
+warunkiem ich powstania. Grupa bez wpisów jest więc pełnoprawną jednostką nauki.
+
+W widoku grup pusta grupa jest oznaczona (licznik `0`), żeby dało się je przejrzeć i posprzątać
+świadomie.
+
+Wyjątkiem jest **pełne przegrupowanie**: odbudowuje grupy od zera, więc puste grupy zachowane
+ręcznie też znikają. To ta sama utrata ręcznej pracy, o której mowa w D6, i z tego samego powodu
+akcja wymaga potwierdzenia.
 
 Zaliczenia w `group_reviews` **zostają** po usunięciu grupy. To ta sama zasada, która już
 obowiązuje przy usuwaniu błędu: praca, którą naprawdę wykonałeś, ma zostać policzona, więc
@@ -189,6 +203,12 @@ najnowszego z nich.
 | `DELETE /api/groups/{id}` | usunięcie grupy; wpisy wracają do nieprzypisanych |
 | `PATCH /api/errors/{id}/group` | przepięcie wpisu do innej grupy lub odpięcie |
 
+Odpowiedzi `DELETE /api/errors/{id}` oraz `PATCH /api/errors/{id}/group` zwracają
+`emptied_group_id` (albo `null`). To stąd interfejs wie, że ma zapytać o usunięcie osieroconej
+grupy — bez zgadywania po stronie przeglądarki i bez dodatkowego zapytania o liczniki.
+Samo usunięcie grupy idzie istniejącym `DELETE /api/groups/{id}`, więc nie powstaje druga
+ścieżka kasowania.
+
 Endpointy `tips` dostają tryb `error` (domyślny, zachowanie bez zmian) albo `group`:
 `GET /api/tips/focus?mode=…`, `POST /api/tips/exercise`, `POST /api/tips/complete`.
 
@@ -211,6 +231,9 @@ angielsku, więc rozjazd byłby od razu widoczny.
 - `app/grouping.py` — tabelka wejście-wyjście: wymyślone `group_id`, duplikaty nowych grup,
   wpisy pominięte przez model, temat spoza taksonomii.
 - warstwa bazy — tworzenie grup, przypisanie, odpięcie, usunięcie grupy, liczniki.
+- cykl życia grupy — regresja na tym, że grupa po utracie ostatniego wpisu **istnieje dalej**
+  (licznik `0`), a `DELETE /api/errors/{id}` i `PATCH /api/errors/{id}/group` zwracają wtedy
+  `emptied_group_id`. Osobny przypadek: pusta grupa nadal daje się wziąć do ćwiczenia.
 - `db.reviews_per_day()` — sumowanie zaliczeń z obu źródeł; regresja na tym, że grupa nie
   podbija licznika dwa razy tego samego dnia.
 - endpointy — z podstawionym `llm_client`, tak jak w istniejącym `tests/test_api.py`.
