@@ -137,11 +137,23 @@ Uwaga: pliki tekstowe idą przez model, więc ich import **kosztuje wywołania s
   Uwaga na skalę: przy celu 5 błędów dziennie oznacza to 25 poprawnych ćwiczeń — a przy dwudniowej
   zaległości 15 błędów, czyli 75 ćwiczeń w jednym dniu. Jeśli to za dużo, obniż cel w polu
   *Dzienny cel* (reguła serii liczy się zawsze od aktualnej wartości celu).
+
+  Przełącznik **Pojedyncze błędy / Grupy** decyduje, co dostajesz do przerobienia. Tryb
+  grupowy pozwala szybciej przejść przez wiele powiązanych pomyłek: zamiast jednego zdania
+  model widzi regułę i kilka kontekstów, w których ją złamałeś. Do dziennego celu grupa
+  liczy się **jak jeden błąd**, więc seria 🔥 pozostaje porównywalna między trybami.
 - **Sprawdź z zewnątrz** — wklej zadanie z książki i swoją odpowiedź; aplikacja sprawdzi je i zaproponuje
   błędy do zatwierdzenia.
 - **Moje błędy** — przegląd słabych punktów i pełny dziennik błędów. Przy każdym błędzie przycisk
   **Ćwicz ten błąd** przenosi do zakładki *Ćwicz błędy* z tym błędem i od razu generuje do niego ćwiczenie,
   a **Usuń błąd** (z potwierdzeniem w miejscu) wyrzuca go z dziennika.
+
+  Przełącznik **Wpisy / Grupy** pokazuje ten sam dziennik w dwóch ujęciach. Grupa to jedna
+  reguła wraz z kontekstami, w których ją złamałeś — **Scal nowe** przypisuje wpisy, które
+  jeszcze nie mają grupy, a **Przegrupuj wszystko** liczy podział od zera (kasuje ręczne
+  poprawki, więc pyta o potwierdzenie). Grupy mogą łączyć wpisy z różnych tematów, jeśli
+  łamią tę samą regułę. **Pusta grupa zostaje** — gdy usuniesz z niej ostatni wpis,
+  aplikacja zapyta, czy usunąć też samą grupę; reguła bez wpisów nadal daje się ćwiczyć.
 - **Statystyki** — dwie sekcje: *Nauka* (wygenerowane ćwiczenia, sprawdzone odpowiedzi, skuteczność,
   powtórki, liczba błędów, podział wg typu zadania) oraz *Zużycie Claude* (liczba wywołań, tokeny
   wejściowe/wyjściowe/cache, **szacowany koszt wg stawek API** i podział wg rodzaju wywołania).
