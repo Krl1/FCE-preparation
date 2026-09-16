@@ -1384,10 +1384,18 @@ function setTipsMode(mode) {
 $("#tips-mode-errors").addEventListener("click", () => setTipsMode("error"));
 $("#tips-mode-groups").addEventListener("click", () => setTipsMode("group"));
 
-/** Ciało zapytania zależne od trybu — dokładnie jedno z `group_id`/`error_id`. */
+/** Jednostka do WYGENEROWANIA ćwiczenia — czytana z bieżącego fokusu. */
 function tipsUnitBody() {
   return tipsMode === "group" ? { group_id: tipsGroup && tipsGroup.id }
                               : { error_id: tipsError && tipsError.id };
+}
+
+/** Jednostka do ZALICZENIA — brana z ĆWICZENIA, nie z bieżącego fokusu.
+ *  Zaliczamy tę jednostkę, dla której zadanie powstało: między wygenerowaniem
+ *  a sprawdzeniem fokus mógł się zmienić (przełącznik trybu zeruje go synchronicznie,
+ *  zanim loadTips zdąży się rozwiązać), a praca ucznia ma zostać policzona. */
+function tipsGradeBody(ex) {
+  return ex && ex._unit ? { ...ex._unit } : tipsUnitBody();
 }
 
 /** Id jednostki aktualnie na ekranie — do pominięcia przy losowaniu następnej. */
@@ -1412,11 +1420,16 @@ $("#tips-generate").addEventListener("click", () =>
   withBusy("loader.generating", $("#tips-generate"), async () => {
     if (tipsMode === "group" ? !tipsGroup : !tipsError) return;
     tipsExercise = null;
+    // Czytamy jednostkę PRZED `await` — fokus mógłby się zmienić w trakcie oczekiwania
+    // na odpowiedź, a zaliczyć trzeba tę jednostkę, dla której zadanie faktycznie powstało.
+    const unit = tipsUnitBody();
     try {
       const ex = await api("/api/tips/exercise", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...tipsUnitBody(), lang: LANG }),
+        body: JSON.stringify({ ...unit, lang: LANG }),
       });
+      // Zapamiętujemy jednostkę źródłową — do celu zaliczamy TĘ jednostkę, nie bieżący fokus.
+      ex._unit = unit;
       tipsExercise = ex;
       $("#tips-result").classList.add("hidden");
       renderExerciseInto(TIPS_UI, ex);
@@ -1425,9 +1438,13 @@ $("#tips-generate").addEventListener("click", () =>
 
 $("#tips-grade").addEventListener("click", async () => {
   if (!tipsExercise) return;
+  // Migawka PRZED `await` — globalny `tipsExercise` mógłby się zmienić w trakcie
+  // oceniania (np. przełącznik trybu kończy się dopiero teraz), a zaliczyć trzeba
+  // dokładnie to ćwiczenie, które właśnie oceniamy, nie to, co jest globalnie aktualne.
+  const ex = tipsExercise;
   let result;
   try {
-    result = await gradeExercise(TIPS_UI, tipsExercise);
+    result = await gradeExercise(TIPS_UI, ex);
   } catch (e) {
     showError("#tips-result", e.message);
     return;
@@ -1444,7 +1461,7 @@ $("#tips-grade").addEventListener("click", async () => {
   try {
     const progress = await api("/api/tips/complete", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...tipsUnitBody(), correct_items: correct, total_items: total }),
+      body: JSON.stringify({ ...tipsGradeBody(ex), correct_items: correct, total_items: total }),
     });
     renderGoal(progress);
   } catch (_) { /* ocena jest ważniejsza niż licznik */ }

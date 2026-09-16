@@ -235,7 +235,10 @@ const routes = {
 const calls = [];
 global.fetch = async (url, options) => {
   const method = (options && options.method) || "GET";
-  calls.push(method + " " + url);
+  const body = options && options.body;
+  // Doklejamy ciało żądania (jeśli jest) — potrzebne do sprawdzenia, JAKĄ jednostkę
+  // (group_id/error_id) wysłało zaliczenie, nie tylko na jaką ścieżkę.
+  calls.push(method + " " + url + (body ? " " + body : ""));
   const p = url.split("?")[0];
   // Klucz „METODA ścieżka" ma pierwszeństwo — POST /api/errors zwraca coś innego niż GET.
   const key = [method + " " + p, p].find((k) => k in routes);
@@ -452,6 +455,33 @@ const setInput = (id, value) => {
         failures.push("Inny błąd (tryb pojedynczy) nie pominął bieżącego błędu: " +
           (errCall || "brak żądania"));
       }
+    }],
+    ["ochrona zaliczenia: zmiana trybu w trakcie ćwiczenia nie gubi jednostki", async () => {
+      routes["/api/grade"] = {
+        correct: false, score: "4/5", feedback: "ok", errors: [],
+        items: [1, 2, 3, 4, 5].map((n) => ({ number: n, correct: n !== 5, student_option: "have",
+          correct_option: "have", comment: "c", option_notes: null })),
+      };
+
+      await fire("#tips-mode-groups"); await settle();     // fokus: grupa id 1
+      await fire("#tips-generate"); await settle();        // zadanie wygenerowane DLA GRUPY 1
+      [1, 2, 3, 4, 5].forEach((n) => setInput(`tips-answer-${n}`, "have"));
+
+      // Wyścig: przełącznik zeruje tipsGroup/tipsError SYNCHRONICZNIE i odpala loadTips
+      // (asynchronicznie), ale NIE czekamy na jego rozstrzygnięcie — dokładnie w tym oknie
+      // stare ćwiczenie (i jednostka, dla której powstało) musi przetrwać do zaliczenia.
+      await fire("#tips-mode-errors");
+      const before = calls.length;
+      await fire("#tips-grade"); await settle();
+
+      const completeCall = calls.slice(before).find((c) => c.startsWith("POST /api/tips/complete"));
+      if (!completeCall) {
+        failures.push("zaliczenie w trakcie przełączania trybu nie wysłało /api/tips/complete");
+      } else if (!completeCall.includes('"group_id":1')) {
+        failures.push("zaliczenie w trakcie przełączania trybu zgubiło jednostkę (grupę): " + completeCall);
+      }
+
+      routes["/api/grade"] = MULTI_RESULT;
     }],
     ["Statystyki", async () => fire(".tab:stats")],
     ["zmiana języka EN → PL", async () => { await fire(".lang:en"); await fire(".lang:pl"); }],
