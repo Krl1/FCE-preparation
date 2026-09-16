@@ -156,7 +156,9 @@ does not — it is parsed locally).
   together with the contexts you broke it in — **Merge new** assigns entries that have no
   group yet, and **Regroup everything** recomputes the split from scratch (it discards
   manual edits and any empty groups you chose to keep, so it asks for confirmation). Groups
-  may span topics when the entries break the same rule. **An empty group stays** — when you
+  may span topics when the entries break the same rule. **Contexts** expands a group to the
+  entries behind it, where **Detach** returns a single entry to the unassigned pool;
+  **Rename** fixes the rule's name. **An empty group stays** — when you
   remove its last entry the app asks whether to delete the group too; a rule with no
   entries can still be practised.
 - **Statistics** — two sections: *Learning* (exercises generated, answers checked, accuracy, reviews,

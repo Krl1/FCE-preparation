@@ -152,7 +152,9 @@ Uwaga: pliki tekstowe idą przez model, więc ich import **kosztuje wywołania s
   reguła wraz z kontekstami, w których ją złamałeś — **Scal nowe** przypisuje wpisy, które
   jeszcze nie mają grupy, a **Przegrupuj wszystko** liczy podział od zera (kasuje ręczne
   poprawki oraz puste grupy zachowane ręcznie, więc pyta o potwierdzenie). Grupy mogą
-  łączyć wpisy z różnych tematów, jeśli łamią tę samą regułę. **Pusta grupa zostaje** —
+  łączyć wpisy z różnych tematów, jeśli łamią tę samą regułę. **Konteksty** rozwijają grupę
+  do wpisów, które za nią stoją — stamtąd **Odepnij** zwraca pojedynczy wpis do
+  nieprzypisanych, a **Zmień nazwę** poprawia nazwę reguły. **Pusta grupa zostaje** —
   gdy usuniesz z niej ostatni wpis, aplikacja zapyta, czy usunąć też samą grupę; reguła
   bez wpisów nadal daje się ćwiczyć.
 - **Statystyki** — dwie sekcje: *Nauka* (wygenerowane ćwiczenia, sprawdzone odpowiedzi, skuteczność,
