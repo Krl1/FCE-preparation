@@ -206,6 +206,17 @@ class ErrorCreate(BaseModel):
     exercise_type: Optional[str] = None
 
 
+class GroupUpdate(BaseModel):
+    """Ręczna poprawka grupy — zmiana nazwy reguły lub jej wyjaśnienia."""
+    rule: str
+    explanation: str = ""
+
+
+class ErrorGroupUpdate(BaseModel):
+    """Przepięcie wpisu do innej grupy (`group_id`) albo odpięcie (`None`)."""
+    group_id: Optional[int] = None
+
+
 class DisputeRequest(BaseModel):
     """Zastrzeżenie do wyjaśnienia wystawionego przez model."""
 

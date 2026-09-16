@@ -15,17 +15,19 @@ from fastapi.staticfiles import StaticFiles
 
 from . import db
 from . import fce_taxonomy as tax
-from . import llm_client, pricing, srs, streak
+from . import grouping, llm_client, pricing, srs, streak
 from .models import (
     CompleteRequest,
     DisputeRequest,
     ErrorCreate,
+    ErrorGroupUpdate,
     ExercisePublic,
     GeneratedExercise,
     GenerateRequest,
     GoalRequest,
     GradeRequest,
     GradingResult,
+    GroupUpdate,
     TipExerciseRequest,
 )
 
@@ -278,10 +280,23 @@ def remove_error(error_id: int) -> dict:
 
     Zapisane powtórki zostają — dzienny postęp i seria opierają się na tym, co
     naprawdę przerobiłeś, więc usunięcie błędu nie cofa dziś zdobytego celu.
+
+    `emptied_group_id` niesie informację, że po tym usunięciu grupa została pusta.
+    Grupa ZOSTAJE — frontend tylko pyta, czy usunąć ją razem z wpisem.
     """
+    previous = db.group_of_error(conn, error_id)
     if not db.delete_error(conn, error_id):
         raise HTTPException(status_code=404, detail="Nie znaleziono błędu o tym id.")
-    return {"deleted": error_id}
+    emptied = previous if (previous is not None
+                           and db.group_member_count(conn, previous) == 0) else None
+    # Nazwa reguły leci razem z id, żeby frontend mógł zapytać "usunąć grupę X?"
+    # bez dodatkowego zapytania o listę grup.
+    emptied_rule = None
+    if emptied is not None:
+        grp = db.get_group(conn, emptied)
+        emptied_rule = grp["rule"] if grp else None
+    return {"deleted": error_id, "emptied_group_id": emptied,
+            "emptied_group_rule": emptied_rule}
 
 
 @app.get("/api/stats/topics")
@@ -380,6 +395,113 @@ def tips_goal(req: GoalRequest) -> dict:
     goal = max(1, min(50, req.goal))
     db.set_setting(conn, "daily_goal", str(goal))
     return _progress()
+
+
+# --- Grupy błędów -------------------------------------------------------------
+
+# Porcja jednego wywołania modelu. 196 wpisów w jednym żądaniu grozi obcięciem
+# odpowiedzi przy FCE_LLM_TIMEOUT = 180 s, więc pierwszy przebieg idzie porcjami.
+GROUP_CHUNK_SIZE = 60
+
+
+def _run_grouping(lang: str) -> dict:
+    """Przypisuje wszystkie nieprzypisane wpisy, porcjami. Każda porcja widzi grupy
+    utworzone przez poprzednie, więc druga porcja może dopiąć się do świeżej reguły."""
+    pending = db.list_ungrouped_errors(conn)
+    assigned = created = unassigned = 0
+
+    for chunk in grouping.chunks(pending, GROUP_CHUNK_SIZE):
+        existing = db.list_groups(conn)
+        try:
+            raw = llm_client.group_errors(
+                errors=chunk,
+                existing_groups=[{"id": g["id"], "rule": g["rule"], "topic": g["topic"]}
+                                 for g in existing],
+                lang=lang,
+            )
+        except llm_client.LLMError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+        plan = grouping.plan_assignments(
+            raw, [e["id"] for e in chunk], {g["id"] for g in existing}
+        )
+        for error_id, group_id in plan.to_existing.items():
+            db.set_error_group(conn, error_id, group_id)
+            assigned += 1
+        for new in plan.new_groups:
+            group_id = db.insert_group(conn, rule=new.rule, explanation=new.explanation,
+                                       topic=new.topic)
+            created += 1
+            for error_id in new.error_ids:
+                db.set_error_group(conn, error_id, group_id)
+        unassigned += len(plan.unassigned)
+
+    return {"assigned": assigned, "created": created, "unassigned": unassigned}
+
+
+@app.get("/api/groups")
+def get_groups(lang: str = Query(default="pl")) -> dict:
+    groups = db.list_groups(conn)
+    for g in groups:
+        g["topic_label"] = tax.topic_label(g["topic"], lang)
+    return {"groups": groups, "ungrouped": len(db.list_ungrouped_errors(conn))}
+
+
+@app.get("/api/groups/{group_id}/members")
+def get_group_members(group_id: int, lang: str = Query(default="pl")) -> list[dict]:
+    if db.get_group(conn, group_id) is None:
+        raise HTTPException(status_code=404, detail="Nie znaleziono grupy o tym id.")
+    members = db.list_group_members(conn, group_id)
+    for m in members:
+        m["topic_label"] = tax.topic_label(m["topic"], lang)
+    return members
+
+
+@app.post("/api/groups/assign")
+def assign_groups(lang: str = Query(default="pl")) -> dict:
+    """Przyrostowe scalanie: bierze tylko wpisy bez grupy."""
+    return _run_grouping(lang)
+
+
+@app.post("/api/groups/regroup")
+def regroup_all(lang: str = Query(default="pl")) -> dict:
+    """Pełne przeliczenie od zera. KASUJE ręczne poprawki i puste grupy — frontend
+    pyta o potwierdzenie, zanim tu trafi."""
+    db.clear_all_groups(conn)
+    return _run_grouping(lang)
+
+
+@app.patch("/api/groups/{group_id}")
+def patch_group(group_id: int, req: GroupUpdate) -> dict:
+    if not db.update_group(conn, group_id, rule=req.rule, explanation=req.explanation):
+        raise HTTPException(status_code=404, detail="Nie znaleziono grupy o tym id.")
+    return {"updated": group_id}
+
+
+@app.delete("/api/groups/{group_id}")
+def remove_group(group_id: int) -> dict:
+    """Usuwa grupę; jej wpisy wracają do nieprzypisanych. Zaliczenia zostają."""
+    if not db.delete_group(conn, group_id):
+        raise HTTPException(status_code=404, detail="Nie znaleziono grupy o tym id.")
+    return {"deleted": group_id}
+
+
+@app.patch("/api/errors/{error_id}/group")
+def patch_error_group(error_id: int, req: ErrorGroupUpdate) -> dict:
+    """Przepina wpis do innej grupy albo go odpina.
+
+    `emptied_group_id` mówi frontendowi, że stara grupa właśnie osierociała — pusta
+    grupa ZOSTAJE, a o jej usunięciu decyduje uczeń."""
+    if db.get_error(conn, error_id) is None:
+        raise HTTPException(status_code=404, detail="Nie znaleziono błędu o tym id.")
+    if req.group_id is not None and db.get_group(conn, req.group_id) is None:
+        raise HTTPException(status_code=404, detail="Nie znaleziono grupy o tym id.")
+
+    previous = db.group_of_error(conn, error_id)
+    db.set_error_group(conn, error_id, req.group_id)
+    emptied = previous if (previous is not None and previous != req.group_id
+                           and db.group_member_count(conn, previous) == 0) else None
+    return {"error_id": error_id, "group_id": req.group_id, "emptied_group_id": emptied}
 
 
 # --- Zastrzeżenia do wyjaśnień ------------------------------------------------
