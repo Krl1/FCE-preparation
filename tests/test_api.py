@@ -880,8 +880,9 @@ def test_completing_a_group_counts_one_toward_the_goal(app_ctx, monkeypatch):
 def test_partial_group_drill_does_not_count_yet(app_ctx, monkeypatch):
     client, main_mod = app_ctx
     gid, _ = _make_group(client, main_mod, monkeypatch)
+    target = main_mod.DRILL_CORRECT_TARGET
     out = client.post("/api/tips/complete",
-                      json={"group_id": gid, "correct_items": 1, "total_items": 5}).json()
+                      json={"group_id": gid, "correct_items": 1, "total_items": target}).json()
     assert out["done"] == 0
 
 
@@ -889,3 +890,47 @@ def test_complete_requires_exactly_one_unit(app_ctx):
     client, _ = app_ctx
     assert client.post("/api/tips/complete",
                        json={"correct_items": 1, "total_items": 1}).status_code == 422
+
+
+def test_group_exercise_uses_rule_framing_not_a_fake_wrong_version(app_ctx, monkeypatch):
+    """Grupa to reguła — prompt nie może podawać 'wersji błędnej' równej 'poprawnej'."""
+    client, main_mod = app_ctx
+    gid, _ = _make_group(client, main_mod, monkeypatch)
+    seen = {}
+
+    def fake_invoke(prompt, kind="other"):
+        seen["prompt"] = prompt
+        return json.dumps({
+            "exercise_type": "uoe_part2_open_cloze", "instructions": "i",
+            "items": [{"number": n, "question_text": "q ______", "options": None,
+                       "key_word": None, "stem": None, "answer": "a",
+                       "answer_notes": "n"} for n in range(1, 6)],
+        })
+
+    monkeypatch.setattr(main_mod.llm_client, "_invoke", fake_invoke)
+    assert client.post("/api/tips/exercise", json={"group_id": gid}).status_code == 200
+    assert "Reguła:" in seen["prompt"]
+    assert "Wersja błędna" not in seen["prompt"]
+
+
+def test_empty_group_can_still_be_drilled(app_ctx, monkeypatch):
+    """Grupa bez wpisów to reguła przerobiona do czysta — nadal ma się dać ćwiczyć."""
+    client, main_mod = app_ctx
+    gid, eid = _make_group(client, main_mod, monkeypatch)
+    client.delete(f"/api/errors/{eid}")
+    assert client.get("/api/groups").json()["groups"][0]["member_count"] == 0
+
+    monkeypatch.setattr(main_mod.llm_client, "_invoke", lambda prompt, kind="other": json.dumps({
+        "exercise_type": "uoe_part2_open_cloze", "instructions": "i",
+        "items": [{"number": n, "question_text": "q ______", "options": None,
+                   "key_word": None, "stem": None, "answer": "a",
+                   "answer_notes": "n"} for n in range(1, 6)],
+    }))
+    assert client.post("/api/tips/exercise", json={"group_id": gid}).status_code == 200
+
+
+def test_exercise_requires_exactly_one_unit(app_ctx):
+    client, _ = app_ctx
+    assert client.post("/api/tips/exercise", json={"lang": "pl"}).status_code == 422
+    assert client.post("/api/tips/exercise",
+                       json={"error_id": 1, "group_id": 1}).status_code == 422

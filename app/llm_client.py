@@ -343,7 +343,8 @@ _DRILL_TYPES = [
 
 
 def generate_drill(topic: str, student_text: str, correct_text: str, explanation: str,
-                   lang: str = "pl", contexts: list[str] | None = None) -> tuple[str, GeneratedExercise]:
+                   lang: str = "pl", contexts: list[str] | None = None,
+                   rule: str | None = None) -> tuple[str, GeneratedExercise]:
     """Generuje zestaw ćwiczeń celowanych w KONKRETNY błąd ucznia (jedno wywołanie modelu).
 
     Zwraca `(exercise_type, GeneratedExercise)` — typ wybiera model spośród części
@@ -353,6 +354,9 @@ def generate_drill(topic: str, student_text: str, correct_text: str, explanation
     `contexts` to dodatkowe zdania, w których uczeń złamał tę samą regułę — podawane
     w trybie grupowym. Są dodatkiem podnoszącym jakość zadań, nie warunkiem: grupa bez
     wpisów nadal daje się ćwiczyć z samej reguły i wyjaśnienia.
+
+    `rule` ustawione oznacza, że jednostką ćwiczenia jest REGUŁA (tryb grupowy),
+    a nie pojedyncza pomyłka — `student_text`/`correct_text` są wtedy ignorowane.
     """
     lang_name = _lang_name(lang)
     topic_lbl = tax.topic_label(topic, "en")
@@ -368,15 +372,31 @@ def generate_drill(topic: str, student_text: str, correct_text: str, explanation
         joined = "\n".join(f"- {c}" for c in contexts[:8])
         extra = ("\nTa sama reguła została złamana także w tych zdaniach — użyj ich jako "
                  f"materiału na konteksty, ale NIE powtarzaj ich dosłownie:\n{joined}\n")
+    if rule:
+        # Tryb grupowy: jednostką nauki jest REGUŁA, nie pojedyncza pomyłka. Podanie
+        # "wersji błędnej" i "poprawnej" dałoby tu ten sam napis, czyli instrukcję
+        # sprzeczną samą ze sobą — dlatego grupa dostaje własne ramy.
+        intro = (
+            f"Uczeń przygotowujący się do FCE wielokrotnie łamie JEDNĄ regułę. Ułóż {n} KRÓTKICH "
+            "ćwiczeń, które ćwiczą DOKŁADNIE tę regułę, każde w INNYM, nowym kontekście "
+            "(nie powielaj kontekstów między pozycjami).\n\n"
+            f"Reguła — temat: {topic_lbl}\n"
+            f"Reguła: {rule}\n"
+            f"Wyjaśnienie: {explanation}\n\n"
+        )
+    else:
+        intro = (
+            f"Uczeń przygotowujący się do FCE popełnił konkretny błąd. Ułóż {n} KRÓTKICH ćwiczeń, "
+            "które ćwiczą DOKŁADNIE ten punkt gramatyczny/leksykalny, każde w INNYM, nowym kontekście "
+            "(nie powielaj zdania z błędu ani kontekstów między pozycjami).\n\n"
+            f"Błąd — temat: {topic_lbl}\n"
+            f"Wersja błędna: {student_text}\n"
+            f"Wersja poprawna: {correct_text}\n"
+            f"Wyjaśnienie: {explanation}\n\n"
+        )
     prompt = (
-        f"Uczeń przygotowujący się do FCE popełnił konkretny błąd. Ułóż {n} KRÓTKICH ćwiczeń, "
-        "które ćwiczą DOKŁADNIE ten punkt gramatyczny/leksykalny, każde w INNYM, nowym kontekście "
-        "(nie powielaj zdania z błędu ani kontekstów między pozycjami).\n\n"
-        f"Błąd — temat: {topic_lbl}\n"
-        f"Wersja błędna: {student_text}\n"
-        f"Wersja poprawna: {correct_text}\n"
-        f"Wyjaśnienie: {explanation}\n\n"
-        f"Pole 'exercise_type' MUSI być jednym z: {types} — wybierz jeden typ dla całego zestawu.\n"
+        intro
+        + f"Pole 'exercise_type' MUSI być jednym z: {types} — wybierz jeden typ dla całego zestawu.\n"
         "Każda pozycja w 'items' ma własne 'question_text' (jedno zdanie po angielsku z luką ______) "
         "oraz 'answer'. Dla multiple-choice podaj w pozycji dokładnie 4 'options' (z prefiksami "
         "A/B/C/D, 'answer' zapisane identycznie jak wybrany wariant); dla key word transformation "

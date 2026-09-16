@@ -392,23 +392,25 @@ def tips_exercise(req: TipExerciseRequest) -> ExercisePublic:
         members = db.list_group_members(conn, req.group_id)
         # Pusta grupa też daje się ćwiczyć — konteksty są dodatkiem, nie warunkiem.
         contexts = [f"{m['student_text']} → {m['correct_text']}" for m in members]
-        topic, student_text = grp["topic"], grp["rule"]
-        correct_text, explanation = grp["rule"], grp["explanation"]
-    else:
-        err = db.get_error(conn, req.error_id)
-        if err is None:
-            raise HTTPException(status_code=404, detail="Nie znaleziono błędu o tym id.")
-        contexts = None
-        topic, student_text = err["topic"], err["student_text"]
-        correct_text, explanation = err["correct_text"], err["explanation"]
+        try:
+            ex_type, generated = llm_client.generate_drill(
+                grp["topic"], "", "", grp["explanation"],
+                lang=req.lang, contexts=contexts, rule=grp["rule"],
+            )
+        except llm_client.LLMError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        return _store_and_publish(ex_type, grp["topic"], generated, "drill")
 
+    err = db.get_error(conn, req.error_id)
+    if err is None:
+        raise HTTPException(status_code=404, detail="Nie znaleziono błędu o tym id.")
     try:
         ex_type, generated = llm_client.generate_drill(
-            topic, student_text, correct_text, explanation, lang=req.lang, contexts=contexts
+            err["topic"], err["student_text"], err["correct_text"], err["explanation"], lang=req.lang
         )
     except llm_client.LLMError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
-    return _store_and_publish(ex_type, topic, generated, "drill")
+    return _store_and_publish(ex_type, err["topic"], generated, "drill")
 
 
 @app.post("/api/tips/complete")
