@@ -115,6 +115,24 @@ const I18N = {
     "kind.explain": "Wyjaśnienia",
     "kind.extract": "Import (ekstrakcja)",
     "kind.other": "Inne",
+    "groups.modeItems": "Wpisy",
+    "groups.modeGroups": "Grupy",
+    "groups.assign": "Scal nowe",
+    "groups.regroup": "Przegrupuj wszystko",
+    "groups.regroupConfirm": "Przegrupowanie liczy wszystko od nowa i kasuje ręczne poprawki oraz puste grupy. Na pewno?",
+    "groups.ungrouped": "Nieprzypisane wpisy: {n}",
+    "groups.members": "{n} wpisów",
+    "groups.empty": "Brak grup — użyj „Scal nowe\", żeby je utworzyć.",
+    "groups.emptyGroup": "Grupa bez wpisów",
+    "groups.rename": "Zmień nazwę",
+    "groups.renameSave": "Zapisz",
+    "groups.delete": "Usuń grupę",
+    "groups.detach": "Odepnij",
+    "groups.practiceThis": "Ćwicz tę grupę",
+    "groups.orphaned": "Grupa „{rule}\" została bez wpisów. Usunąć ją także?",
+    "groups.orphanKeep": "Zostaw",
+    "groups.orphanDelete": "Usuń grupę",
+    "groups.assigned": "Dopięto: {assigned}, nowych grup: {created}, bez przypisania: {unassigned}",
   },
   en: {
     "app.title": "FCE Trainer",
@@ -228,6 +246,24 @@ const I18N = {
     "kind.explain": "Explanations",
     "kind.extract": "Import (extraction)",
     "kind.other": "Other",
+    "groups.modeItems": "Entries",
+    "groups.modeGroups": "Groups",
+    "groups.assign": "Merge new",
+    "groups.regroup": "Regroup everything",
+    "groups.regroupConfirm": "Regrouping recomputes from scratch and discards manual edits and empty groups. Are you sure?",
+    "groups.ungrouped": "Unassigned entries: {n}",
+    "groups.members": "{n} entries",
+    "groups.empty": "No groups yet — use \"Merge new\" to create them.",
+    "groups.emptyGroup": "Group with no entries",
+    "groups.rename": "Rename",
+    "groups.renameSave": "Save",
+    "groups.delete": "Delete group",
+    "groups.detach": "Detach",
+    "groups.practiceThis": "Practise this group",
+    "groups.orphaned": "Group \"{rule}\" is now empty. Delete it as well?",
+    "groups.orphanKeep": "Keep",
+    "groups.orphanDelete": "Delete group",
+    "groups.assigned": "Attached: {assigned}, new groups: {created}, unassigned: {unassigned}",
   },
 };
 
@@ -759,7 +795,8 @@ function deleteErrorWidget(errorId, onDone) {
   });
   yes.addEventListener("click", () => withBusy("loader.deleting", yes, async () => {
     try {
-      await api("/api/errors/" + errorId, { method: "DELETE" });
+      const out = await api("/api/errors/" + errorId, { method: "DELETE" });
+      await offerOrphanCleanup(out.emptied_group_id, out.emptied_group_rule, wrap);
       if (onDone) onDone();
     } catch (e) {
       wrap.appendChild(elem("div", "error-banner", t("error.prefix") + e.message));
@@ -996,6 +1033,126 @@ function renderErrorsList(errors) {
   errors.forEach((err) => box.appendChild(
     errItemEl(err, { date: true, practiceBtn: true, deleteBtn: true })));
 }
+
+// --- Grupy błędów -------------------------------------------------------------
+
+function loadGroups() {
+  return withBusy("loader.loading", null, async () => {
+    try {
+      renderGroupsList(await api("/api/groups?lang=" + LANG));
+    } catch (e) {
+      showError("#groups-list", e.message);
+    }
+  });
+}
+
+function renderGroupsList(body) {
+  $("#groups-ungrouped").textContent =
+    t("groups.ungrouped").replace("{n}", body.ungrouped);
+  const box = $("#groups-list");
+  box.innerHTML = "";
+  if (!body.groups.length) {
+    box.appendChild(elem("p", "stat-empty", t("groups.empty")));
+    return;
+  }
+  body.groups.forEach((g) => box.appendChild(groupItemEl(g)));
+}
+
+function groupItemEl(group) {
+  const count = group.member_count === 0
+    ? t("groups.emptyGroup")
+    : t("groups.members").replace("{n}", group.member_count);
+  const item = elHtml("div", "group-item",
+    `<div class="topic">${esc(group.topic_label || topicLabel(group.topic))}` +
+    `<span class="badge minor">${esc(count)}</span></div>` +
+    `<div class="rule">${esc(group.rule)}</div>` +
+    `<div class="why">${esc(group.explanation)}</div>`);
+
+  const row = elem("div", "err-actions");
+
+  // Przycisk "Ćwicz tę grupę" dochodzi w Tasku 7 — `focusOnGroup` powstaje razem
+  // z trybem grupowym w zakładce "Ćwicz błędy" i wcześniej nie miałby czego wywołać.
+
+  const rename = elem("button", "btn-sm", t("groups.rename"));
+  rename.addEventListener("click", () => {
+    const input = elem("input", "rule-input");
+    input.value = group.rule;
+    const save = elem("button", "btn-sm", t("groups.renameSave"));
+    save.addEventListener("click", () => withBusy("loader.saving", save, async () => {
+      await api(`/api/groups/${group.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ rule: input.value, explanation: group.explanation }),
+      });
+      loadGroups();
+    }));
+    rename.replaceWith(input, save);
+  });
+  row.appendChild(rename);
+
+  const del = elem("button", "btn-sm danger", t("groups.delete"));
+  del.addEventListener("click", () => withBusy("loader.deleting", del, async () => {
+    await api(`/api/groups/${group.id}`, { method: "DELETE" });
+    loadGroups();
+  }));
+  row.appendChild(del);
+
+  item.appendChild(row);
+  return item;
+}
+
+// Pusta grupa ZOSTAJE — pytamy, zamiast kasować po cichu. `container` to widoczny
+// element, obok którego wstawiamy pytanie — #groups-list bywa ukryty (tryb "Wpisy"
+// albo zupełnie inna zakładka), a niewidoczne przyciski zablokowałyby nakładkę
+// ładowania na zawsze.
+function offerOrphanCleanup(groupId, rule, container) {
+  if (groupId === null || groupId === undefined) return Promise.resolve();
+  const box = container || $("#groups-list");
+  return new Promise((resolve) => {
+    const ask = elem("div", "orphan-ask");
+    ask.appendChild(elem("span", "", t("groups.orphaned").replace("{rule}", rule || "")));
+    const keep = elem("button", "btn-sm", t("groups.orphanKeep"));
+    const drop = elem("button", "btn-sm danger", t("groups.orphanDelete"));
+    keep.addEventListener("click", () => { ask.remove(); resolve(); });
+    drop.addEventListener("click", () => withBusy("loader.deleting", drop, async () => {
+      await api(`/api/groups/${groupId}`, { method: "DELETE" });
+      ask.remove();
+      resolve();
+    }));
+    ask.appendChild(keep);
+    ask.appendChild(drop);
+    box.prepend(ask);
+  });
+}
+
+$("#btn-group-assign").addEventListener("click", () =>
+  withBusy("loader.loading", $("#btn-group-assign"), async () => {
+    const out = await api("/api/groups/assign?lang=" + LANG, { method: "POST" });
+    await loadGroups();
+    $("#groups-ungrouped").textContent = t("groups.assigned")
+      .replace("{assigned}", out.assigned)
+      .replace("{created}", out.created)
+      .replace("{unassigned}", out.unassigned);
+  }));
+
+$("#btn-group-regroup").addEventListener("click", () => {
+  if (!window.confirm(t("groups.regroupConfirm"))) return;
+  return withBusy("loader.loading", $("#btn-group-regroup"), async () => {
+    await api("/api/groups/regroup?lang=" + LANG, { method: "POST" });
+    await loadGroups();
+  });
+});
+
+function setErrorsMode(mode) {
+  const groups = mode === "groups";
+  $("#errors-list").classList.toggle("hidden", groups);
+  $("#groups-pane").classList.toggle("hidden", !groups);
+  $("#errors-mode-items").classList.toggle("is-active", !groups);
+  $("#errors-mode-groups").classList.toggle("is-active", groups);
+  if (groups) loadGroups();
+}
+
+$("#errors-mode-items").addEventListener("click", () => setErrorsMode("items"));
+$("#errors-mode-groups").addEventListener("click", () => setErrorsMode("groups"));
 
 // --- Ćwicz błędy (tryb skupienia) ---------------------------------------------------
 

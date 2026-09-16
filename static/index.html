@@ -124,9 +124,23 @@
       <div class="card">
         <div class="row">
           <h2 data-i18n="errors.journal">Dziennik błędów</h2>
+          <div class="mode-switch">
+            <button id="errors-mode-items" class="mode is-active"
+                    data-i18n="groups.modeItems">Wpisy</button>
+            <button id="errors-mode-groups" class="mode"
+                    data-i18n="groups.modeGroups">Grupy</button>
+          </div>
           <button id="btn-refresh-errors" data-i18n="btn.refresh">Odśwież</button>
         </div>
         <div id="errors-list"></div>
+        <div id="groups-pane" class="hidden">
+          <div class="row groups-actions">
+            <button id="btn-group-assign" data-i18n="groups.assign">Scal nowe</button>
+            <button id="btn-group-regroup" data-i18n="groups.regroup">Przegrupuj wszystko</button>
+            <span id="groups-ungrouped" class="muted"></span>
+          </div>
+          <div id="groups-list"></div>
+        </div>
       </div>
     </section>
     <!-- WIDOK: STATYSTYKI -->
