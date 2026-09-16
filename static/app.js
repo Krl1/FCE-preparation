@@ -1384,7 +1384,19 @@ function setTipsMode(mode) {
 $("#tips-mode-errors").addEventListener("click", () => setTipsMode("error"));
 $("#tips-mode-groups").addEventListener("click", () => setTipsMode("group"));
 
-$("#tips-new").addEventListener("click", () => loadTips(tipsError ? tipsError.id : undefined));
+/** Ciało zapytania zależne od trybu — dokładnie jedno z `group_id`/`error_id`. */
+function tipsUnitBody() {
+  return tipsMode === "group" ? { group_id: tipsGroup && tipsGroup.id }
+                              : { error_id: tipsError && tipsError.id };
+}
+
+/** Id jednostki aktualnie na ekranie — do pominięcia przy losowaniu następnej. */
+function tipsCurrentId() {
+  const unit = tipsMode === "group" ? tipsGroup : tipsError;
+  return unit ? unit.id : undefined;
+}
+
+$("#tips-new").addEventListener("click", () => loadTips(tipsCurrentId()));
 
 $("#tips-goal-save").addEventListener("click", () =>
   withBusy("loader.loading", $("#tips-goal-save"), async () => {
@@ -1395,12 +1407,6 @@ $("#tips-goal-save").addEventListener("click", () =>
       }));
     } catch (e) { showError("#tips-result", e.message); }
   }));
-
-/** Ciało zapytania zależne od trybu — dokładnie jedno z `group_id`/`error_id`. */
-function tipsUnitBody() {
-  return tipsMode === "group" ? { group_id: tipsGroup && tipsGroup.id }
-                              : { error_id: tipsError && tipsError.id };
-}
 
 $("#tips-generate").addEventListener("click", () =>
   withBusy("loader.generating", $("#tips-generate"), async () => {

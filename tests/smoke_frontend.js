@@ -182,6 +182,10 @@ const routes = {
   "/api/tips/focus": {
     error: { id: 7, topic: "collocations", topic_label: "Kolokacje", student_text: "x",
              correct_text: "y", explanation: "z" },
+    // Atrapa nie czyta `mode` z zapytania (routing tnie na "?"), więc `group` jest
+    // obecne zawsze — w trybie błędów `loadTips` i tak go ignoruje.
+    group: { id: 1, rule: "depend + on", explanation: "e", topic: "prepositions",
+             topic_label: "Przyimki", member_count: 2 },
     progress: { done: 1, goal: 5, streak: 2, required_today: 5, overdue_days: 0,
                at_risk: false, drill: { correct: 0, target: 5 } },
   },
@@ -430,8 +434,24 @@ const setInput = (id, value) => {
     ["przełączniki trybu: grupy błędów (Moje błędy) i grupy ćwiczeń (Ćwicz błędy)", async () => {
       await fire("#errors-mode-groups"); await settle();
       await fire("#errors-mode-items"); await settle();
+
       await fire("#tips-mode-groups"); await settle();
+      let before = calls.length;
+      await fire("#tips-new"); await settle();   // „Inny błąd" w trybie grupowym
+      const groupCall = calls.slice(before).find((c) => c.startsWith("GET /api/tips/focus"));
+      if (!groupCall || !groupCall.includes("mode=group") || !groupCall.includes("exclude=1")) {
+        failures.push("Inny błąd (tryb grupowy) nie pominął bieżącej grupy: " +
+          (groupCall || "brak żądania"));
+      }
+
       await fire("#tips-mode-errors"); await settle();
+      before = calls.length;
+      await fire("#tips-new"); await settle();   // „Inny błąd" w trybie pojedynczym
+      const errCall = calls.slice(before).find((c) => c.startsWith("GET /api/tips/focus"));
+      if (!errCall || !errCall.includes("mode=error") || !errCall.includes("exclude=7")) {
+        failures.push("Inny błąd (tryb pojedynczy) nie pominął bieżącego błędu: " +
+          (errCall || "brak żądania"));
+      }
     }],
     ["Statystyki", async () => fire(".tab:stats")],
     ["zmiana języka EN → PL", async () => { await fire(".lang:en"); await fire(".lang:pl"); }],
