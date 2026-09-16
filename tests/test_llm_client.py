@@ -329,6 +329,29 @@ def test_group_errors_with_no_errors_skips_the_model(monkeypatch):
     assert llm_client.group_errors(errors=[], existing_groups=[]) == {"assignments": []}
 
 
+def test_group_errors_prompt_allows_one_new_group_for_several_errors(monkeypatch):
+    """Pierwsza porcja nie widzi żadnych grup, więc bez tego zdania każdy błąd zakłada
+    własną — na 192 wpisach dałoby to setki grup-singletonów („za drobno" ze spisu ryzyk).
+    Scalanie po `normalize_rule` działa tylko, gdy model powtórzy TĘ SAMĄ nazwę reguły."""
+    seen = {}
+
+    def fake_call(prompt, kind="other"):
+        seen["prompt"] = prompt
+        return {"assignments": []}
+
+    monkeypatch.setattr(llm_client, "_call_json", fake_call)
+    llm_client.group_errors(
+        errors=[{"id": 1, "topic": "prepositions", "student_text": "depends from",
+                 "correct_text": "depends on", "explanation": "c"},
+                {"id": 2, "topic": "prepositions", "student_text": "depend from it",
+                 "correct_text": "depend on it", "explanation": "c"}],
+        existing_groups=[],
+    )
+    assert "JEDNEJ nowej grupy" in seen["prompt"]
+    assert "dokładnie tej samej nazwy 'rule'" in seen["prompt"]
+    assert "inny błąd z listy łamie tę samą regułę" in seen["prompt"]
+
+
 def test_group_errors_prompt_enumerates_valid_topics(monkeypatch):
     """Bez zamkniętej listy model wymyśla tematy, a normalize_topic cicho zrzuca je do 'language'."""
     seen = {}

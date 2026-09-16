@@ -716,6 +716,16 @@ def list_ungrouped_errors(conn: sqlite3.Connection, limit: int = 2000) -> list[d
 
 
 @_synchronized
+def count_ungrouped_errors(conn: sqlite3.Connection) -> int:
+    """Sama LICZBA nieprzypisanych wpisów. Widok grup potrzebuje liczby, nie rekordów,
+    a `list_ungrouped_errors` ściągnęłoby dla niej do 2000 wierszy."""
+    row = conn.execute(
+        "SELECT COUNT(*) AS n FROM errors WHERE group_id IS NULL"
+    ).fetchone()
+    return int(row["n"])
+
+
+@_synchronized
 def clear_all_groups(conn: sqlite3.Connection) -> None:
     """Czyści grupy i przypisania przed pełnym przegrupowaniem. Zaliczenia zostają."""
     conn.execute("UPDATE errors SET group_id = NULL")
@@ -765,9 +775,17 @@ def group_drill_correct_today(conn: sqlite3.Connection, group_id: int) -> int:
 
 @_synchronized
 def group_topic_counts(conn: sqlite3.Connection) -> list[dict]:
-    """Materiał dla `srs.choose_topic` w trybie grupowym: ile grup na temat i jak świeże."""
+    """Materiał dla `srs.choose_topic` w trybie grupowym: ile grup na temat i jak świeże.
+
+    `last_seen` to data NAJNOWSZEGO WPISU w grupach tego tematu, a nie `updated_at`
+    samej grupy: po przegrupowaniu wszystkie grupy mają ten sam znacznik i świeżość
+    spłaszczyłaby się do stałej dokładnie wtedy, gdy ma najwięcej do powiedzenia.
+    Temat złożony z samych pustych grup ma `last_seen` NULL — `srs` traktuje go
+    wtedy jak najstarszy, czyli bez premii za świeżość."""
     rows = conn.execute(
-        "SELECT topic, COUNT(*) AS count, MAX(updated_at) AS last_seen "
-        "FROM error_groups GROUP BY topic ORDER BY count DESC"
+        "SELECT g.topic AS topic, COUNT(*) AS count, "
+        "       MAX((SELECT MAX(e.created_at) FROM errors e WHERE e.group_id = g.id)) "
+        "         AS last_seen "
+        "FROM error_groups g GROUP BY g.topic ORDER BY count DESC"
     ).fetchall()
     return [dict(r) for r in rows]

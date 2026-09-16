@@ -274,6 +274,22 @@ def add_error(req: ErrorCreate, lang: str = Query(default="pl")) -> dict:
     return {"id": error_id, "topic": topic, "topic_label": tax.topic_label(topic, lang)}
 
 
+def _emptied_group(previous: int | None, new_group_id: int | None = None) -> tuple:
+    """Grupa, która właśnie została bez wpisów: `(id, rule)` albo `(None, None)`.
+
+    Wspólne dla `remove_error` i `patch_error_group` — obie ścieżki kończą się tym
+    samym pytaniem w interfejsie, więc muszą zgłaszać osierocenie identycznie.
+    Nazwa reguły leci razem z id, żeby frontend mógł zapytać „usunąć grupę X?"
+    bez dodatkowego zapytania o listę grup.
+    """
+    if previous is None or previous == new_group_id:
+        return None, None
+    if db.group_member_count(conn, previous) != 0:
+        return None, None
+    grp = db.get_group(conn, previous)
+    return previous, (grp["rule"] if grp else None)
+
+
 @app.delete("/api/errors/{error_id}")
 def remove_error(error_id: int) -> dict:
     """Usuwa wpis z dziennika (np. gdy błąd jest opanowany albo zapisany omyłkowo).
@@ -287,14 +303,7 @@ def remove_error(error_id: int) -> dict:
     previous = db.group_of_error(conn, error_id)
     if not db.delete_error(conn, error_id):
         raise HTTPException(status_code=404, detail="Nie znaleziono błędu o tym id.")
-    emptied = previous if (previous is not None
-                           and db.group_member_count(conn, previous) == 0) else None
-    # Nazwa reguły leci razem z id, żeby frontend mógł zapytać "usunąć grupę X?"
-    # bez dodatkowego zapytania o listę grup.
-    emptied_rule = None
-    if emptied is not None:
-        grp = db.get_group(conn, emptied)
-        emptied_rule = grp["rule"] if grp else None
+    emptied, emptied_rule = _emptied_group(previous)
     return {"deleted": error_id, "emptied_group_id": emptied,
             "emptied_group_rule": emptied_rule}
 
@@ -348,10 +357,20 @@ def _choose_focus_error(exclude_id: int | None = None) -> dict | None:
     return random.choice(errs) if errs else None
 
 
-def _choose_focus_group(exclude_id: int | None = None) -> dict | None:
-    """Losuje grupę ważoną częstością tematów (srs) + losowość w obrębie tematu.
+def _pick_group(groups: list[dict]) -> dict:
+    """Losuje grupę ważoną LICZBĄ jej wpisów — reguła złamana sześć razy ma wracać
+    częściej niż jednorazowe potknięcie (spec: „waga z liczby wpisów w grupie").
+    Baza 1.0 to ta sama eksploracja co `srs.BASE_WEIGHT`: pusta grupa nadal daje się
+    wylosować, bo pustą grupę nadal da się ćwiczyć."""
+    weights = [1.0 + float(g.get("member_count") or 0) for g in groups]
+    return random.choices(groups, weights=weights, k=1)[0]
 
-    Ta sama mechanika co `_choose_focus_error`, tylko materiałem są grupy."""
+
+def _choose_focus_group(exclude_id: int | None = None) -> dict | None:
+    """Losuje grupę ważoną częstością tematów (srs) + liczbą wpisów w obrębie tematu.
+
+    Ta sama mechanika co `_choose_focus_error`, tylko materiałem są grupy, a w obrębie
+    tematu losowanie nie jest równomierne (patrz `_pick_group`)."""
     counts = db.group_topic_counts(conn)
     if not counts:
         return None
@@ -361,7 +380,7 @@ def _choose_focus_group(exclude_id: int | None = None) -> dict | None:
     if exclude_id is not None:
         remaining = [g for g in groups if g["id"] != exclude_id]
         groups = remaining or [g for g in db.list_groups(conn) if g["id"] != exclude_id] or groups
-    return random.choice(groups) if groups else None
+    return _pick_group(groups) if groups else None
 
 
 @app.get("/api/tips/focus")
@@ -500,7 +519,7 @@ def get_groups(lang: str = Query(default="pl")) -> dict:
     groups = db.list_groups(conn)
     for g in groups:
         g["topic_label"] = tax.topic_label(g["topic"], lang)
-    return {"groups": groups, "ungrouped": len(db.list_ungrouped_errors(conn))}
+    return {"groups": groups, "ungrouped": db.count_ungrouped_errors(conn)}
 
 
 @app.get("/api/groups/{group_id}/members")
@@ -555,9 +574,9 @@ def patch_error_group(error_id: int, req: ErrorGroupUpdate) -> dict:
 
     previous = db.group_of_error(conn, error_id)
     db.set_error_group(conn, error_id, req.group_id)
-    emptied = previous if (previous is not None and previous != req.group_id
-                           and db.group_member_count(conn, previous) == 0) else None
-    return {"error_id": error_id, "group_id": req.group_id, "emptied_group_id": emptied}
+    emptied, emptied_rule = _emptied_group(previous, req.group_id)
+    return {"error_id": error_id, "group_id": req.group_id,
+            "emptied_group_id": emptied, "emptied_group_rule": emptied_rule}
 
 
 # --- Zastrzeżenia do wyjaśnień ------------------------------------------------

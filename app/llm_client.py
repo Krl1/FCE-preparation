@@ -734,6 +734,13 @@ def group_errors(errors: list[dict], existing_groups: list[dict], lang: str = "p
         "Nie wymyślaj identyfikatorów spoza listy istniejących grup. "
         "W polu 'error_id' podaj dokładnie to id, które stoi przy błędzie na liście — nie numeruj od nowa. "
         "Nie twórz grupy na jeden błąd, jeśli pasuje on do istniejącej. "
+        # Bez tego zdania każdy błąd z porcji jest oceniany w izolacji: pierwsza porcja
+        # nie widzi ŻADNYCH grup, więc dwa złamania tej samej reguły zakładają dwie
+        # osobne grupy. Scala je dopiero `normalize_rule`, a to wymaga, żeby model
+        # napisał tę samą nazwę — czyli trzeba go o to wprost poprosić.
+        "Kilka błędów z TEJ listy może należeć do JEDNEJ nowej grupy: użyj wtedy "
+        "dokładnie tej samej nazwy 'rule' w każdym z nich. "
+        "Nie zakładaj osobnej grupy na jeden błąd, jeśli inny błąd z listy łamie tę samą regułę. "
         "Grupa może łączyć błędy z różnych tematów, jeśli łamią tę samą regułę.\n"
         f"'rule' to krótka nazwa reguły (do 60 znaków), np. \"depend + on\". "
         f"'explanation' to jedno zdanie po {lang_name}. "

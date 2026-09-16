@@ -349,6 +349,52 @@ def test_group_topic_counts_feeds_srs(conn):
     assert rows[0]["last_seen"]
 
 
+def test_group_topic_counts_freshness_comes_from_members(conn):
+    """`last_seen` ma mówić o wpisach, nie o grupie.
+
+    Po przegrupowaniu wszystkie grupy dostają ten sam `updated_at`, więc świeżość
+    liczona z grupy byłaby stałą dokładnie wtedy, gdy powinna różnicować."""
+    gid = db.insert_group(conn, rule="r", explanation="e", topic="prepositions")
+    eid = _err(conn)
+    db.set_error_group(conn, eid, gid)
+    # Grupa „ruszona" długo po wpisie — świeżość i tak ma pochodzić od wpisu.
+    conn.execute("UPDATE error_groups SET updated_at = ? WHERE id = ?",
+                 ("2099-01-01T00:00:00+00:00", gid))
+    conn.commit()
+    member_created = db.get_error(conn, eid)["created_at"]
+    assert db.group_topic_counts(conn)[0]["last_seen"] == member_created
+
+
+def test_group_topic_counts_of_empty_groups_have_no_freshness(conn):
+    db.insert_group(conn, rule="r", explanation="e", topic="prepositions")
+    assert db.group_topic_counts(conn)[0]["last_seen"] is None
+
+
+def test_count_ungrouped_errors_matches_the_list(conn):
+    gid = db.insert_group(conn, rule="r", explanation="e", topic="articles")
+    db.set_error_group(conn, _err(conn), gid)
+    _err(conn)
+    _err(conn)
+    assert db.count_ungrouped_errors(conn) == 2
+    assert db.count_ungrouped_errors(conn) == len(db.list_ungrouped_errors(conn))
+
+
+def test_new_group_after_clearing_does_not_inherit_drill_score(conn):
+    """Nowa grupa zaczyna od zera, choćby poprzednia była dziś przerobiona do celu.
+
+    `group_drill_scores` przeżywają `clear_all_groups` (praca ma zostać policzona),
+    więc gdyby identyfikatory grup były wznawiane, świeża grupa startowałaby
+    z cudzym postępem i zaliczałaby się bez ani jednego ćwiczenia."""
+    old_gid = db.insert_group(conn, rule="stara", explanation="e", topic="articles")
+    db.insert_group_drill_score(conn, group_id=old_gid, correct_items=5, total_items=5)
+    assert db.group_drill_correct_today(conn, old_gid) == 5
+
+    db.clear_all_groups(conn)
+    new_gid = db.insert_group(conn, rule="nowa", explanation="e", topic="articles")
+    assert new_gid != old_gid
+    assert db.group_drill_correct_today(conn, new_gid) == 0
+
+
 def test_migration_adds_group_id_to_legacy_errors_table(tmp_path):
     """Migracja na ŻYWEJ bazie: kolumna dochodzi, a istniejące wpisy zostają nietknięte.
 

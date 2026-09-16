@@ -5,6 +5,7 @@
 
 import importlib
 import json
+import random
 import sys
 
 import pytest
@@ -809,6 +810,26 @@ def test_patch_error_group_detaches_and_reports_orphan(app_ctx, monkeypatch):
     out = client.patch(f"/api/errors/{eid}/group", json={"group_id": None}).json()
     assert out["group_id"] is None
     assert out["emptied_group_id"] == gid
+    # Nazwa reguły leci tak samo jak przy DELETE /api/errors/{id} — frontend ma tam
+    # jedno wspólne pytanie „usunąć grupę X?" i nie może zostać z pustym cudzysłowem.
+    assert out["emptied_group_rule"] == "r"
+
+
+def test_patch_error_group_without_orphan_reports_no_rule(app_ctx, monkeypatch):
+    client, main_mod = app_ctx
+    kept = _post_error(client)
+    moved = _post_error(client, student="discuss about")
+    _stub_llm(main_mod, monkeypatch, {"assignments": [
+        {"error_id": kept, "new_group": {"rule": "r", "explanation": "e",
+                                         "topic": "prepositions"}},
+        {"error_id": moved, "new_group": {"rule": "r", "explanation": "e",
+                                          "topic": "prepositions"}}]})
+    client.post("/api/groups/assign")
+    gid = client.get("/api/groups").json()["groups"][0]["id"]
+    out = client.patch(f"/api/errors/{moved}/group", json={"group_id": None}).json()
+    assert out["emptied_group_id"] is None
+    assert out["emptied_group_rule"] is None
+    assert client.get("/api/groups").json()["groups"][0]["id"] == gid
 
 
 def test_patch_error_group_to_missing_group_is_404(app_ctx):
@@ -851,6 +872,34 @@ def test_focus_group_mode_returns_a_group(app_ctx, monkeypatch):
     body = client.get("/api/tips/focus?mode=group").json()
     assert body["group"]["id"] == gid
     assert body["error"] is None
+
+
+def test_focus_group_mode_prefers_the_group_with_more_members(app_ctx):
+    """Spec: „waga z liczby wpisów w grupie". Reguła złamana pięć razy ma wracać
+    częściej niż jednorazowe potknięcie — równomierne losowanie to gubiło."""
+    client, main_mod = app_ctx
+    conn = main_mod.conn
+    big = main_mod.db.insert_group(conn, rule="duża", explanation="e", topic="prepositions")
+    small = main_mod.db.insert_group(conn, rule="mała", explanation="e", topic="prepositions")
+    for i in range(5):
+        main_mod.db.set_error_group(conn, _post_error(client, student=f"zdanie {i}"), big)
+    main_mod.db.set_error_group(conn, _post_error(client, student="raz"), small)
+
+    random.seed(20260916)
+    picks = [client.get("/api/tips/focus?mode=group").json()["group"]["id"]
+             for _ in range(60)]
+    # Wagi 6:2 — przy równomiernym losowaniu (30:30) ten próg nie przechodzi.
+    assert picks.count(big) >= 2 * picks.count(small)
+    assert picks.count(small) > 0, "pojedyncze potknięcie nadal musi mieć szansę"
+
+
+def test_focus_group_mode_can_still_draw_an_empty_group(app_ctx):
+    """Pusta grupa to reguła przerobiona do czysta, a nie śmieć — nadal daje się ćwiczyć."""
+    client, main_mod = app_ctx
+    gid = main_mod.db.insert_group(main_mod.conn, rule="pusta", explanation="e",
+                                   topic="prepositions")
+    body = client.get("/api/tips/focus?mode=group").json()
+    assert body["group"]["id"] == gid
 
 
 def test_focus_group_mode_with_no_groups_returns_null(app_ctx):
