@@ -51,8 +51,14 @@
       <div id="practice-result" class="card result hidden"></div>
     </section>
 
-    <!-- WIDOK: ĆWICZ BŁĘDY (tryb skupienia na jednym błędzie) -->
+    <!-- WIDOK: ĆWICZ BŁĘDY (tryb skupienia na jednym błędzie albo na grupie) -->
     <section id="view-tips" class="view">
+      <div class="mode-switch">
+        <button id="tips-mode-errors" class="mode is-active"
+                data-i18n="groups.drillErrors">Pojedyncze błędy</button>
+        <button id="tips-mode-groups" class="mode"
+                data-i18n="groups.drillGroups">Grupy</button>
+      </div>
       <div class="card goal-card">
         <div class="row">
           <span class="goal-progress"><strong id="tips-done">0</strong> / <strong id="tips-goal">5</strong>&nbsp;<span data-i18n="tips.today">dzisiaj</span></span>

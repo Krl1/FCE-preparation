@@ -117,6 +117,8 @@ const I18N = {
     "kind.other": "Inne",
     "groups.modeItems": "Wpisy",
     "groups.modeGroups": "Grupy",
+    "groups.drillErrors": "Pojedyncze błędy",
+    "groups.drillGroups": "Grupy",
     "groups.assign": "Scal nowe",
     "groups.regroup": "Przegrupuj wszystko",
     "groups.regroupConfirm": "Przegrupowanie liczy wszystko od nowa i kasuje ręczne poprawki oraz puste grupy. Na pewno?",
@@ -248,6 +250,8 @@ const I18N = {
     "kind.other": "Other",
     "groups.modeItems": "Entries",
     "groups.modeGroups": "Groups",
+    "groups.drillErrors": "Individual mistakes",
+    "groups.drillGroups": "Groups",
     "groups.assign": "Merge new",
     "groups.regroup": "Regroup everything",
     "groups.regroupConfirm": "Regrouping recomputes from scratch and discards manual edits and empty groups. Are you sure?",
@@ -277,6 +281,8 @@ let TOPIC_LABELS = {}; // id -> {pl, en}
 let currentExercise = null;
 let tipsError = null;
 let tipsExercise = null;
+let tipsMode = "error";   // "error" | "group"
+let tipsGroup = null;
 
 const $ = (sel) => document.querySelector(sel);
 
@@ -1070,8 +1076,9 @@ function groupItemEl(group) {
 
   const row = elem("div", "err-actions");
 
-  // Przycisk "Ćwicz tę grupę" dochodzi w Tasku 7 — `focusOnGroup` powstaje razem
-  // z trybem grupowym w zakładce "Ćwicz błędy" i wcześniej nie miałby czego wywołać.
+  const practise = elem("button", "practice-btn", t("groups.practiceThis"));
+  practise.addEventListener("click", () => focusOnGroup(group));
+  row.insertBefore(practise, row.firstChild);
 
   const rename = elem("button", "btn-sm", t("groups.rename"));
   rename.addEventListener("click", () => {
@@ -1209,10 +1216,19 @@ $("#errors-mode-groups").addEventListener("click", () => setErrorsMode("groups")
 function loadTips(exclude) {
   return withBusy("loader.loading", null, async () => {
     try {
-      const url = "/api/tips/focus?lang=" + LANG + (exclude ? "&exclude=" + exclude : "");
-      const data = await api(url);
-      renderGoal(data.progress);
-      setFocus(data.error);
+      const qs = `/api/tips/focus?lang=${LANG}&mode=${tipsMode}` +
+        (exclude ? `&exclude=${exclude}` : "");
+      const body = await api(qs);
+      if (tipsMode === "group") {
+        tipsGroup = body.group;
+        tipsError = null;
+        setFocusGroup(body.group);
+      } else {
+        tipsError = body.error;
+        tipsGroup = null;
+        setFocus(body.error);
+      }
+      renderGoal(body.progress);
     } catch (e) {
       showError("#tips-result", e.message);
     }
@@ -1300,13 +1316,73 @@ function renderFocusFeedback(err) {
   box.appendChild(deleteErrorWidget(err.id, () => loadTips()));
 }
 
-/** Skok z „Moje błędy" do „Ćwicz błędy" z konkretnym błędem + od razu ćwiczenie. */
+/** Odpowiednik `setFocus` dla trybu grupowego — wypełnia te same sloty karty
+ *  `#tips-focus`, bez podmiany innerHTML (żeby nie zagnieździć .focus-card w sobie
+ *  i nie zgubić przycisków "Inny błąd" / "Ćwiczenie"). */
+function setFocusGroup(group) {
+  tipsGroup = group;
+  tipsExercise = null;
+  $("#tips-exercise-area").classList.add("hidden");
+  $("#tips-result").classList.add("hidden");
+  $("#tips-generate").textContent = t("tips.generate");
+  if (!group) {
+    $("#tips-focus").classList.add("hidden");
+    $("#tips-empty").classList.remove("hidden");
+    return;
+  }
+  $("#tips-empty").classList.add("hidden");
+  $("#tips-topic").textContent = group.topic_label || topicLabel(group.topic);
+  // Grupa to reguła, nie para "błędnie → poprawnie": w polu docelowym pokazujemy,
+  // ile kontekstów ma grupa, a pusta grupa mówi o tym wprost.
+  $("#tips-from").textContent = group.rule;
+  $("#tips-to").textContent = group.member_count === 0
+    ? t("groups.emptyGroup")
+    : t("groups.members").replace("{n}", group.member_count);
+  $("#tips-why").textContent = group.explanation || "";
+  // Zastrzeżenia dotyczą wpisów w dzienniku, nie grup — slot zostaje pusty.
+  $("#tips-feedback").innerHTML = "";
+  $("#tips-focus").classList.remove("hidden");
+}
+
+/** Skok z „Moje błędy" do „Ćwicz błędy" z konkretnym błędem + od razu ćwiczenie.
+ *  Wymusza tryb pojedynczych błędów — inaczej mógłby zostać w trybie grupowym
+ *  z nieaktualną grupą, a "Ćwiczenie" wysłałoby zapytanie o tę starą grupę. */
 async function focusOnError(err) {
+  tipsMode = "error";
+  $("#tips-mode-errors").classList.add("is-active");
+  $("#tips-mode-groups").classList.remove("is-active");
   activateTab("tips");
+  tipsGroup = null;
   setFocus(err);
   await refreshProgress();
   $("#tips-generate").click();
 }
+
+/** Skok z widoku grup do „Ćwicz błędy" w trybie grupowym z konkretną grupą. */
+async function focusOnGroup(group) {
+  tipsMode = "group";
+  $("#tips-mode-errors").classList.remove("is-active");
+  $("#tips-mode-groups").classList.add("is-active");
+  activateTab("tips");
+  tipsGroup = group;
+  tipsError = null;
+  setFocusGroup(group);
+  await refreshProgress();
+}
+
+/** Przełącznik trybu ćwiczenia: pojedyncze błędy vs. grupy. Czyści stan drugiego
+ *  trybu, żeby nieaktualny błąd/grupa nie przeciekł do zapytań nowego trybu. */
+function setTipsMode(mode) {
+  tipsMode = mode;
+  tipsError = null;
+  tipsGroup = null;
+  $("#tips-mode-errors").classList.toggle("is-active", mode === "error");
+  $("#tips-mode-groups").classList.toggle("is-active", mode === "group");
+  loadTips();
+}
+
+$("#tips-mode-errors").addEventListener("click", () => setTipsMode("error"));
+$("#tips-mode-groups").addEventListener("click", () => setTipsMode("group"));
 
 $("#tips-new").addEventListener("click", () => loadTips(tipsError ? tipsError.id : undefined));
 
@@ -1320,17 +1396,21 @@ $("#tips-goal-save").addEventListener("click", () =>
     } catch (e) { showError("#tips-result", e.message); }
   }));
 
+/** Ciało zapytania zależne od trybu — dokładnie jedno z `group_id`/`error_id`. */
+function tipsUnitBody() {
+  return tipsMode === "group" ? { group_id: tipsGroup && tipsGroup.id }
+                              : { error_id: tipsError && tipsError.id };
+}
+
 $("#tips-generate").addEventListener("click", () =>
   withBusy("loader.generating", $("#tips-generate"), async () => {
-    if (!tipsError) return;
+    if (tipsMode === "group" ? !tipsGroup : !tipsError) return;
     tipsExercise = null;
     try {
       const ex = await api("/api/tips/exercise", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ error_id: tipsError.id, lang: LANG }),
+        body: JSON.stringify({ ...tipsUnitBody(), lang: LANG }),
       });
-      // Zapamiętujemy błąd źródłowy — do celu zaliczamy TEN błąd, nie bieżący fokus.
-      ex.error_id = tipsError.id;
       tipsExercise = ex;
       $("#tips-result").classList.add("hidden");
       renderExerciseInto(TIPS_UI, ex);
@@ -1358,9 +1438,7 @@ $("#tips-grade").addEventListener("click", async () => {
   try {
     const progress = await api("/api/tips/complete", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        error_id: tipsExercise.error_id, correct_items: correct, total_items: total,
-      }),
+      body: JSON.stringify({ ...tipsUnitBody(), correct_items: correct, total_items: total }),
     });
     renderGoal(progress);
   } catch (_) { /* ocena jest ważniejsza niż licznik */ }

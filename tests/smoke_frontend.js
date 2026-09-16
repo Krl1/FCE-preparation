@@ -220,6 +220,12 @@ const routes = {
   "POST /api/errors": { id: 42, topic: "collocations", topic_label: "Kolokacje" },
   "/api/errors/1": { deleted: 1 },   // ręczne usunięcie wpisu z dziennika (DELETE)
   "/api/errors/7": { deleted: 7 },   // ręczne usunięcie błędu w „Ćwicz błędy"
+  "/api/groups": { groups: [{ id: 1, rule: "depend + on", explanation: "e",
+                              topic: "prepositions", topic_label: "Przyimki",
+                              member_count: 2 }], ungrouped: 3 },
+  "/api/groups/1/members": [],
+  "/api/groups/assign": { assigned: 1, created: 1, unassigned: 0 },
+  "/api/groups/regroup": { assigned: 0, created: 1, unassigned: 0 },
 };
 
 const calls = [];
@@ -420,6 +426,12 @@ const setInput = (id, value) => {
       await fire(".tab:tips"); await settle();
       await fireByClass("dispute-btn");
       await fireByClass("dispute-send"); await settle();
+    }],
+    ["przełączniki trybu: grupy błędów (Moje błędy) i grupy ćwiczeń (Ćwicz błędy)", async () => {
+      await fire("#errors-mode-groups"); await settle();
+      await fire("#errors-mode-items"); await settle();
+      await fire("#tips-mode-groups"); await settle();
+      await fire("#tips-mode-errors"); await settle();
     }],
     ["Statystyki", async () => fire(".tab:stats")],
     ["zmiana języka EN → PL", async () => { await fire(".lang:en"); await fire(".lang:pl"); }],
