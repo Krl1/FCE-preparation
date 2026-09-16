@@ -151,9 +151,10 @@ Uwaga: pliki tekstowe idą przez model, więc ich import **kosztuje wywołania s
   Przełącznik **Wpisy / Grupy** pokazuje ten sam dziennik w dwóch ujęciach. Grupa to jedna
   reguła wraz z kontekstami, w których ją złamałeś — **Scal nowe** przypisuje wpisy, które
   jeszcze nie mają grupy, a **Przegrupuj wszystko** liczy podział od zera (kasuje ręczne
-  poprawki, więc pyta o potwierdzenie). Grupy mogą łączyć wpisy z różnych tematów, jeśli
-  łamią tę samą regułę. **Pusta grupa zostaje** — gdy usuniesz z niej ostatni wpis,
-  aplikacja zapyta, czy usunąć też samą grupę; reguła bez wpisów nadal daje się ćwiczyć.
+  poprawki oraz puste grupy zachowane ręcznie, więc pyta o potwierdzenie). Grupy mogą
+  łączyć wpisy z różnych tematów, jeśli łamią tę samą regułę. **Pusta grupa zostaje** —
+  gdy usuniesz z niej ostatni wpis, aplikacja zapyta, czy usunąć też samą grupę; reguła
+  bez wpisów nadal daje się ćwiczyć.
 - **Statystyki** — dwie sekcje: *Nauka* (wygenerowane ćwiczenia, sprawdzone odpowiedzi, skuteczność,
   powtórki, liczba błędów, podział wg typu zadania) oraz *Zużycie Claude* (liczba wywołań, tokeny
   wejściowe/wyjściowe/cache, **szacowany koszt wg stawek API** i podział wg rodzaju wywołania).

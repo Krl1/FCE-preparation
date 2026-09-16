@@ -155,9 +155,10 @@ does not — it is parsed locally).
   The **Entries / Groups** switch shows the same log in two views. A group is one rule
   together with the contexts you broke it in — **Merge new** assigns entries that have no
   group yet, and **Regroup everything** recomputes the split from scratch (it discards
-  manual edits, so it asks for confirmation). Groups may span topics when the entries break
-  the same rule. **An empty group stays** — when you remove its last entry the app asks
-  whether to delete the group too; a rule with no entries can still be practised.
+  manual edits and any empty groups you chose to keep, so it asks for confirmation). Groups
+  may span topics when the entries break the same rule. **An empty group stays** — when you
+  remove its last entry the app asks whether to delete the group too; a rule with no
+  entries can still be practised.
 - **Statistics** — two sections: *Learning* (exercises generated, answers checked, accuracy, reviews,
   mistakes logged, breakdown by task type) and *Claude usage* (call count, input/output/cache tokens,
   **estimated cost at API rates**, and a breakdown by call type).
