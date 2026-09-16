@@ -331,3 +331,6 @@ h2 { font-size: 1.05rem; }
   border-radius: 8px; padding: .5rem .7rem; margin-bottom: .6rem;
 }
 .rule-input { flex: 1; min-width: 12rem; margin: 0 !important; }
+/* Konteksty rozwiniętej grupy — te same kafle co w dzienniku, tylko ciaśniej */
+.group-members { margin-top: .6rem; border-top: 1px solid var(--line); padding-top: .4rem; }
+.group-members .err-item { margin: .4rem 0; }

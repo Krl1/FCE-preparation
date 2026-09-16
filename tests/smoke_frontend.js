@@ -56,6 +56,14 @@ function makeNode(key) {
     },
     set innerHTML(_v) {}, get innerHTML() { return ""; },
     appendChild(c) { children.push(c); return c; },
+    // `insertBefore` jest realne: bez niego kafel grupy wywalał się w połowie budowy,
+    // a błąd znikał w `catch` ładowania listy — czyli widok grup nie był naprawdę testowany.
+    insertBefore(c, ref) {
+      const at = ref ? children.indexOf(ref) : -1;
+      if (at >= 0) children.splice(at, 0, c); else children.push(c);
+      return c;
+    },
+    get firstChild() { return children.length ? children[0] : null; },
     prepend() {}, remove() {}, focus() {},
     click() { (handlers[key + "|click"] || []).forEach((fn) => fn({ preventDefault() {} })); },
     setAttribute() {}, getAttribute: () => null,
@@ -260,7 +268,13 @@ const routes = {
   "/api/groups": { groups: [{ id: 1, rule: "depend + on", explanation: "e",
                               topic: "prepositions", topic_label: "Przyimki",
                               member_count: 2 }], ungrouped: 3 },
-  "/api/groups/1/members": [],
+  "/api/groups/1/members": [
+    { id: 11, topic: "collocations", topic_label: "Kolokacje", student_text: "depends from",
+      correct_text: "depends on", explanation: "kalka z polskiego", severity: "minor" },
+  ],
+  // Odpięcie ostatniego wpisu osieraca grupę — odpowiedź niesie też nazwę reguły.
+  "/api/errors/11/group": { error_id: 11, group_id: null, emptied_group_id: 1,
+                            emptied_group_rule: "depend + on" },
   "/api/groups/assign": { assigned: 1, created: 1, unassigned: 0 },
   "/api/groups/regroup": { assigned: 0, created: 1, unassigned: 0 },
 };
@@ -491,7 +505,7 @@ const setInput = (id, value) => {
       }
 
       const before = calls.length;
-      await clickLatestByClass("btn-sm");   // „Zostaw” — pusta grupa ZOSTAJE
+      await clickLatestByClass("orphan-keep");   // „Zostaw” — pusta grupa ZOSTAJE
       await pending;
       await settle();
       if (calls.slice(before).some((c) => c.startsWith("DELETE /api/groups/"))) {
@@ -579,6 +593,40 @@ const setInput = (id, value) => {
       // Bez tej klasy reguła renderowałaby się na czerwono i przekreślona — jak błąd.
       if (!hasClass("#tips-focus", "is-group")) {
         failures.push("karta w trybie grupowym nie ma klasy is-group");
+      }
+      await fire("#errors-mode-items"); await settle();
+    }],
+    ["rozwinięcie grupy do kontekstów i odpięcie wpisu", async () => {
+      created.length = 0;
+      await fire("#errors-mode-groups"); await settle();
+
+      const membersCalls = () => calls.filter((c) => c.includes("/api/groups/1/members")).length;
+      await clickLatestByClass("group-expand"); await settle();
+      if (membersCalls() !== 1) failures.push("rozwinięcie grupy nie pobrało kontekstów");
+
+      // Zwinięcie i ponowne rozwinięcie korzysta z tego, co już pobrane.
+      await clickLatestByClass("group-expand"); await settle();
+      await clickLatestByClass("group-expand"); await settle();
+      if (membersCalls() !== 1) {
+        failures.push("ponowne rozwinięcie pobrało konteksty drugi raz: " + membersCalls());
+      }
+
+      const pending = clickLatestByClass("detach-btn");
+      await settle();
+      if (!calls.some((c) => c.startsWith("PATCH /api/errors/11/group"))) {
+        failures.push("„Odepnij” nie wysłało PATCH /api/errors/{id}/group");
+      }
+      if (!created.some((n) => String(n.className || "") === "orphan-ask")) {
+        failures.push("odpięcie ostatniego wpisu nie zapytało o osieroconą grupę");
+      }
+      if (!hasClass("#loader", "hidden")) {
+        failures.push("nakładka ładowania wisi nad pytaniem po odpięciu wpisu");
+      }
+      const before = calls.length;
+      await clickLatestByClass("orphan-keep");   // grupa ZOSTAJE
+      await pending; await settle();
+      if (calls.slice(before).some((c) => c.startsWith("DELETE /api/groups/"))) {
+        failures.push("„Zostaw” po odpięciu usunęło grupę");
       }
       await fire("#errors-mode-items"); await settle();
     }],

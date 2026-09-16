@@ -131,6 +131,7 @@ const I18N = {
     "groups.renameSave": "Zapisz",
     "groups.delete": "Usuń grupę",
     "groups.detach": "Odepnij",
+    "groups.contexts": "Konteksty",
     "groups.practiceThis": "Ćwicz tę grupę",
     "groups.orphaned": "Grupa „{rule}\" została bez wpisów. Usunąć ją także?",
     "groups.orphanKeep": "Zostaw",
@@ -265,6 +266,7 @@ const I18N = {
     "groups.renameSave": "Save",
     "groups.delete": "Delete group",
     "groups.detach": "Detach",
+    "groups.contexts": "Contexts",
     "groups.practiceThis": "Practise this group",
     "groups.orphaned": "Group \"{rule}\" is now empty. Delete it as well?",
     "groups.orphanKeep": "Keep",
@@ -1096,6 +1098,37 @@ function groupItemEl(group) {
   practise.addEventListener("click", () => focusOnGroup(group));
   row.insertBefore(practise, row.firstChild);
 
+  // Konteksty grupy: po co ta reguła istnieje widać dopiero po wpisach, które ją złamały.
+  // Pobieramy je LENIWIE i raz na rozwinięcie — lista grup potrafi mieć kilkadziesiąt kafli.
+  const members = elem("div", "group-members hidden");
+  let membersLoaded = false;
+  const expand = elem("button", "btn-sm group-expand", "▸ " + t("groups.contexts"));
+  expand.addEventListener("click", async () => {
+    if (!members.classList.contains("hidden")) {
+      members.classList.add("hidden");
+      expand.textContent = "▸ " + t("groups.contexts");
+      return;
+    }
+    if (!membersLoaded) {
+      let rows;
+      try {
+        rows = await withBusy("loader.loading", expand, () =>
+          api(`/api/groups/${group.id}/members?lang=${LANG}`));
+      } catch (e) {
+        item.appendChild(elem("div", "error-banner", t("error.prefix") + e.message));
+        return;
+      }
+      if (!rows) return;   // podwójne kliknięcie
+      members.innerHTML = "";
+      if (!rows.length) members.appendChild(elem("p", "stat-empty", t("groups.emptyGroup")));
+      rows.forEach((m) => members.appendChild(groupMemberEl(m)));
+      membersLoaded = true;
+    }
+    members.classList.remove("hidden");
+    expand.textContent = "▾ " + t("groups.contexts");
+  });
+  row.appendChild(expand);
+
   const rename = elem("button", "btn-sm", t("groups.rename"));
   rename.addEventListener("click", () => {
     const input = elem("input", "rule-input");
@@ -1120,6 +1153,40 @@ function groupItemEl(group) {
 
   row.appendChild(deleteGroupWidget(group));
 
+  item.appendChild(row);
+  item.appendChild(members);
+  return item;
+}
+
+/** Kontekst grupy: ten sam kafel co w dzienniku (`err-item`), ale jedyną akcją jest
+ *  odpięcie wpisu — zastrzeżenia i kasowanie zostają tam, gdzie widać cały wpis. */
+function groupMemberEl(member) {
+  const item = elHtml("div", "err-item",
+    `<div class="topic">${esc(member.topic_label || topicLabel(member.topic))}</div>` +
+    `<div class="diff"><span class="from">${esc(member.student_text)}</span> → ` +
+    `<span class="to">${esc(member.correct_text)}</span></div>`);
+
+  const row = elem("div", "err-actions");
+  const detach = elem("button", "btn-sm detach-btn", t("groups.detach"));
+  detach.addEventListener("click", async () => {
+    let out;
+    try {
+      out = await withBusy("loader.saving", detach, () =>
+        api(`/api/errors/${member.id}/group`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ group_id: null }),
+        }));
+    } catch (e) {
+      item.appendChild(elem("div", "error-banner", t("error.prefix") + e.message));
+      return;
+    }
+    if (!out) return;   // withBusy zwraca undefined przy podwójnym kliknięciu
+    // Pusta grupa ZOSTAJE — pytamy POZA nakładką, dokładnie jak przy usuwaniu wpisu.
+    await offerOrphanCleanup(out.emptied_group_id, out.emptied_group_rule, item);
+    loadGroups();
+  });
+  row.appendChild(detach);
   item.appendChild(row);
   return item;
 }
@@ -1171,8 +1238,8 @@ function offerOrphanCleanup(groupId, rule, container) {
   return new Promise((resolve) => {
     const ask = elem("div", "orphan-ask");
     ask.appendChild(elem("span", "", t("groups.orphaned").replace("{rule}", rule || "")));
-    const keep = elem("button", "btn-sm", t("groups.orphanKeep"));
-    const drop = elem("button", "btn-sm danger", t("groups.orphanDelete"));
+    const keep = elem("button", "btn-sm orphan-keep", t("groups.orphanKeep"));
+    const drop = elem("button", "btn-sm danger orphan-drop", t("groups.orphanDelete"));
     keep.addEventListener("click", () => { ask.remove(); resolve(); });
     drop.addEventListener("click", () => withBusy("loader.deleting", drop, async () => {
       try {
