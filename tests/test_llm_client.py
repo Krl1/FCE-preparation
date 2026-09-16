@@ -327,3 +327,22 @@ def test_group_errors_with_no_errors_skips_the_model(monkeypatch):
 
     monkeypatch.setattr(llm_client, "_call_json", explode)
     assert llm_client.group_errors(errors=[], existing_groups=[]) == {"assignments": []}
+
+
+def test_group_errors_prompt_enumerates_valid_topics(monkeypatch):
+    """Bez zamkniętej listy model wymyśla tematy, a normalize_topic cicho zrzuca je do 'language'."""
+    seen = {}
+
+    def fake_call(prompt, kind="other"):
+        seen["prompt"] = prompt
+        return {"assignments": []}
+
+    monkeypatch.setattr(llm_client, "_call_json", fake_call)
+    llm_client.group_errors(
+        errors=[{"id": 1, "topic": "articles", "student_text": "a",
+                 "correct_text": "b", "explanation": "c"}],
+        existing_groups=[],
+    )
+    assert "prepositions" in seen["prompt"]
+    assert "false_friends" in seen["prompt"]
+    assert "error_id" in seen["prompt"]

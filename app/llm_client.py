@@ -683,6 +683,7 @@ def group_errors(errors: list[dict], existing_groups: list[dict], lang: str = "p
         return {"assignments": []}
 
     lang_name = _lang_name(lang)
+    valid_topics = ", ".join(tax.TOPICS.keys())
     known = "\n".join(
         f"- id={g['id']} | reguła: {g['rule']} | temat={g.get('topic', '')}"
         for g in existing_groups
@@ -701,11 +702,12 @@ def group_errors(errors: list[dict], existing_groups: list[dict], lang: str = "p
         "- jeśli pasuje do istniejącej grupy → podaj jej 'group_id' i 'new_group': null,\n"
         "- jeśli nie pasuje do żadnej → 'group_id': null i opisz 'new_group'.\n"
         "Nie wymyślaj identyfikatorów spoza listy istniejących grup. "
+        "W polu 'error_id' podaj dokładnie to id, które stoi przy błędzie na liście — nie numeruj od nowa. "
         "Nie twórz grupy na jeden błąd, jeśli pasuje on do istniejącej. "
         "Grupa może łączyć błędy z różnych tematów, jeśli łamią tę samą regułę.\n"
         f"'rule' to krótka nazwa reguły (do 60 znaków), np. \"depend + on\". "
         f"'explanation' to jedno zdanie po {lang_name}. "
-        f"'topic' to identyfikator tematu z taksonomii FCE, małymi literami.\n\n"
+        f"Pole 'topic' nowej grupy MUSI być jednym z: {valid_topics}.\n\n"
         f"Zwróć WYŁĄCZNIE JSON w kształcie: {shape}"
     )
     return _call_json(prompt, kind="group")
