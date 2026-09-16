@@ -32,13 +32,23 @@ const failures = [];
 function makeNode(key) {
   if (nodes.has(key)) return nodes.get(key);
   const children = [];
+  // Klasy SĄ zapamiętywane (potrzebne m.in. do sprawdzenia, czy nakładka ładowania
+  // zniknęła), ale `contains` zostaje atrapą zwracającą „aktywna jest zakładka
+  // Ćwicz zadania" — scenariusze opierają się na tym ustalonym stanie.
+  const classes = new Set();
   const node = {
-    __key: key,
+    __key: key, __classes: classes,
     dataset: {}, style: {}, children,
     className: "", textContent: "", value: key.includes("type") ? "uoe_part1_mcq_cloze" : "",
     selectedIndex: 0, disabled: false, rows: 0, placeholder: "", type: "",
     classList: {
-      add() {}, remove() {}, toggle() {},
+      add(...cls) { cls.forEach((c) => classes.add(c)); },
+      remove(...cls) { cls.forEach((c) => classes.delete(c)); },
+      toggle(c, force) {
+        const on = force === undefined ? !classes.has(c) : Boolean(force);
+        if (on) classes.add(c); else classes.delete(c);
+        return on;
+      },
       contains: () => key.includes("view-practice"),
     },
     set innerHTML(_v) {}, get innerHTML() { return ""; },
@@ -255,6 +265,8 @@ const settle = () => new Promise((r) => setTimeout(r, 15));
 
 const nodeText = (key) => String((nodes.get(key) || {}).textContent ?? "");
 
+const hasClass = (key, cls) => Boolean(nodes.get(key) && nodes.get(key).__classes.has(cls));
+
 const fire = async (key, ev = "click") => {
   const fns = handlers[key + "|" + ev] || [];
   if (!fns.length) { failures.push("brak handlera dla " + key); return; }
@@ -269,6 +281,18 @@ const fireByClass = async (cls, nth = 0) => {
   if (!fns.length) { failures.push("brak handlera na " + cls); return false; }
   for (const fn of fns) await fn({ preventDefault() {} });
   return true;
+};
+
+/** Klika element dynamiczny, uruchamiając TYLKO najnowszy handler i NIE czekając na
+ *  jego zakończenie. Atrapy węzłów są współdzielone (klucz zależy od pozycji w `created`,
+ *  a scenariusze zerują tę listę), więc na jednym węźle leżą też domknięcia z poprzednich
+ *  renderów — a handler, który czeka na odpowiedź użytkownika, zablokowałby `await`. */
+const clickLatestByClass = (cls, nth = 0) => {
+  const hits = created.filter((n) => String(n.className || "").includes(cls));
+  if (!hits[nth]) { failures.push("brak elementu o klasie " + cls); return Promise.resolve(); }
+  const fns = handlers[hits[nth].__key + "|click"] || [];
+  if (!fns.length) { failures.push("brak handlera na " + cls); return Promise.resolve(); }
+  return Promise.resolve(fns[fns.length - 1]({ preventDefault() {} }));
 };
 
 const setInput = (id, value) => {
@@ -421,6 +445,39 @@ const setInput = (id, value) => {
       await fireByClass("delete-btn");
       await fireByClass("delete-yes"); await settle();
       if (!calls.includes("DELETE /api/errors/1")) failures.push("brak wywołania usunięcia błędu");
+    }],
+    ["usunięcie ostatniego wpisu grupy → pytanie o osieroconą grupę", async () => {
+      created.length = 0;
+      routes["/api/errors/1"] = { deleted: 1, emptied_group_id: 1,
+                                  emptied_group_rule: "depend + on" };
+      await fire("#btn-refresh-errors"); await settle();
+      await clickLatestByClass("delete-btn");
+      // Handler „Tak, usuń" czeka na odpowiedź o osieroconej grupie, więc NIE czekamy
+      // na jego zakończenie — dokładnie jak przeglądarka, która wraca do pętli zdarzeń.
+      const pending = clickLatestByClass("delete-yes");
+      await settle();
+
+      if (!created.some((n) => String(n.className || "") === "orphan-ask")) {
+        failures.push("brak pytania o osieroconą grupę po usunięciu ostatniego wpisu");
+      }
+      // Sedno regresji: pytanie musi paść PO wyjściu z `withBusy`. Nakładka ładowania
+      // jest `position: fixed; inset: 0` — gdyby jeszcze wisiała, ani „Zostaw", ani
+      // „Usuń grupę" nie dałyby się kliknąć myszą i aplikacja stałaby na „Usuwam…".
+      if (!hasClass("#loader", "hidden")) {
+        failures.push("nakładka ładowania wisi nad pytaniem o osieroconą grupę");
+      }
+
+      const before = calls.length;
+      await clickLatestByClass("btn-sm");   // „Zostaw” — pusta grupa ZOSTAJE
+      await pending;
+      await settle();
+      if (calls.slice(before).some((c) => c.startsWith("DELETE /api/groups/"))) {
+        failures.push("„Zostaw\" usunęło grupę");
+      }
+      if (!hasClass("#loader", "hidden")) {
+        failures.push("nakładka ładowania została po odpowiedzi na pytanie o grupę");
+      }
+      routes["/api/errors/1"] = { deleted: 1 };
     }],
     ["usunięcie ćwiczonego błędu (Ćwicz błędy)", async () => {
       created.length = 0;

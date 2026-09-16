@@ -799,15 +799,22 @@ function deleteErrorWidget(errorId, onDone) {
     confirmBox.classList.add("hidden");
     btn.classList.remove("hidden");
   });
-  yes.addEventListener("click", () => withBusy("loader.deleting", yes, async () => {
+  // Pytanie o osieroconą grupę zadajemy PO wyjściu z `withBusy` — nakładka ładowania
+  // jest `position: fixed; inset: 0` i przechwyciłaby kliknięcia w „Zostaw" / „Usuń grupę",
+  // więc pytanie zadane wewnątrz busy nie dałoby się odkliknąć myszą.
+  yes.addEventListener("click", async () => {
+    let out;
     try {
-      const out = await api("/api/errors/" + errorId, { method: "DELETE" });
-      await offerOrphanCleanup(out.emptied_group_id, out.emptied_group_rule, wrap);
-      if (onDone) onDone();
+      out = await withBusy("loader.deleting", yes, () =>
+        api("/api/errors/" + errorId, { method: "DELETE" }));
     } catch (e) {
       wrap.appendChild(elem("div", "error-banner", t("error.prefix") + e.message));
+      return;
     }
-  }));
+    if (!out) return;   // withBusy zwraca undefined przy podwójnym kliknięciu
+    await offerOrphanCleanup(out.emptied_group_id, out.emptied_group_rule, wrap);
+    if (onDone) onDone();
+  });
 
   wrap.appendChild(btn);
   wrap.appendChild(confirmBox);
@@ -1162,9 +1169,12 @@ function offerOrphanCleanup(groupId, rule, container) {
       try {
         await api(`/api/groups/${groupId}`, { method: "DELETE" });
         ask.remove();
-        resolve();
       } catch (e) {
         ask.appendChild(elem("div", "error-banner", t("error.prefix") + e.message));
+      } finally {
+        // ZAWSZE rozwiązujemy: nierozwiązana obietnica zawiesiłaby wołającego
+        // (i jego nakładkę) na zawsze, a nieudane usunięcie grupy to zwykły błąd.
+        resolve();
       }
     }));
     ask.appendChild(keep);
