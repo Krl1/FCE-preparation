@@ -824,3 +824,42 @@ def explain_error(topic: str, student_text: str, correct_text: str, lang: str = 
     )
     data = _call_json(prompt, kind="explain")
     return str(data.get("explanation", "")).strip()
+
+
+# --- Ulepszanie fiszki --------------------------------------------------------
+
+_CARD_GAP = "______"
+
+
+def improve_card(student_text: str, correct_text: str, explanation: str,
+                 lang: str = "pl") -> tuple[str, str]:
+    """Zamienia parę „błędnie → poprawnie" w kartę wymuszającą przypomnienie.
+
+    Jedno wywołanie na kliknięcie ucznia — wynik zapisuje się na stałe, więc karta
+    jest potem darmowa. Zwraca `(front, back)`.
+
+    Odpowiedź bez luki jest odrzucana: karta, która tylko przepisuje parę, nie zmusza
+    do przypomnienia, a po to się ją ulepsza.
+    """
+    lang_name = _lang_name(lang)
+    shape = '{"front": str, "back": str}'
+    prompt = (
+        f"{_EXAMINER_SYSTEM}\n\n"
+        "Zamień błąd ucznia w fiszkę wymuszającą PRZYPOMNIENIE poprawnej formy.\n\n"
+        f"Błędnie: {student_text}\n"
+        f"Poprawnie: {correct_text}\n"
+        f"Wyjaśnienie: {explanation}\n\n"
+        f"'front' to JEDNO krótkie zdanie po angielsku z luką zapisaną jako {_CARD_GAP} — "
+        "naturalne, w nowym kontekście, nie przepisane z powyższego błędu.\n"
+        f"'back' to sama poprawna forma wpisywana w lukę (bez całego zdania).\n"
+        f"Nie tłumacz ani nie komentuj; wyjaśnienie uczeń już widzi po {lang_name}.\n\n"
+        f"Zwróć WYŁĄCZNIE JSON w kształcie: {shape}"
+    )
+    data = _call_json(prompt, kind="card")
+    front = str(data.get("front") or "").strip()
+    back = str(data.get("back") or "").strip()
+    if not front or not back:
+        raise LLMError("Model nie zwrócił kompletnej fiszki.")
+    if _CARD_GAP not in front:
+        raise LLMError("Model nie umieścił luki w treści fiszki.")
+    return front, back

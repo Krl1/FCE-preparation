@@ -401,3 +401,55 @@ def test_generate_drill_without_contexts_keeps_old_prompt_shape(monkeypatch):
     monkeypatch.setattr(llm_client, "_call_json", fake_call)
     llm_client.generate_drill("prepositions", "depends from", "depends on", "kalka")
     assert "depends from" in seen["prompt"]
+
+
+# --- Ulepszanie fiszki --------------------------------------------------------
+
+def test_improve_card_returns_front_and_back(monkeypatch):
+    monkeypatch.setattr(llm_client, "_call_json", lambda prompt, kind="other": {
+        "front": "It ______ on the weather.", "back": "depends on"})
+    front, back = llm_client.improve_card("depends from", "depends on", "kalka")
+    assert front == "It ______ on the weather."
+    assert back == "depends on"
+
+
+def test_improve_card_is_labelled_for_usage_stats(monkeypatch):
+    seen = {}
+
+    def fake_call(prompt, kind="other"):
+        seen["kind"] = kind
+        seen["prompt"] = prompt
+        return {"front": "f ______", "back": "b"}
+
+    monkeypatch.setattr(llm_client, "_call_json", fake_call)
+    llm_client.improve_card("depends from", "depends on", "kalka")
+    assert seen["kind"] == "card"
+    assert "depends from" in seen["prompt"]
+    assert "depends on" in seen["prompt"]
+
+
+def test_improve_card_demands_a_gap_in_the_front(monkeypatch):
+    """Karta bez luki nie wymusza przypomnienia — to tylko przepisana para."""
+    seen = {}
+
+    def fake_call(prompt, kind="other"):
+        seen["prompt"] = prompt
+        return {"front": "f ______", "back": "b"}
+
+    monkeypatch.setattr(llm_client, "_call_json", fake_call)
+    llm_client.improve_card("depends from", "depends on", "kalka")
+    assert "______" in seen["prompt"]
+
+
+def test_improve_card_rejects_an_answer_without_a_gap(monkeypatch):
+    monkeypatch.setattr(llm_client, "_call_json", lambda prompt, kind="other": {
+        "front": "Jak jest poprawnie?", "back": "depends on"})
+    with pytest.raises(llm_client.LLMError):
+        llm_client.improve_card("depends from", "depends on", "kalka")
+
+
+def test_improve_card_rejects_empty_fields(monkeypatch):
+    monkeypatch.setattr(llm_client, "_call_json", lambda prompt, kind="other": {
+        "front": "It ______ on it.", "back": "   "})
+    with pytest.raises(llm_client.LLMError):
+        llm_client.improve_card("depends from", "depends on", "kalka")
