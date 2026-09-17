@@ -552,6 +552,16 @@ def test_cards_overdue_counts_only_the_past(conn):
     assert db.cards_overdue(conn, "2026-09-17") == 1
 
 
+def test_count_card_sources_covers_both_kinds(conn):
+    """Licznik źródeł rozstrzyga, czy pusty ekran mówi „wszystko na dziś zrobione",
+    czy „nie ma z czego robić fiszek" — musi widzieć i wpisy, i grupy."""
+    assert db.count_card_sources(conn) == 0
+    _card_err(conn, student="a")
+    assert db.count_card_sources(conn) == 1
+    db.insert_group(conn, rule="depend + on", explanation="e", topic="prepositions")
+    assert db.count_card_sources(conn) == 2
+
+
 def test_deleting_an_error_removes_its_card_and_reviews(conn):
     """Kaskada jest RĘCZNA — PRAGMA foreign_keys jest wyłączone, więc deklaratywne
     ON DELETE CASCADE nic by nie zrobiło. Ten test pada, jeśli ktoś usunie sprzątanie."""
