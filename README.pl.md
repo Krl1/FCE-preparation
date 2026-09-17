@@ -151,7 +151,8 @@ Uwaga: pliki tekstowe idą przez model, więc ich import **kosztuje wywołania s
   nie umiesz → wraca jutro. Kartę, której nie umiałeś ani razu, dostaniesz jeszcze dziś —
   wspinaczka po drabince zaczyna się dopiero od pierwszego trafienia. Sesja pokazuje tylko
   to, co zaplanowane na dziś, plus nowe karty do dziennego limitu (domyślnie 20) — bez
-  limitu pierwsza sesja miałaby dwieście pozycji.
+  limitu pierwsza sesja miałaby dwieście pozycji. Błąd należący do grupy pojawia się
+  w kolejce dwukrotnie: jako własna karta i wśród kontekstów na rewersie karty tej grupy.
   To jedyne miejsce w aplikacji, gdzie materiał **wygasa**: w dzienniku błąd zostaje na
   zawsze, na fiszkach opanowana reguła odsuwa się w przyszłość.
 
