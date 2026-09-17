@@ -154,8 +154,9 @@ does not — it is parsed locally).
   not known → back tomorrow. A card you have never got right once comes back the same day —
   the ladder only starts once you have recalled it correctly. A session shows only what is
   due today plus new cards up to a daily limit (20 by default) — without that limit the
-  first session would hold two hundred items. This is the one place in the app where material **expires**: in the journal a
-  mistake stays forever, on a flashcard a mastered rule moves further away.
+  first session would hold two hundred items. This is the one place in the app where
+  material **expires**: in the journal a mistake stays forever, on a flashcard a mastered
+  rule moves further away.
 
   Flashcards **do not feed the 🔥 streak or the daily goal** — they have their own counter.
   The streak measures five correct exercises per mistake, while a card is a single click;
