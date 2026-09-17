@@ -23,7 +23,7 @@ const htmlIds = new Set([...html.matchAll(/id="([^"]+)"/g)].map((m) => m[1]));
 // Pola odpowiedzi są tworzone dynamicznie, więc nie ma ich w HTML.
 const DYNAMIC_IDS = /^(practice|tips)-answer(-\d+)?$/;
 
-const VIEWS = ["practice", "tips", "external", "errors", "stats"];
+const VIEWS = ["practice", "tips", "external", "errors", "stats", "cards"];
 
 const handlers = {};        // "klucz|zdarzenie" -> [fn]
 const nodes = new Map();    // klucz -> atrapa elementu
@@ -99,6 +99,9 @@ global.document = {
   documentElement: makeNode("html"),
   body: makeNode("body"),
   title: "",
+  // Jeden globalny handler klawiatury (skróty fiszek) — rejestrowany na `document`,
+  // nie na konkretnym węźle, więc trzyma się osobno od handlerów per-element.
+  addEventListener(ev, fn) { (handlers["document|" + ev] ||= []).push(fn); },
   createElement: (tag) => {
     const n = makeNode(`new:${tag}:${created.length}`);
     created.push(n);
@@ -277,6 +280,14 @@ const routes = {
                             emptied_group_rule: "depend + on" },
   "/api/groups/assign": { assigned: 1, created: 1, unassigned: 0 },
   "/api/groups/regroup": { assigned: 0, created: 1, unassigned: 0 },
+  "/api/cards/session": { cards: [
+    { card_id: null, source_kind: "error", source_id: 1, topic: "prepositions",
+      topic_label: "Przyimki", front: "depends from", back: "depends on\n\nkalka",
+      leech: false }],
+    progress: { done_today: 0, overdue: 0, due_now: 1, new_limit: 20, total_sources: 1 } },
+  "/api/cards/grade-new": { card_id: 1, interval_days: 1, due_on: "2026-09-18",
+    leech: false, progress: { done_today: 1, overdue: 0, due_now: 0, new_limit: 20, total_sources: 1 } },
+  "/api/cards/progress": { done_today: 0, overdue: 0, due_now: 1, new_limit: 20, total_sources: 1 },
 };
 
 const calls = [];
@@ -308,6 +319,13 @@ const fire = async (key, ev = "click") => {
   const fns = handlers[key + "|" + ev] || [];
   if (!fns.length) { failures.push("brak handlera dla " + key); return; }
   for (const fn of fns) await fn({ preventDefault() {} });
+};
+
+/** Symuluje `keydown` na `document` (skróty fiszek) — `tag` udaje `e.target.tagName`,
+ *  żeby sprawdzić, że skrót nie odpala się w polu tekstowym. */
+const fireKey = async (key, tag = "BODY") => {
+  const fns = handlers["document|keydown"] || [];
+  for (const fn of fns) await fn({ key, target: { tagName: tag }, preventDefault() {} });
 };
 
 /** Klika element tworzony dynamicznie, wskazany przez klasę (np. przycisk zastrzeżenia). */
@@ -677,6 +695,64 @@ const setInput = (id, value) => {
       routes["/api/grade"] = MULTI_RESULT;
       await fire(".lang:pl"); await settle();
       await fire("#tips-mode-errors"); await settle();
+    }],
+    ["Fiszki: sesja → odkrycie → ocena nieistniejącej karty", async () => {
+      await fire(".tab:cards"); await settle();
+      await fire("#cards-start"); await settle();
+      await fire("#cards-reveal"); await settle();
+      if (hasClass("#cards-back", "hidden")) failures.push("rewers fiszki nie odkrył się");
+      await fire("#cards-known"); await settle();
+      if (!calls.some((c) => c.includes("/api/cards/grade-new"))) {
+        failures.push("ocena fiszki nie poleciała na serwer");
+      }
+    }],
+    ["Fiszki: skróty klawiszowe (spacja/n) i blokada w polu tekstowym", async () => {
+      routes["/api/cards/session"] = {
+        cards: [
+          { card_id: null, source_kind: "error", source_id: 2, topic: "prepositions",
+            topic_label: "Przyimki", front: "front1", back: "back1", leech: false },
+          { card_id: null, source_kind: "error", source_id: 3, topic: "prepositions",
+            topic_label: "Przyimki", front: "front2", back: "back2", leech: false },
+        ],
+        progress: { done_today: 0, overdue: 0, due_now: 2, new_limit: 20, total_sources: 2 },
+      };
+      await fire(".tab:cards"); await settle();
+      await fire("#cards-start"); await settle();
+
+      // W polu tekstowym spacja/„n" NIE mogą odkrywać ani oceniać fiszki.
+      const before = calls.length;
+      await fireKey(" ", "INPUT");
+      if (!hasClass("#cards-back", "hidden")) {
+        failures.push("spacja w polu tekstowym odkryła fiszkę");
+      }
+      await fireKey("n", "INPUT");
+      if (calls.length !== before) {
+        failures.push("skrót klawiszowy zadziałał mimo fokusu w polu tekstowym");
+      }
+
+      // Poza polem tekstowym: spacja odkrywa, potem zalicza jako „umiem".
+      await fireKey(" ");
+      if (hasClass("#cards-back", "hidden")) failures.push("spacja nie odkryła fiszki");
+      await fireKey(" "); await settle();
+      if (!calls.some((c) => c.includes("/api/cards/grade-new"))) {
+        failures.push("spacja po odkryciu nie zaliczyła fiszki");
+      }
+
+      // Druga karta: odkrycie + „n" zalicza jako „nie umiem".
+      await fireKey(" ");
+      if (hasClass("#cards-back", "hidden")) failures.push("spacja nie odkryła drugiej fiszki");
+      await fireKey("n"); await settle();
+      const lastGrade = calls.filter((c) => c.includes("/api/cards/grade-new")).pop();
+      if (!lastGrade || !lastGrade.includes('"grade":"unknown"')) {
+        failures.push('klawisz „n" nie zaliczył fiszki jako „nie umiem": ' + lastGrade);
+      }
+      routes["/api/cards/session"] = {
+        cards: [
+          { card_id: null, source_kind: "error", source_id: 1, topic: "prepositions",
+            topic_label: "Przyimki", front: "depends from", back: "depends on\n\nkalka",
+            leech: false }],
+        progress: { done_today: 0, overdue: 0, due_now: 1, new_limit: 20, total_sources: 1 },
+      };
     }],
     ["Statystyki", async () => fire(".tab:stats")],
     ["zmiana języka EN → PL", async () => { await fire(".lang:en"); await fire(".lang:pl"); }],

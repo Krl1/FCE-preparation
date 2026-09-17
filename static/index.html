@@ -18,6 +18,7 @@
       <button class="tab" role="tab" aria-selected="false" aria-controls="view-external" data-view="external" data-i18n="tab.external">Sprawdź z zewnątrz</button>
       <button class="tab" role="tab" aria-selected="false" aria-controls="view-errors" data-view="errors" data-i18n="tab.errors">Moje błędy</button>
       <button class="tab" role="tab" aria-selected="false" aria-controls="view-stats" data-view="stats" data-i18n="tab.stats">Statystyki</button>
+      <button class="tab" role="tab" aria-selected="false" aria-controls="view-cards" data-view="cards" data-i18n="tab.cards">Fiszki</button>
     </nav>
     <div class="lang-switch" role="group" aria-label="Language">
       <button class="lang is-active" data-lang="pl" aria-pressed="true">PL</button>
@@ -159,6 +160,40 @@
         <h2 data-i18n="stats.usage">Zużycie Claude</h2>
         <p class="muted" data-i18n="stats.usageNote">Koszt liczony wg stawek API. Tryb headless niesie narzut systemowego promptu Claude Code, więc to górna granica — aplikacja na API zużyłaby mniej.</p>
         <div id="stats-usage"></div>
+      </div>
+    </section>
+
+    <!-- WIDOK: FISZKI (szybki tryb nauki obok "Ćwicz błędy") -->
+    <section id="view-cards" class="view">
+      <div class="card">
+        <div class="row">
+          <span id="cards-counter" class="muted"></span>
+          <label><span data-i18n="cards.topic">Temat</span>
+            <select id="cards-topic"></select>
+          </label>
+          <label><span data-i18n="cards.newLimit">Nowe dziennie</span>
+            <input id="cards-new-limit" type="number" min="0" max="200" />
+          </label>
+          <button id="cards-start" class="primary" data-i18n="cards.start">Zacznij sesję</button>
+        </div>
+        <div class="goal-bar"><span id="cards-progress-bar"></span></div>
+      </div>
+
+      <div id="cards-empty" class="card hidden">
+        <p class="stat-empty" id="cards-empty-text"></p>
+      </div>
+
+      <div id="cards-area" class="card hidden">
+        <div class="topic" id="cards-topic-label"></div>
+        <div class="card-front" id="cards-front"></div>
+        <div class="card-back hidden" id="cards-back"></div>
+        <div id="cards-leech" class="orphan-ask hidden"></div>
+        <div class="row">
+          <button id="cards-reveal" class="primary" data-i18n="cards.reveal">Pokaż odpowiedź</button>
+          <button id="cards-unknown" class="hidden" data-i18n="cards.unknown">Nie umiem</button>
+          <button id="cards-known" class="primary hidden" data-i18n="cards.known">Umiem</button>
+          <button id="cards-improve" class="hidden" data-i18n="cards.improve">Ulepsz tę kartę</button>
+        </div>
       </div>
     </section>
   </main>

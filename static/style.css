@@ -334,3 +334,10 @@ h2 { font-size: 1.05rem; }
 /* Konteksty rozwiniętej grupy — te same kafle co w dzienniku, tylko ciaśniej */
 .group-members { margin-top: .6rem; border-top: 1px solid var(--line); padding-top: .4rem; }
 .group-members .err-item { margin: .4rem 0; }
+
+/* Fiszki — szybki tryb: przód/tył karty i pasek postępu sesji */
+.card-front { font-size: 1.35rem; font-weight: 600; margin: 1rem 0; }
+.card-back { font-size: 1.1rem; white-space: pre-line; color: var(--ink);
+             border-top: 1px solid var(--line); padding-top: .8rem; margin-top: .8rem; }
+#cards-progress-bar { display: block; height: 100%; background: var(--accent);
+                      border-radius: inherit; transition: width .2s; }
