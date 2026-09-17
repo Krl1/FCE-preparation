@@ -7,6 +7,7 @@ Następnie:     http://localhost:8000
 from __future__ import annotations
 
 import random
+from datetime import date
 from pathlib import Path
 from typing import Optional
 
@@ -15,8 +16,11 @@ from fastapi.staticfiles import StaticFiles
 
 from . import db
 from . import fce_taxonomy as tax
-from . import grouping, llm_client, pricing, srs, streak
+from . import flashcards, grouping, llm_client, pricing, srs, streak
 from .models import (
+    CardGrade,
+    CardGradeNew,
+    CardSettings,
     CompleteRequest,
     DisputeRequest,
     ErrorCreate,
@@ -577,6 +581,164 @@ def patch_error_group(error_id: int, req: ErrorGroupUpdate) -> dict:
     emptied, emptied_rule = _emptied_group(previous, req.group_id)
     return {"error_id": error_id, "group_id": req.group_id,
             "emptied_group_id": emptied, "emptied_group_rule": emptied_rule}
+
+
+# --- Fiszki -------------------------------------------------------------------
+
+DEFAULT_NEW_CARDS_PER_DAY = 20
+
+
+def _today_str() -> str:
+    return date.today().isoformat()
+
+
+def _render_card(source_kind: str, source: dict, card: dict | None, lang: str) -> dict:
+    """Treść karty. Renderujemy ze ŹRÓDŁA, więc poprawione w dzienniku wyjaśnienie
+    widać natychmiast; `*_override` (jeśli jest) wygrywa, bo to treść ulepszona modelem."""
+    if card and card.get("front_override") and card.get("back_override"):
+        return {"front": card["front_override"], "back": card["back_override"]}
+    if source_kind == "group":
+        members = db.list_group_members(conn, source["id"])
+        contexts = [f"{m['student_text']} → {m['correct_text']}" for m in members[:5]]
+        back = source["explanation"]
+        if contexts:
+            back += "\n\n" + "\n".join(contexts)
+        return {"front": source["rule"], "back": back}
+    return {"front": source["student_text"],
+            "back": f"{source['correct_text']}\n\n{source['explanation']}"}
+
+
+def _load_source(source_kind: str, source_id: int) -> dict | None:
+    return (db.get_group(conn, source_id) if source_kind == "group"
+            else db.get_error(conn, source_id))
+
+
+def _cards_progress() -> dict:
+    today = _today_str()
+    return {
+        "done_today": db.cards_done_today(conn),
+        "overdue": db.cards_overdue(conn, today),
+        "due_now": len(db.cards_due(conn, today)),
+        "new_limit": db.get_int_setting(conn, "cards_new_per_day", DEFAULT_NEW_CARDS_PER_DAY),
+        # Rozróżnia „wszystko na dziś zrobione" od „nie ma z czego robić fiszek".
+        # Bez tego pusty ekran mówiłby to samo w obu przypadkach.
+        "total_sources": db.count_card_sources(conn),
+    }
+
+
+@app.get("/api/cards/session")
+def cards_session(lang: str = Query(default="pl"),
+                  topic: str | None = Query(default=None)) -> dict:
+    """Kolejka na dziś. NIE wywołuje modelu — cała wartość fiszek to natychmiastowość."""
+    today = _today_str()
+    limit = db.get_int_setting(conn, "cards_new_per_day", DEFAULT_NEW_CARDS_PER_DAY)
+    queue = flashcards.build_queue(
+        db.cards_due(conn, today, topic=topic),
+        db.sources_without_card(conn, topic=topic),
+        limit,
+    )
+    out = []
+    for item in queue:
+        source = _load_source(item.source_kind, item.source_id)
+        if source is None:
+            continue  # źródło zniknęło między zapytaniami — pomijamy, nie wywalamy sesji
+        card = db.get_card(conn, item.card_id) if item.card_id else None
+        rendered = _render_card(item.source_kind, source, card, lang)
+        # Pełne źródło leci w odpowiedzi, bo przycisk przy karcie upartej skacze do
+        # „Ćwicz błędy" z TĄ jednostką — a setFocus/setFocusGroup czytają nazwane pola.
+        # Grupie trzeba jeszcze dołożyć member_count: get_group go nie zwraca, a
+        # setFocusGroup renderuje z niego licznik kontekstów.
+        source_payload = dict(source)
+        source_payload["topic_label"] = tax.topic_label(source["topic"], lang)
+        if item.source_kind == "group":
+            source_payload["member_count"] = db.group_member_count(conn, source["id"])
+        out.append({
+            "card_id": item.card_id,
+            "source_kind": item.source_kind,
+            "source_id": item.source_id,
+            "topic": source["topic"],
+            "topic_label": tax.topic_label(source["topic"], lang),
+            "source": source_payload,
+            "leech": flashcards.is_leech(
+                db.card_unknown_count(conn, item.card_id)) if item.card_id else False,
+            **rendered,
+        })
+    return {"cards": out, "progress": _cards_progress()}
+
+
+def _apply_grade(card: dict, grade: str, *, is_new: bool = False) -> dict:
+    # Świeżo utworzona karta oceniona jako „nie umiem" zostaje w DZISIEJSZEJ kolejce —
+    # dopiero pierwsze „umiem" rusza drabinkę. Bez tego wyjątku next_interval() cofnąłby
+    # ją od razu na jutro (LADDER[0]=1 niezależnie od current_days), a karta zniknęłaby
+    # z sesji, zanim uczeń zdążyłby ją poprawić (np. przyciskiem „ulepsz").
+    if is_new and grade != "known":
+        interval = 0
+    else:
+        interval = flashcards.next_interval(int(card["interval_days"]), grade)
+    db.update_card_schedule(conn, card["id"], interval_days=interval,
+                            due_on=flashcards.due_date(date.today(), interval))
+    db.insert_card_review(conn, card_id=card["id"], grade=grade)
+    return {
+        "card_id": card["id"],
+        "interval_days": interval,
+        "due_on": flashcards.due_date(date.today(), interval),
+        "leech": flashcards.is_leech(db.card_unknown_count(conn, card["id"])),
+        "progress": _cards_progress(),
+    }
+
+
+@app.post("/api/cards/{card_id}/grade")
+def grade_card(card_id: int, req: CardGrade) -> dict:
+    card = db.get_card(conn, card_id)
+    if card is None:
+        raise HTTPException(status_code=404, detail="Nie znaleziono fiszki o tym id.")
+    return _apply_grade(card, req.grade)
+
+
+@app.post("/api/cards/grade-new")
+def grade_new_card(req: CardGradeNew) -> dict:
+    """Pierwsza ocena źródła: wiersz karty powstaje dopiero tutaj."""
+    if _load_source(req.source_kind, req.source_id) is None:
+        raise HTTPException(status_code=404, detail="Nie znaleziono źródła tej fiszki.")
+    existing = db.get_card_by_source(conn, req.source_kind, req.source_id)
+    is_new = existing is None
+    if existing is None:
+        card_id = db.create_card(conn, source_kind=req.source_kind, source_id=req.source_id,
+                                 due_on=_today_str(), interval_days=0)
+        existing = db.get_card(conn, card_id)
+    return _apply_grade(existing, req.grade, is_new=is_new)
+
+
+@app.post("/api/cards/{card_id}/improve")
+def improve_card(card_id: int, lang: str = Query(default="pl")) -> dict:
+    """Jedyne miejsce w fiszkach, które kosztuje wywołanie modelu — i tylko na kliknięcie."""
+    card = db.get_card(conn, card_id)
+    if card is None:
+        raise HTTPException(status_code=404, detail="Nie znaleziono fiszki o tym id.")
+    source = _load_source(card["source_kind"], card["source_id"])
+    if source is None:
+        raise HTTPException(status_code=404, detail="Nie znaleziono źródła tej fiszki.")
+    if card["source_kind"] == "group":
+        student, correct = source["rule"], source["rule"]
+    else:
+        student, correct = source["student_text"], source["correct_text"]
+    try:
+        front, back = llm_client.improve_card(student, correct, source["explanation"], lang=lang)
+    except llm_client.LLMError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    db.set_card_override(conn, card_id, front=front, back=back)
+    return {"front": front, "back": back}
+
+
+@app.get("/api/cards/progress")
+def cards_progress() -> dict:
+    return _cards_progress()
+
+
+@app.post("/api/cards/settings")
+def cards_settings(req: CardSettings) -> dict:
+    db.set_setting(conn, "cards_new_per_day", str(max(0, min(200, req.new_per_day))))
+    return _cards_progress()
 
 
 # --- Zastrzeżenia do wyjaśnień ------------------------------------------------
