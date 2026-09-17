@@ -594,9 +594,19 @@ def _today_str() -> str:
 
 def _render_card(source_kind: str, source: dict, card: dict | None, lang: str) -> dict:
     """Treść karty. Renderujemy ze ŹRÓDŁA, więc poprawione w dzienniku wyjaśnienie
-    widać natychmiast; `*_override` (jeśli jest) wygrywa, bo to treść ulepszona modelem."""
+    widać natychmiast; `*_override` (jeśli jest) wygrywa, bo to treść ulepszona modelem.
+
+    Wyjaśnienie ze źródła zostaje POD ulepszonym rewersem. Prompt ulepszania mówi modelowi,
+    że „wyjaśnienie uczeń już widzi", więc model go nie powtarza — gdyby rewers kończył się
+    na samym override, jedyne płatne kliknięcie w całej funkcji kasowałoby powód, dla
+    którego karta w ogóle istnieje. Tak też poprawka wyjaśnienia w dzienniku nadal dociera
+    do ulepszonej karty."""
     if card and card.get("front_override") and card.get("back_override"):
-        return {"front": card["front_override"], "back": card["back_override"]}
+        back = card["back_override"]
+        explanation = source.get("explanation")
+        if explanation:
+            back += "\n\n" + explanation
+        return {"front": card["front_override"], "back": back}
     if source_kind == "group":
         members = db.list_group_members(conn, source["id"])
         contexts = [f"{m['student_text']} → {m['correct_text']}" for m in members[:5]]
@@ -661,6 +671,9 @@ def cards_session(lang: str = Query(default="pl"),
             "source": source_payload,
             "leech": flashcards.is_leech(
                 db.card_unknown_count(conn, item.card_id)) if item.card_id else False,
+            # Karta już ulepszona — frontend chowa przycisk, żeby uczeń nie zapłacił
+            # drugi raz za to samo. README obiecuje „raz na zawsze".
+            "improved": bool(card and card.get("front_override")),
             **rendered,
         })
     return {"cards": out, "progress": _cards_progress()}
@@ -668,13 +681,13 @@ def cards_session(lang: str = Query(default="pl"),
 
 def _apply_grade(card: dict, grade: str) -> dict:
     interval = flashcards.next_interval(int(card["interval_days"]), grade)
-    db.update_card_schedule(conn, card["id"], interval_days=interval,
-                            due_on=flashcards.due_date(date.today(), interval))
+    due_on = flashcards.due_date(date.today(), interval)
+    db.update_card_schedule(conn, card["id"], interval_days=interval, due_on=due_on)
     db.insert_card_review(conn, card_id=card["id"], grade=grade)
     return {
         "card_id": card["id"],
         "interval_days": interval,
-        "due_on": flashcards.due_date(date.today(), interval),
+        "due_on": due_on,
         "leech": flashcards.is_leech(db.card_unknown_count(conn, card["id"])),
         "progress": _cards_progress(),
     }
@@ -703,17 +716,24 @@ def grade_new_card(req: CardGradeNew) -> dict:
 
 @app.post("/api/cards/{card_id}/improve")
 def improve_card(card_id: int, lang: str = Query(default="pl")) -> dict:
-    """Jedyne miejsce w fiszkach, które kosztuje wywołanie modelu — i tylko na kliknięcie."""
+    """Jedyne miejsce w fiszkach, które kosztuje wywołanie modelu — i tylko na kliknięcie.
+
+    Karty grupowe są tu odrzucane. Grupa nie ma pary „błędnie → poprawnie": jej treścią jest
+    reguła, więc prompt ulepszania dostałby tę samą regułę w polu błędnym i poprawnym i kazał
+    modelowi poprawić zdanie do niego samego. Sensowny prompt dla grupy (reguła plus kilka
+    prawdziwych kontekstów) to osobna funkcja, nie poprawka — do tego czasu lepiej nie brać
+    za to pieniędzy. Frontend z tego powodu w ogóle nie pokazuje przycisku przy grupie."""
     card = db.get_card(conn, card_id)
     if card is None:
         raise HTTPException(status_code=404, detail="Nie znaleziono fiszki o tym id.")
+    if card["source_kind"] == "group":
+        raise HTTPException(
+            status_code=400,
+            detail="Karty grupowej nie da się ulepszyć: grupa nie ma pary błędnie → poprawnie.")
     source = _load_source(card["source_kind"], card["source_id"])
     if source is None:
         raise HTTPException(status_code=404, detail="Nie znaleziono źródła tej fiszki.")
-    if card["source_kind"] == "group":
-        student, correct = source["rule"], source["rule"]
-    else:
-        student, correct = source["student_text"], source["correct_text"]
+    student, correct = source["student_text"], source["correct_text"]
     try:
         front, back = llm_client.improve_card(student, correct, source["explanation"], lang=lang)
     except llm_client.LLMError as exc:

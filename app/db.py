@@ -876,7 +876,8 @@ def update_card_schedule(conn: sqlite3.Connection, card_id: int, *,
 @_synchronized
 def set_card_override(conn: sqlite3.Connection, card_id: int, *,
                       front: str, back: str) -> bool:
-    """Zapisuje treść ulepszoną przez model. Od tej chwili karta jest darmowa na zawsze."""
+    """Zapisuje treść ulepszoną przez model. Od tej chwili front i rewers biorą się
+    z zapisanego tekstu zamiast z renderowania ze źródła."""
     cur = conn.execute(
         "UPDATE cards SET front_override = ?, back_override = ?, updated_at = ? WHERE id = ?",
         (front, back, _now(), card_id),

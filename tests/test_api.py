@@ -1096,6 +1096,48 @@ def test_improve_stores_the_override_and_session_serves_it(app_ctx, monkeypatch)
     assert improved["front"] == "It ______ on the weather."
     served = client.get("/api/cards/session").json()["cards"][0]
     assert served["front"] == "It ______ on the weather."
+    assert served["improved"] is True
+
+
+def test_improved_card_keeps_the_source_explanation_on_the_back(app_ctx, monkeypatch):
+    """Ulepszenie nie może skasować powodu, dla którego karta istnieje.
+
+    Prompt ulepszania mówi modelowi, że wyjaśnienie uczeń już widzi, więc model go nie
+    dopisuje — rewers musi je dokleić ze źródła."""
+    client, main_mod = app_ctx
+    eid = _card_error(client)
+    out = client.post("/api/cards/grade-new", json={
+        "source_kind": "error", "source_id": eid, "grade": "unknown"}).json()
+    cid = out["card_id"]
+    _stub_llm(main_mod, monkeypatch, {"front": "It ______ on the weather.",
+                                      "back": "depends on"})
+    assert client.post(f"/api/cards/{cid}/improve").status_code == 200
+
+    served = client.get("/api/cards/session").json()["cards"][0]
+    assert "depends on" in served["back"]
+    assert "kalka z polskiego" in served["back"]
+
+
+def test_improving_a_group_card_is_rejected_without_calling_the_model(app_ctx, monkeypatch):
+    """Grupa nie ma pary błędnie → poprawnie, więc prompt byłby sam ze sobą sprzeczny."""
+    client, main_mod = app_ctx
+    eid = _card_error(client)
+    _stub_llm(main_mod, monkeypatch, {"assignments": [
+        {"error_id": eid, "new_group": {"rule": "depend + on", "explanation": "zawsze 'on'",
+                                        "topic": "prepositions"}}]})
+    client.post("/api/groups/assign")
+    gid = client.get("/api/groups").json()["groups"][0]["id"]
+    out = client.post("/api/cards/grade-new", json={
+        "source_kind": "group", "source_id": gid, "grade": "unknown"}).json()
+    cid = out["card_id"]
+
+    def explode(prompt, kind="other"):
+        raise AssertionError("ulepszanie karty grupowej nie może wołać modelu")
+
+    monkeypatch.setattr(main_mod.llm_client, "_invoke", explode)
+    res = client.post(f"/api/cards/{cid}/improve")
+    assert res.status_code == 400
+    assert "grup" in res.json()["detail"].lower()
 
 
 def test_progress_reports_counters_without_touching_the_streak(app_ctx):
