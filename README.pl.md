@@ -149,8 +149,9 @@ Uwaga: pliki tekstowe idą przez model, więc ich import **kosztuje wywołania s
 
   Każda karta ma **własny termin powtórki**: umiesz → wraca za 1, 3, 7, 14, 30, 90 dni;
   nie umiesz → wraca jutro. Kartę, której nie umiałeś ani razu, dostaniesz jeszcze dziś —
-  wspinaczka po drabince zaczyna się dopiero od pierwszego trafienia. Sesja pokazuje tylko to, co zaplanowane na dziś, plus nowe karty
-  do dziennego limitu (domyślnie 20) — bez limitu pierwsza sesja miałaby dwieście pozycji.
+  wspinaczka po drabince zaczyna się dopiero od pierwszego trafienia. Sesja pokazuje tylko
+  to, co zaplanowane na dziś, plus nowe karty do dziennego limitu (domyślnie 20) — bez
+  limitu pierwsza sesja miałaby dwieście pozycji.
   To jedyne miejsce w aplikacji, gdzie materiał **wygasa**: w dzienniku błąd zostaje na
   zawsze, na fiszkach opanowana reguła odsuwa się w przyszłość.
 
