@@ -337,6 +337,7 @@ h2 { font-size: 1.05rem; }
 
 /* Fiszki — szybki tryb: przód/tył karty i pasek postępu sesji */
 .card-front { font-size: 1.35rem; font-weight: 600; margin: 1rem 0; }
+#cards-area .topic { font-size: .75rem; text-transform: uppercase; letter-spacing: .5px; color: var(--accent); font-weight: 700; margin-bottom: .5rem; }
 .card-back { font-size: 1.1rem; white-space: pre-line; color: var(--ink);
              border-top: 1px solid var(--line); padding-top: .8rem; margin-top: .8rem; }
 #cards-progress-bar { display: block; height: 100%; background: var(--accent);

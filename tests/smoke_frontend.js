@@ -280,14 +280,29 @@ const routes = {
                             emptied_group_rule: "depend + on" },
   "/api/groups/assign": { assigned: 1, created: 1, unassigned: 0 },
   "/api/groups/regroup": { assigned: 0, created: 1, unassigned: 0 },
+  // Kształt `source` odpowiada realnej odpowiedzi backendu: dla `source_kind: "error"`
+  // to pełny wpis z dziennika, dla `"group"` — pełny obiekt grupy. Atrapa BEZ tego pola
+  // ukrywałaby błędy w gałęzi pijawki (`revealCard` czyta `card.source` dopiero po kliknięciu
+  // „Ćwicz ten błąd/tę grupę”).
   "/api/cards/session": { cards: [
     { card_id: null, source_kind: "error", source_id: 1, topic: "prepositions",
       topic_label: "Przyimki", front: "depends from", back: "depends on\n\nkalka",
-      leech: false }],
-    progress: { done_today: 0, overdue: 0, due_now: 1, new_limit: 20, total_sources: 1 } },
+      leech: false,
+      source: { id: 1, created_at: "2026-09-17T10:00:00+02:00", source: "external",
+                exercise_type: "external", topic: "prepositions", topic_label: "Przyimki",
+                student_text: "depends from", correct_text: "depends on",
+                explanation: "kalka z polskiego", severity: "minor", group_id: null } },
+    // Karta-pijawka: reguła wraca uparcie, więc backend proponuje skok do grupy.
+    { card_id: 9, source_kind: "group", source_id: 1, topic: "prepositions",
+      topic_label: "Przyimki", front: "depend ___ on", back: "depend on",
+      leech: true,
+      source: { id: 1, rule: "depend + on", explanation: "kalka z polskiego",
+                topic: "prepositions", topic_label: "Przyimki", member_count: 2 } },
+  ],
+    progress: { done_today: 0, overdue: 0, due_now: 2, new_limit: 20, total_sources: 2 } },
   "/api/cards/grade-new": { card_id: 1, interval_days: 1, due_on: "2026-09-18",
-    leech: false, progress: { done_today: 1, overdue: 0, due_now: 0, new_limit: 20, total_sources: 1 } },
-  "/api/cards/progress": { done_today: 0, overdue: 0, due_now: 1, new_limit: 20, total_sources: 1 },
+    leech: false, progress: { done_today: 1, overdue: 0, due_now: 1, new_limit: 20, total_sources: 2 } },
+  "/api/cards/progress": { done_today: 0, overdue: 0, due_now: 1, new_limit: 20, total_sources: 2 },
 };
 
 const calls = [];
@@ -705,6 +720,30 @@ const setInput = (id, value) => {
       if (!calls.some((c) => c.includes("/api/cards/grade-new"))) {
         failures.push("ocena fiszki nie poleciała na serwer");
       }
+    }],
+    ["Fiszki: karta-pijawka pokazuje podpowiedź z przyciskiem", async () => {
+      created.length = 0;
+      // Kontynuacja poprzedniego scenariusza: zaliczenie pierwszej karty przesunęło
+      // kolejkę na drugą pozycję — kartę-pijawkę z fikstury sesji (leech: true).
+      await fire("#cards-reveal"); await settle();
+      if (hasClass("#cards-leech", "hidden")) {
+        failures.push("podpowiedź o pijawce nie pokazała się przy karcie-pijawce");
+      }
+      const leechBtns = created.filter((n) => String(n.className || "").includes("btn-sm"));
+      if (leechBtns.length !== 1 || leechBtns[0].textContent !== "Ćwicz ten błąd") {
+        failures.push("brak przycisku „Ćwicz ten błąd” przy karcie-pijawce: " +
+          leechBtns.map((n) => n.textContent).join(", "));
+      }
+      if (await fireByClass("btn-sm")) {
+        await settle();
+        if (!hasClass("#view-tips", "is-active")) {
+          failures.push("„Ćwicz ten błąd” przy pijawce nie przeniosło do „Ćwicz błędy”");
+        }
+        if (nodeText("#tips-from") !== "depend + on") {
+          failures.push("skok z pijawki nie pokazał reguły grupy: " + nodeText("#tips-from"));
+        }
+      }
+      await fire(".tab:cards"); await settle();
     }],
     ["Fiszki: skróty klawiszowe (spacja/n) i blokada w polu tekstowym", async () => {
       routes["/api/cards/session"] = {

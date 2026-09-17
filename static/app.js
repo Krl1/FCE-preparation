@@ -1728,8 +1728,10 @@ function loadCardsSession() {
       renderCardsCounter(body.progress);
       showCard();
     } catch (e) {
-      showError("#cards-empty", e.message);
-      $("#cards-empty").classList.remove("hidden");
+      // NIE `#cards-empty` — ten kontener trzyma statyczny `<p id="cards-empty-text">`,
+      // który `showCard()` czyta przy każdym pustym stanie; `showError` czyściłby go
+      // trwale przy pierwszym błędzie. `#cards-error` jest pustym kontenerem wynikowym.
+      showError("#cards-error", e.message);
     }
   });
 }
@@ -1769,9 +1771,11 @@ function revealCard() {
   ["#cards-known", "#cards-unknown"].forEach((s) => $(s).classList.remove("hidden"));
   // Ulepszyć da się tylko kartę, która już istnieje w bazie.
   if (card.card_id) $("#cards-improve").classList.remove("hidden");
+  // Czyścimy zawsze, nie tylko w gałęzi `card.leech` — inaczej po karcie-pijawce
+  // poprzednia notka (i jej listener) zostają w DOM pod `.hidden`.
+  const box = $("#cards-leech");
+  box.innerHTML = "";
   if (card.leech) {
-    const box = $("#cards-leech");
-    box.innerHTML = "";
     box.appendChild(elem("span", "", t("cards.leech")));
     const go = elem("button", "btn-sm", t("cards.leechGo"));
     go.addEventListener("click", () => {
@@ -1842,7 +1846,9 @@ $("#cards-new-limit").addEventListener("change", () =>
         body: JSON.stringify({ new_per_day: Number($("#cards-new-limit").value) }),
       }));
     } catch (e) {
-      showError("#cards-counter", e.message);
+      // NIE `#cards-counter` — to inline `<span>`, a `showError` wstawia blokowy
+      // `<div class="error-banner">`.
+      showError("#cards-error", e.message);
     }
   }));
 
