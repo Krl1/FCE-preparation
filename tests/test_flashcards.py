@@ -27,9 +27,17 @@ def test_top_rung_stays_at_top():
     assert fc.next_interval(90, "known") == 90
 
 
-def test_unknown_always_returns_to_one_day():
-    for days in (0, 1, 7, 90):
+def test_unknown_returns_a_scheduled_card_to_one_day():
+    for days in (1, 7, 90):
         assert fc.next_interval(days, "unknown") == 1
+
+
+def test_unknown_keeps_a_never_recalled_card_due_today():
+    """Interwał 0 znaczy „jeszcze nierozpoznana". Karta, której uczeń nie umie za
+    pierwszym razem, ma wrócić DZIŚ, a nie jutro — inaczej fiszka odkłada dokładnie
+    ten materiał, który jest najsłabszy."""
+    assert fc.next_interval(0, "unknown") == 0
+    assert fc.next_interval(0, "śmieci") == 0
 
 
 def test_off_ladder_value_climbs_to_next_rung_above_it():

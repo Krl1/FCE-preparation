@@ -666,15 +666,8 @@ def cards_session(lang: str = Query(default="pl"),
     return {"cards": out, "progress": _cards_progress()}
 
 
-def _apply_grade(card: dict, grade: str, *, is_new: bool = False) -> dict:
-    # Świeżo utworzona karta oceniona jako „nie umiem" zostaje w DZISIEJSZEJ kolejce —
-    # dopiero pierwsze „umiem" rusza drabinkę. Bez tego wyjątku next_interval() cofnąłby
-    # ją od razu na jutro (LADDER[0]=1 niezależnie od current_days), a karta zniknęłaby
-    # z sesji, zanim uczeń zdążyłby ją poprawić (np. przyciskiem „ulepsz").
-    if is_new and grade != "known":
-        interval = 0
-    else:
-        interval = flashcards.next_interval(int(card["interval_days"]), grade)
+def _apply_grade(card: dict, grade: str) -> dict:
+    interval = flashcards.next_interval(int(card["interval_days"]), grade)
     db.update_card_schedule(conn, card["id"], interval_days=interval,
                             due_on=flashcards.due_date(date.today(), interval))
     db.insert_card_review(conn, card_id=card["id"], grade=grade)
@@ -701,12 +694,11 @@ def grade_new_card(req: CardGradeNew) -> dict:
     if _load_source(req.source_kind, req.source_id) is None:
         raise HTTPException(status_code=404, detail="Nie znaleziono źródła tej fiszki.")
     existing = db.get_card_by_source(conn, req.source_kind, req.source_id)
-    is_new = existing is None
     if existing is None:
         card_id = db.create_card(conn, source_kind=req.source_kind, source_id=req.source_id,
                                  due_on=_today_str(), interval_days=0)
         existing = db.get_card(conn, card_id)
-    return _apply_grade(existing, req.grade, is_new=is_new)
+    return _apply_grade(existing, req.grade)
 
 
 @app.post("/api/cards/{card_id}/improve")

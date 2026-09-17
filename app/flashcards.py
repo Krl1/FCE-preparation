@@ -25,10 +25,16 @@ LEECH_THRESHOLD = 4
 def next_interval(current_days: int, grade: str) -> int:
     """Następny odstęp. Ocena inna niż 'known' liczy się jako pomyłka.
 
+    Odstęp 0 oznacza „jeszcze nierozpoznana" — karta, której uczeń nie umiał, zanim
+    choć raz odpowiedział poprawnie. Taka karta ma zostać w DZISIEJSZEJ kolejce, a nie
+    zostać odłożona na jutro: fiszka nie może odkładać właśnie tego materiału, który
+    jest najsłabszy. Dlatego pomyłka z odstępu 0 zostaje na 0; dopiero pomyłka na karcie,
+    która już raz wspięła się po drabince, cofa ją na jej pierwszy szczebel.
+
     Wartość spoza drabinki (gdyby ta kiedyś się zmieniła) doczołguje się do najbliższego
     wyższego szczebla, zamiast wysypywać harmonogram."""
     if grade != "known":
-        return LADDER[0]
+        return 0 if current_days <= 0 else LADDER[0]
     for rung in LADDER:
         if rung > current_days:
             return rung
