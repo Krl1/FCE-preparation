@@ -287,7 +287,7 @@ const routes = {
   "/api/cards/session": { cards: [
     { card_id: null, source_kind: "error", source_id: 1, topic: "prepositions",
       topic_label: "Przyimki", front: "depends from", back: "depends on\n\nkalka",
-      leech: false,
+      leech: false, improved: false,
       source: { id: 1, created_at: "2026-09-17T10:00:00+02:00", source: "external",
                 exercise_type: "external", topic: "prepositions", topic_label: "Przyimki",
                 student_text: "depends from", correct_text: "depends on",
@@ -295,7 +295,7 @@ const routes = {
     // Karta-pijawka: reguła wraca uparcie, więc backend proponuje skok do grupy.
     { card_id: 9, source_kind: "group", source_id: 1, topic: "prepositions",
       topic_label: "Przyimki", front: "depend ___ on", back: "depend on",
-      leech: true,
+      leech: true, improved: false,
       source: { id: 1, rule: "depend + on", explanation: "kalka z polskiego",
                 topic: "prepositions", topic_label: "Przyimki", member_count: 2 } },
   ],
@@ -341,6 +341,15 @@ const fire = async (key, ev = "click") => {
 const fireKey = async (key, tag = "BODY") => {
   const fns = handlers["document|keydown"] || [];
   for (const fn of fns) await fn({ key, target: { tagName: tag }, preventDefault() {} });
+};
+
+/** Dwa naciśnięcia klawisza JEDNO PO DRUGIM, bez czekania na pierwsze — dokładnie tak
+ *  wypada szybkie dwukrotne uderzenie w spację. Osobny helper, bo `fireKey` czeka na
+ *  handler, a samo to czekanie przepuściłoby odpowiedź serwera i schowało błąd. */
+const fireKeyTwice = (key, tag = "BODY") => {
+  const fns = handlers["document|keydown"] || [];
+  for (const fn of fns) fn({ key, target: { tagName: tag }, preventDefault() {} });
+  for (const fn of fns) fn({ key, target: { tagName: tag }, preventDefault() {} });
 };
 
 /** Klika element tworzony dynamicznie, wskazany przez klasę (np. przycisk zastrzeżenia). */
@@ -730,8 +739,9 @@ const setInput = (id, value) => {
         failures.push("podpowiedź o pijawce nie pokazała się przy karcie-pijawce");
       }
       const leechBtns = created.filter((n) => String(n.className || "").includes("btn-sm"));
-      if (leechBtns.length !== 1 || leechBtns[0].textContent !== "Ćwicz ten błąd") {
-        failures.push("brak przycisku „Ćwicz ten błąd” przy karcie-pijawce: " +
+      // Karta-pijawka z fikstury jest GRUPOWA, więc przycisk ma mówić o grupie.
+      if (leechBtns.length !== 1 || leechBtns[0].textContent !== "Ćwicz tę grupę") {
+        failures.push("brak przycisku „Ćwicz tę grupę” przy grupowej karcie-pijawce: " +
           leechBtns.map((n) => n.textContent).join(", "));
       }
       if (await fireByClass("btn-sm")) {
@@ -790,6 +800,45 @@ const setInput = (id, value) => {
           { card_id: null, source_kind: "error", source_id: 1, topic: "prepositions",
             topic_label: "Przyimki", front: "depends from", back: "depends on\n\nkalka",
             leech: false }],
+        progress: { done_today: 0, overdue: 0, due_now: 1, new_limit: 20, total_sources: 1 },
+      };
+    }],
+    ["Fiszki: dwa szybkie naciśnięcia spacji oceniają kartę raz", async () => {
+      routes["/api/cards/session"] = {
+        cards: [
+          { card_id: null, source_kind: "error", source_id: 4, topic: "prepositions",
+            topic_label: "Przyimki", front: "front1", back: "back1",
+            leech: false, improved: false },
+          { card_id: null, source_kind: "error", source_id: 5, topic: "prepositions",
+            topic_label: "Przyimki", front: "front2", back: "back2",
+            leech: false, improved: false },
+        ],
+        progress: { done_today: 0, overdue: 0, due_now: 2, new_limit: 20, total_sources: 2 },
+      };
+      await fire(".tab:cards"); await settle();
+      await fire("#cards-start"); await settle();
+
+      await fireKey(" ");                 // odkrycie rewersu
+      const before = calls.filter((c) => c.includes("/api/cards/grade-new")).length;
+      fireKeyTwice(" ");                  // dwie oceny, zanim pierwsza zdąży wrócić
+      await settle();
+
+      const graded = calls.filter((c) => c.includes("/api/cards/grade-new")).length - before;
+      if (graded !== 1) {
+        failures.push("podwójna spacja wysłała ocen: " + graded + " (powinna jedną)");
+      }
+      if (nodeText("#cards-front") !== "front2") {
+        failures.push("druga fiszka wypadła z kolejki, widać: " + nodeText("#cards-front"));
+      }
+      if (hasClass("#cards-area", "hidden")) {
+        failures.push("kolejka skończyła się przedwcześnie po podwójnej spacji");
+      }
+
+      routes["/api/cards/session"] = {
+        cards: [
+          { card_id: null, source_kind: "error", source_id: 1, topic: "prepositions",
+            topic_label: "Przyimki", front: "depends from", back: "depends on\n\nkalka",
+            leech: false, improved: false }],
         progress: { done_today: 0, overdue: 0, due_now: 1, new_limit: 20, total_sources: 1 },
       };
     }],

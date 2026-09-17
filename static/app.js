@@ -114,6 +114,9 @@ const I18N = {
     "kind.drill": "Ćwiczenia do błędów",
     "kind.explain": "Wyjaśnienia",
     "kind.extract": "Import (ekstrakcja)",
+    "kind.card": "Ulepszanie fiszek",
+    "kind.group": "Grupowanie błędów",
+    "kind.dispute": "Zastrzeżenia",
     "kind.other": "Inne",
     "groups.modeItems": "Wpisy",
     "groups.modeGroups": "Grupy",
@@ -264,6 +267,9 @@ const I18N = {
     "kind.drill": "Mistake drills",
     "kind.explain": "Explanations",
     "kind.extract": "Import (extraction)",
+    "kind.card": "Flashcard improvements",
+    "kind.group": "Mistake grouping",
+    "kind.dispute": "Disputes",
     "kind.other": "Other",
     "groups.modeItems": "Entries",
     "groups.modeGroups": "Groups",
@@ -477,6 +483,7 @@ document.querySelectorAll(".tab").forEach((tab) => {
     if (tab.dataset.view === "errors") loadErrors();
     if (tab.dataset.view === "tips") loadTips();
     if (tab.dataset.view === "stats") loadStats();
+    if (tab.dataset.view === "cards") loadCardsProgress();
   });
 });
 
@@ -1689,6 +1696,10 @@ let cardsQueue = [];
 let cardsIndex = 0;
 let cardsDone = 0;
 let cardsTotalSources = 0;
+// Ocena leci bez przycisku (spacja i `n`), a `withBusy(…, null, …)` nie ma czego zablokować.
+// Bez tej flagi dwa szybkie naciśnięcia oceniają tę samą kartę dwa razy i przeskakują
+// następną — czyli gubią ją z dzisiejszej kolejki.
+let cardsGrading = false;
 
 /** Selektor tematu dla fiszek: pusta wartość = wszystkie tematy. */
 function fillCardsTopics() {
@@ -1716,6 +1727,18 @@ function renderCardsCounter(progress) {
   cardsTotalSources = progress.total_sources;
 }
 
+/** Licznik nad sesją ma być prawdziwy od razu po wejściu w zakładkę, a nie dopiero
+ *  po „Zacznij sesję". Zapytanie jest darmowe — nie dotyka modelu. */
+function loadCardsProgress() {
+  return withBusy("loader.loading", null, async () => {
+    try {
+      renderCardsCounter(await api("/api/cards/progress"));
+    } catch (e) {
+      showError("#cards-error", e.message);
+    }
+  });
+}
+
 function loadCardsSession() {
   return withBusy("loader.loading", $("#cards-start"), async () => {
     try {
@@ -1738,6 +1761,10 @@ function loadCardsSession() {
 
 function showCard() {
   const card = cardsQueue[cardsIndex];
+  // Banner błędu należy do POPRZEDNIEJ karty. `#cards-area` to statyczny markup, którego
+  // nic tu nie przebudowuje, więc nieczyszczony banner wisiałby pod każdą kolejną kartą.
+  $("#cards-error").innerHTML = "";
+  $("#cards-error").classList.add("hidden");
   const bar = $("#cards-progress-bar");
   bar.style.width = cardsQueue.length
     ? Math.round((cardsIndex / cardsQueue.length) * 100) + "%" : "0%";
@@ -1769,15 +1796,20 @@ function revealCard() {
   $("#cards-back").classList.remove("hidden");
   $("#cards-reveal").classList.add("hidden");
   ["#cards-known", "#cards-unknown"].forEach((s) => $(s).classList.remove("hidden"));
-  // Ulepszyć da się tylko kartę, która już istnieje w bazie.
-  if (card.card_id) $("#cards-improve").classList.remove("hidden");
+  // Ulepszyć da się tylko kartę, która już istnieje w bazie, nie jest grupą (grupa nie ma
+  // pary błędnie → poprawnie, więc serwer takie żądanie odrzuca) i nie została jeszcze
+  // ulepszona — drugie kliknięcie byłoby drugą opłatą za to samo.
+  if (card.card_id && card.source_kind !== "group" && !card.improved) {
+    $("#cards-improve").classList.remove("hidden");
+  }
   // Czyścimy zawsze, nie tylko w gałęzi `card.leech` — inaczej po karcie-pijawce
   // poprzednia notka (i jej listener) zostają w DOM pod `.hidden`.
   const box = $("#cards-leech");
   box.innerHTML = "";
   if (card.leech) {
     box.appendChild(elem("span", "", t("cards.leech")));
-    const go = elem("button", "btn-sm", t("cards.leechGo"));
+    const go = elem("button", "btn-sm",
+                    t(card.source_kind === "group" ? "groups.practiceThis" : "cards.leechGo"));
     go.addEventListener("click", () => {
       if (card.source_kind === "group") focusOnGroup(card.source);
       else focusOnError(card.source);
@@ -1788,8 +1820,10 @@ function revealCard() {
 }
 
 function gradeCard(grade) {
+  if (cardsGrading) return undefined;
   const card = cardsQueue[cardsIndex];
-  if (!card) return;
+  if (!card) return undefined;
+  cardsGrading = true;
   return withBusy("loader.saving", null, async () => {
     try {
       const out = card.card_id
@@ -1809,8 +1843,11 @@ function gradeCard(grade) {
       cardsIndex += 1;
       showCard();
     } catch (e) {
-      $("#cards-area").appendChild(
-        elem("div", "error-banner", t("error.prefix") + e.message));
+      // NIE `#cards-area` — to statyczny markup, który `showCard()` tylko nadpisuje
+      // polami; doklejony banner zostawałby pod każdą następną kartą.
+      showError("#cards-error", e.message);
+    } finally {
+      cardsGrading = false;
     }
   });
 }
@@ -1829,21 +1866,27 @@ $("#cards-improve").addEventListener("click", () =>
                             { method: "POST" });
       card.front = out.front;
       card.back = out.back;
+      card.improved = true;
+      $("#cards-improve").classList.add("hidden");
       $("#cards-front").textContent = out.front;
       $("#cards-back").textContent = out.back;
     } catch (e) {
-      $("#cards-area").appendChild(
-        elem("div", "error-banner", t("error.prefix") + e.message));
+      // Jak wyżej: `#cards-area` jest statyczne, banner musi trafić do `#cards-error`.
+      showError("#cards-error", e.message);
     }
   }));
 
 $("#cards-new-limit").addEventListener("change", () =>
   withBusy("loader.saving", null, async () => {
+    // `Number("")` to 0, a zero po cichu wyłączyłoby nowe karty. Puste pole znaczy
+    // „nic nie zmieniam", nie „zero".
+    const raw = String($("#cards-new-limit").value ?? "").trim();
+    if (raw === "") return;
     try {
       renderCardsCounter(await api("/api/cards/settings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ new_per_day: Number($("#cards-new-limit").value) }),
+        body: JSON.stringify({ new_per_day: Number(raw) }),
       }));
     } catch (e) {
       // NIE `#cards-counter` — to inline `<span>`, a `showError` wstawia blokowy
