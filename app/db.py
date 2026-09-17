@@ -978,21 +978,3 @@ def count_card_sources(conn: sqlite3.Connection) -> int:
         "SELECT (SELECT COUNT(*) FROM errors) + (SELECT COUNT(*) FROM error_groups) AS n"
     ).fetchone()
     return int(row["n"])
-
-
-@_synchronized
-def delete_cards_for_source(conn: sqlite3.Connection, source_kind: str,
-                            source_id: int) -> int:
-    """Usuwa kartę źródła wraz z jej logiem ocen. Wołane RĘCZNIE z `delete_error`
-    i `delete_group` — `PRAGMA foreign_keys` jest wyłączone, więc deklaratywna kaskada
-    wyglądałaby poprawnie i nie zrobiłaby nic."""
-    rows = conn.execute(
-        "SELECT id FROM cards WHERE source_kind = ? AND source_id = ?",
-        (source_kind, source_id),
-    ).fetchall()
-    for r in rows:
-        conn.execute("DELETE FROM card_reviews WHERE card_id = ?", (r["id"],))
-    cur = conn.execute("DELETE FROM cards WHERE source_kind = ? AND source_id = ?",
-                       (source_kind, source_id))
-    conn.commit()
-    return cur.rowcount
