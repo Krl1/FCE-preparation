@@ -151,7 +151,8 @@ does not — it is parsed locally).
   **I don't** — with the space bar and `n`, without reaching for the mouse.
 
   Every card carries **its own review date**: known → back in 1, 3, 7, 14, 30, 90 days;
-  not known → back tomorrow. A session shows only what is due today plus new cards up to a
+  not known → back tomorrow. A card you have never got right once comes back the same day —
+  the ladder only starts once you have recalled it correctly. A session shows only what is due today plus new cards up to a
   daily limit (20 by default) — without that limit the first session would hold two hundred
   items. This is the one place in the app where material **expires**: in the journal a
   mistake stays forever, on a flashcard a mastered rule moves further away.
