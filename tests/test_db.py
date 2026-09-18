@@ -501,9 +501,14 @@ def test_card_unknown_count_only_counts_failures(conn):
 
 def test_cards_due_returns_today_and_earlier(conn):
     a, b, c = _card_err(conn, student="a"), _card_err(conn, student="b"), _card_err(conn, student="c")
-    db.create_card(conn, source_kind="error", source_id=a, due_on="2026-09-10", interval_days=1)
-    db.create_card(conn, source_kind="error", source_id=b, due_on="2026-09-17", interval_days=1)
+    ca = db.create_card(conn, source_kind="error", source_id=a, due_on="2026-09-10", interval_days=1)
+    cb = db.create_card(conn, source_kind="error", source_id=b, due_on="2026-09-17", interval_days=1)
     db.create_card(conn, source_kind="error", source_id=c, due_on="2026-09-30", interval_days=1)
+    # `cards_due` widzi tylko karty przygotowane i już ocenione — bez tego para (a, b)
+    # byłaby „nowa", nie „zaległa".
+    for cid in (ca, cb):
+        db.set_card_content(conn, cid, front="f", back="b", shape="translate", shape_reason="")
+        db.insert_card_review(conn, card_id=cid, grade="known")
     rows = db.cards_due(conn, "2026-09-17")
     assert [r["source_id"] for r in rows] == [a, b]
     # `card_id` musi być w wyniku pod TĄ nazwą — czyta go flashcards.build_queue.
@@ -514,8 +519,10 @@ def test_cards_due_filters_by_topic(conn):
     a = _card_err(conn, topic="prepositions", student="a")
     b = _card_err(conn, topic="articles", student="b")
     for eid in (a, b):
-        db.create_card(conn, source_kind="error", source_id=eid,
-                       due_on="2026-09-17", interval_days=1)
+        cid = db.create_card(conn, source_kind="error", source_id=eid,
+                             due_on="2026-09-17", interval_days=1)
+        db.set_card_content(conn, cid, front="f", back="b", shape="translate", shape_reason="")
+        db.insert_card_review(conn, card_id=cid, grade="known")
     got = [r["source_id"] for r in db.cards_due(conn, "2026-09-17", topic="articles")]
     assert got == [b]
 
@@ -604,3 +611,105 @@ def test_cards_do_not_touch_the_streak(conn):
     db.insert_card_review(conn, card_id=cid, grade="known")
     assert db.reviews_done_today(conn) == 0
     assert db.reviews_per_day(conn) == {}
+
+
+# --- Treść fiszki -------------------------------------------------------------
+
+def _prep_err(conn, topic="collocations", student="in home", correct="at home"):
+    return db.insert_error(conn, source="test", exercise_type="imported", topic=topic,
+                           student_text=student, correct_text=correct,
+                           explanation="stały zwrot", severity="minor")
+
+
+def test_new_card_starts_unprepared(conn):
+    eid = _prep_err(conn)
+    cid = db.create_card(conn, source_kind="error", source_id=eid,
+                         due_on="2026-09-18", interval_days=0)
+    assert db.get_card(conn, cid)["prepared_at"] is None
+    assert db.count_unprepared(conn) == 1
+
+
+def test_set_card_content_marks_it_prepared(conn):
+    eid = _prep_err(conn)
+    cid = db.create_card(conn, source_kind="error", source_id=eid,
+                         due_on="2026-09-18", interval_days=0)
+    assert db.set_card_content(conn, cid, front="W domu jest cicho.", back="at home",
+                               shape="translate", shape_reason="") is True
+    card = db.get_card(conn, cid)
+    assert card["front"] == "W domu jest cicho."
+    assert card["shape"] == "translate"
+    assert card["prepared_at"]
+    assert db.count_unprepared(conn) == 0
+
+
+def test_preparing_content_does_not_touch_the_schedule(conn):
+    """Harmonogram przeżywa przeprojektowanie — zmienia się to, co widać, nie kiedy."""
+    eid = _prep_err(conn)
+    cid = db.create_card(conn, source_kind="error", source_id=eid,
+                         due_on="2026-10-01", interval_days=30)
+    db.set_card_content(conn, cid, front="f", back="b", shape="translate", shape_reason="")
+    card = db.get_card(conn, cid)
+    assert card["due_on"] == "2026-10-01"
+    assert card["interval_days"] == 30
+
+
+def test_cards_unprepared_carries_the_source_fields(conn):
+    eid = _prep_err(conn, topic="articles", student="a free time")
+    db.create_card(conn, source_kind="error", source_id=eid,
+                   due_on="2026-09-18", interval_days=0)
+    row = db.cards_unprepared(conn)[0]
+    assert row["topic"] == "articles"
+    assert row["student_text"] == "a free time"
+    assert row["correct_text"] == "at home"
+    assert row["explanation"] == "stały zwrot"
+
+
+def test_group_source_has_no_wrong_form(conn):
+    """Grupa nie ma formy błędnej — reguła nie może wyciec jako `student_text`,
+    bo prompt zakazuje pokazywania tego pola."""
+    gid = db.insert_group(conn, topic="articles", rule="Przedimek przed rzeczownikiem",
+                          explanation="policzalne wymagają przedimka")
+    db.create_card(conn, source_kind="group", source_id=gid,
+                   due_on="2026-09-18", interval_days=0)
+    row = [r for r in db.cards_unprepared(conn) if r["source_kind"] == "group"][0]
+    assert row["student_text"] == ""
+    assert row["correct_text"] == "Przedimek przed rzeczownikiem"
+
+
+def test_unprepared_cards_stay_out_of_both_queues(conn):
+    eid = _prep_err(conn)
+    db.create_card(conn, source_kind="error", source_id=eid,
+                   due_on="2026-09-01", interval_days=1)
+    assert db.cards_due(conn, "2026-09-18") == []
+    assert db.cards_new(conn, "2026-09-18") == []
+
+
+def test_a_prepared_card_without_reviews_is_new_not_due(conn):
+    eid = _prep_err(conn)
+    cid = db.create_card(conn, source_kind="error", source_id=eid,
+                         due_on="2026-09-01", interval_days=1)
+    db.set_card_content(conn, cid, front="f", back="b", shape="translate", shape_reason="")
+    assert [r["card_id"] for r in db.cards_new(conn, "2026-09-18")] == [cid]
+    assert db.cards_due(conn, "2026-09-18") == []
+
+
+def test_a_reviewed_card_becomes_due_not_new(conn):
+    eid = _prep_err(conn)
+    cid = db.create_card(conn, source_kind="error", source_id=eid,
+                         due_on="2026-09-01", interval_days=1)
+    db.set_card_content(conn, cid, front="f", back="b", shape="translate", shape_reason="")
+    db.insert_card_review(conn, card_id=cid, grade="known")
+    assert [r["card_id"] for r in db.cards_due(conn, "2026-09-18")] == [cid]
+    assert db.cards_new(conn, "2026-09-18") == []
+
+
+def test_cards_new_filters_by_topic(conn):
+    a = _prep_err(conn, topic="collocations", student="a")
+    b = _prep_err(conn, topic="articles", student="b")
+    for eid in (a, b):
+        cid = db.create_card(conn, source_kind="error", source_id=eid,
+                             due_on="2026-09-18", interval_days=0)
+        db.set_card_content(conn, cid, front="f", back="b", shape="translate",
+                            shape_reason="")
+    got = [r["source_id"] for r in db.cards_new(conn, "2026-09-18", topic="articles")]
+    assert got == [b]

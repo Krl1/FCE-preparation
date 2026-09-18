@@ -149,8 +149,13 @@ CREATE TABLE IF NOT EXISTS group_drill_scores (
 
 CREATE INDEX IF NOT EXISTS idx_group_drill ON group_drill_scores(group_id, created_at);
 
--- Fiszki. Karta jest WIDOKIEM na źródło: treść renderuje się przy pokazaniu, w bazie
--- leży tylko harmonogram i opcjonalna treść ulepszona przez model.
+-- Fiszki. Treść (`front`/`back`/`shape`/`shape_reason`) powstaje RAZ, wsadowo, z modelu
+-- i leży w tabeli — karta nie jest już renderowana ze źródła przy każdym pokazaniu.
+-- `prepared_at IS NULL` oznacza kartę czekającą w kolejce przygotowania (patrz
+-- `cards_unprepared`); dopóki nie ma treści, karta nie trafia ani do `cards_new`,
+-- ani do `cards_due`. `front_override`/`back_override` to relikt poprzedniego
+-- podejścia (treść ulepszona ręcznie nad renderowanym źródłem) — zostają nietknięte,
+-- bo przebudowa żywej bazy z historią ocen to osobne ryzyko.
 -- Świadomie bez kolumn `ease`, `reps` i `lapses`: przy stałej drabince odstępów `ease`
 -- nie miałoby czytelnika, a powtórki i pomyłki wyliczają się z `card_reviews`.
 CREATE TABLE IF NOT EXISTS cards (
@@ -163,10 +168,16 @@ CREATE TABLE IF NOT EXISTS cards (
     interval_days  INTEGER NOT NULL,
     front_override TEXT,
     back_override  TEXT,
+    front          TEXT,
+    back           TEXT,
+    shape          TEXT,
+    shape_reason   TEXT,
+    prepared_at    TEXT,
     UNIQUE (source_kind, source_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_cards_due ON cards(due_on);
+CREATE INDEX IF NOT EXISTS idx_cards_prepared ON cards(prepared_at);
 
 CREATE TABLE IF NOT EXISTS card_reviews (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -249,6 +260,16 @@ def _migrate(conn: sqlite3.Connection) -> None:
         # NULL = wpis nieprzypisany (przyszedł po ostatnim przebiegu grupowania).
         conn.execute("ALTER TABLE errors ADD COLUMN group_id INTEGER")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_errors_group ON errors(group_id)")
+
+    # Pięć kolumn treści karty. KOLUMNY wymagają tej ścieżki, w odróżnieniu od nowych
+    # TABEL: `_SCHEMA` idzie przez executescript przy każdym połączeniu, więc
+    # `CREATE TABLE IF NOT EXISTS` obsługuje istniejące bazy sam, ale `ALTER TABLE
+    # ADD COLUMN` nie jest idempotentne i wywaliłby się przy drugim otwarciu.
+    card_cols = {r["name"] for r in conn.execute("PRAGMA table_info(cards)")}
+    for col in ("front", "back", "shape", "shape_reason", "prepared_at"):
+        if col not in card_cols:
+            conn.execute(f"ALTER TABLE cards ADD COLUMN {col} TEXT")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_cards_prepared ON cards(prepared_at)")
     conn.commit()
 
 
@@ -887,6 +908,81 @@ def set_card_override(conn: sqlite3.Connection, card_id: int, *,
 
 
 @_synchronized
+def set_card_content(conn: sqlite3.Connection, card_id: int, *, front: str, back: str,
+                     shape: str, shape_reason: str) -> bool:
+    """Zapisuje wygenerowaną treść i oznacza kartę jako przygotowaną.
+
+    NIE dotyka `due_on` ani `interval_days`: przeprojektowanie treści zmienia to,
+    co uczeń widzi, nie to, kiedy to widzi."""
+    now = _now()
+    cur = conn.execute(
+        "UPDATE cards SET front = ?, back = ?, shape = ?, shape_reason = ?, "
+        "prepared_at = ?, updated_at = ? WHERE id = ?",
+        (front, back, shape, shape_reason, now, now, card_id),
+    )
+    conn.commit()
+    return cur.rowcount > 0
+
+
+_UNPREPARED_SQL = (
+    "SELECT c.id AS card_id, c.source_kind, c.source_id, "
+    "       COALESCE(e.topic, g.topic) AS topic, "
+    "       COALESCE(e.student_text, '') AS student_text, "
+    "       COALESCE(e.correct_text, g.rule) AS correct_text, "
+    "       COALESCE(e.explanation, g.explanation) AS explanation "
+    "FROM cards c "
+    "LEFT JOIN errors e ON c.source_kind = 'error' AND e.id = c.source_id "
+    "LEFT JOIN error_groups g ON c.source_kind = 'group' AND g.id = c.source_id "
+    "WHERE c.prepared_at IS NULL AND COALESCE(e.id, g.id) IS NOT NULL"
+)
+
+
+@_synchronized
+def cards_unprepared(conn: sqlite3.Connection, limit: int = 500) -> list[dict]:
+    """Karty czekające na treść, wraz z polami źródła potrzebnymi do jej ułożenia.
+
+    Warunek `COALESCE(e.id, g.id) IS NOT NULL` pomija karty osierocone — źródło mogło
+    zniknąć — żeby nie wysyłać modelowi pozycji bez treści do pracy.
+
+    `student_text` grupy jest PUSTY, nie równy regule. Grupa nie ma formy błędnej: jej
+    materiałem jest reguła i wyjaśnienie. Gdyby reguła wyciekła tu jako `student_text`,
+    prompt zakazałby modelowi użycia jedynej sensownej treści, jaką grupa niesie."""
+    rows = conn.execute(f"{_UNPREPARED_SQL} ORDER BY c.id LIMIT ?", (limit,)).fetchall()
+    return [dict(r) for r in rows]
+
+
+@_synchronized
+def count_unprepared(conn: sqlite3.Connection) -> int:
+    row = conn.execute(
+        f"SELECT COUNT(*) AS n FROM ({_UNPREPARED_SQL})"
+    ).fetchone()
+    return int(row["n"])
+
+
+@_synchronized
+def cards_new(conn: sqlite3.Connection, today: str,
+              topic: Optional[str] = None) -> list[dict]:
+    """Karty przygotowane, których uczeń nie widział ani razu.
+
+    `today` nie filtruje nowych kart — przyjmujemy go dla symetrii z `cards_due`
+    i żeby wywołujący nie musiał pamiętać, która z dwóch funkcji go potrzebuje."""
+    sql = (
+        "SELECT c.*, c.id AS card_id, COALESCE(e.topic, g.topic) AS topic "
+        "FROM cards c "
+        "LEFT JOIN errors e ON c.source_kind = 'error' AND e.id = c.source_id "
+        "LEFT JOIN error_groups g ON c.source_kind = 'group' AND g.id = c.source_id "
+        "WHERE c.prepared_at IS NOT NULL "
+        "  AND NOT EXISTS (SELECT 1 FROM card_reviews r WHERE r.card_id = c.id)"
+    )
+    params: list = []
+    if topic:
+        sql += " AND COALESCE(e.topic, g.topic) = ?"
+        params.append(topic)
+    sql += " ORDER BY c.id"
+    return [dict(r) for r in conn.execute(sql, params).fetchall()]
+
+
+@_synchronized
 def insert_card_review(conn: sqlite3.Connection, *, card_id: int, grade: str) -> None:
     """Log ocen. NIE jest idempotentny w obrębie dnia — w sesji ta sama karta może
     wrócić, a każde podejście ma zostać zapisane."""
@@ -910,7 +1006,10 @@ def cards_due(conn: sqlite3.Connection, today: str,
     """Karty zaplanowane na dziś lub wcześniej, z tematem ze źródła.
 
     Temat karty to temat jej źródła, dlatego zapytanie łączy się z obiema tabelami
-    źródłowymi — wpis w dzienniku ma temat w `errors.topic`, grupa w `error_groups.topic`."""
+    źródłowymi — wpis w dzienniku ma temat w `errors.topic`, grupa w `error_groups.topic`.
+
+    Zwraca tylko karty PRZYGOTOWANE (mają już treść) i już OCENIONE choć raz —
+    karta bez oceny jest „nowa" i należy do `cards_new`, nie do tej kolejki."""
     # `c.id AS card_id`, bo `flashcards.build_queue` czyta właśnie ten klucz —
     # gołe `c.*` dałoby kolumnę `id` i wysypało składanie kolejki na KeyError.
     sql = (
@@ -918,7 +1017,8 @@ def cards_due(conn: sqlite3.Connection, today: str,
         "FROM cards c "
         "LEFT JOIN errors e ON c.source_kind = 'error' AND e.id = c.source_id "
         "LEFT JOIN error_groups g ON c.source_kind = 'group' AND g.id = c.source_id "
-        "WHERE c.due_on <= ?"
+        "WHERE c.due_on <= ? AND c.prepared_at IS NOT NULL "
+        "  AND EXISTS (SELECT 1 FROM card_reviews r WHERE r.card_id = c.id)"
     )
     params: list = [today]
     if topic:
