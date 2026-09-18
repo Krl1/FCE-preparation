@@ -19,6 +19,7 @@ from . import fce_taxonomy as tax
 from . import flashcards, grouping, llm_client, pricing, srs, streak
 from .models import (
     CardGrade,
+    CardRegenerate,
     CardSettings,
     CompleteRequest,
     DisputeRequest,
@@ -719,6 +720,11 @@ def _prepare_batch(rows: list[dict], lang: str) -> tuple[int, int]:
         "correct_text": r["correct_text"],
         "explanation": r["explanation"],
         "suggested_shape": flashcards.default_shape(r["topic"]),
+        # Puste dla wsadowego przygotowania — ono nie ma czego doradzać. Wypełnia je
+        # wyłącznie przegenerowanie pojedynczej karty z uwagami od ucznia.
+        "notes": r.get("notes", ""),
+        "current_front": r.get("current_front", ""),
+        "current_back": r.get("current_back", ""),
     } for r in rows]
     by_ref = {i["ref"]: r for i, r in zip(items, rows)}
 
@@ -760,14 +766,20 @@ def prepare_cards(lang: str = Query(default="pl")) -> dict:
 
 
 @app.post("/api/cards/{card_id}/regenerate")
-def regenerate_card(card_id: int, lang: str = Query(default="pl")) -> dict:
-    """Układa treść tej jednej karty od nowa — gdy wyszła słabo."""
+def regenerate_card(card_id: int, req: Optional[CardRegenerate] = None,
+                    lang: str = Query(default="pl")) -> dict:
+    """Układa treść tej jednej karty od nowa — gdy wyszła słabo.
+
+    Uwagi są opcjonalne i jednorazowe. Bez nich jest to ślepe ułożenie od zera: model
+    dostaje ten sam materiał co przy wsadowym przygotowaniu i jedyne, co zmienia wynik,
+    to losowość próbkowania."""
     card = db.get_card(conn, card_id)
     if card is None:
         raise HTTPException(status_code=404, detail="Nie znaleziono fiszki o tym id.")
     source = _load_source(card["source_kind"], card["source_id"])
     if source is None:
         raise HTTPException(status_code=404, detail="Nie znaleziono źródła tej fiszki.")
+    notes = req.notes if req else ""
     row = {
         "card_id": card_id, "source_kind": card["source_kind"],
         "source_id": card["source_id"], "topic": source["topic"],
@@ -775,6 +787,13 @@ def regenerate_card(card_id: int, lang: str = Query(default="pl")) -> dict:
         "student_text": source.get("student_text") or "",
         "correct_text": source.get("correct_text") or source.get("rule", ""),
         "explanation": source.get("explanation", ""),
+        "notes": notes,
+        # Poprzednia wersja karty jedzie do modelu TYLKO razem z uwagami. Z nimi jest
+        # niezbędna — „skróć to" nie znaczy nic, jeśli model nie wie, co jest „tym".
+        # Bez nich musi jej nie być, żeby puste uwagi dawały dokładnie to zachowanie,
+        # które ten przycisk miał przed dodaniem tej funkcji.
+        "current_front": (card["front"] or "") if notes else "",
+        "current_back": (card["back"] or "") if notes else "",
     }
     prepared, _ = _prepare_batch([row], lang)
     if not prepared:

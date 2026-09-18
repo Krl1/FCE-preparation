@@ -147,6 +147,8 @@ const I18N = {
     "cards.start": "Zacznij sesję",
     "cards.prepare": "Przygotuj karty",
     "cards.regenerate": "Przegeneruj",
+    "cards.regenerateNotesPh": "Co poprawić w tej karcie? (opcjonalnie)",
+    "cards.regenerateGo": "Ułóż od nowa",
     "cards.reveal": "Pokaż odpowiedź",
     "cards.known": "Umiem",
     "cards.unknown": "Nie umiem",
@@ -304,6 +306,8 @@ const I18N = {
     "cards.start": "Start session",
     "cards.prepare": "Prepare cards",
     "cards.regenerate": "Regenerate",
+    "cards.regenerateNotesPh": "What should change on this card? (optional)",
+    "cards.regenerateGo": "Rebuild it",
     "cards.reveal": "Show answer",
     "cards.known": "I know it",
     "cards.unknown": "I don't",
@@ -1807,8 +1811,10 @@ function showCard() {
   $("#cards-back").classList.add("hidden");
   $("#cards-leech").classList.add("hidden");
   $("#cards-reveal").classList.remove("hidden");
-  ["#cards-known", "#cards-unknown", "#cards-regenerate"].forEach(
+  ["#cards-known", "#cards-unknown", "#cards-regenerate", "#cards-regen-box"].forEach(
     (s) => $(s).classList.add("hidden"));
+  // Uwagi są JEDNORAZOWE — nie przenoszą się na kolejną kartę ani na kolejną próbę.
+  $("#cards-regen-notes").value = "";
 }
 
 function revealCard() {
@@ -1873,17 +1879,35 @@ $("#cards-reveal").addEventListener("click", revealCard);
 $("#cards-known").addEventListener("click", () => gradeCard("known"));
 $("#cards-unknown").addEventListener("click", () => gradeCard("unknown"));
 
-$("#cards-regenerate").addEventListener("click", () =>
-  withBusy("loader.loading", $("#cards-regenerate"), async () => {
+// „Przegeneruj" otwiera pole na uwagi, a nie strzela od razu. Operacja jest płatna i
+// trwa kilkanaście sekund, więc jedno kliknięcie więcej nic nie kosztuje, a daje szansę
+// powiedzieć modelowi, CO poprawić. Puste pole = ślepe ułożenie od nowa, czyli
+// zachowanie sprzed tej funkcji.
+$("#cards-regenerate").addEventListener("click", () => {
+  $("#cards-regen-box").classList.remove("hidden");
+  $("#cards-regen-notes").focus();
+});
+
+$("#cards-regen-notes").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") $("#cards-regen-go").click();
+});
+
+$("#cards-regen-go").addEventListener("click", () =>
+  withBusy("loader.loading", $("#cards-regen-go"), async () => {
     const card = cardsQueue[cardsIndex];
     if (!card || !card.card_id) return;
     try {
-      const out = await api(`/api/cards/${card.card_id}/regenerate?lang=${LANG}`,
-                            { method: "POST" });
+      const out = await api(`/api/cards/${card.card_id}/regenerate?lang=${LANG}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ notes: $("#cards-regen-notes").value }),
+      });
       card.front = out.front;
       card.back = out.back;
       $("#cards-front").textContent = out.front;
       $("#cards-back").textContent = out.back;
+      $("#cards-regen-notes").value = "";
+      $("#cards-regen-box").classList.add("hidden");
     } catch (e) {
       showError("#cards-error", e.message);
     }

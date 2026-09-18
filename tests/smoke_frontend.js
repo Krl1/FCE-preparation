@@ -932,14 +932,36 @@ const setInput = (id, value) => {
                    unprepared: 0 },
       };
     }],
-    ["Fiszki: „Przegeneruj” podmienia treść karty w miejscu", async () => {
+    ["Fiszki: „Przegeneruj” pyta o uwagi, zanim zapłaci za model", async () => {
       await fire(".tab:cards"); await settle();
       await fire("#cards-start"); await settle();
       await fire("#cards-reveal"); await settle();
       const before = calls.length;
       await fire("#cards-regenerate"); await settle();
-      if (!calls.slice(before).some((c) => c.startsWith("POST /api/cards/1/regenerate"))) {
-        failures.push("„Przegeneruj” nie wysłał żądania do API");
+      // Samo kliknięcie ma TYLKO otworzyć pole. Gdyby strzelało od razu, uczeń płaciłby
+      // za ślepe ułożenie od nowa, zanim zdąży powiedzieć, co poprawić.
+      if (calls.slice(before).some((c) => c.includes("/regenerate"))) {
+        failures.push("„Przegeneruj” wysłał żądanie, zanim spytał o uwagi");
+      }
+      if (nodes.get("#cards-regen-box").__classes.has("hidden")) {
+        failures.push("pole na uwagi nie pokazało się po kliknięciu „Przegeneruj”");
+      }
+      setInput("cards-regen-notes", "za długie, daj krótsze zdanie");
+      await fire("#cards-regen-go"); await settle();
+      const żądanie = calls.slice(before)
+        .find((c) => c.startsWith("POST /api/cards/1/regenerate"));
+      if (!żądanie) {
+        failures.push("potwierdzenie nie wysłało żądania do API");
+      } else if (!żądanie.includes("za długie, daj krótsze zdanie")) {
+        failures.push("uwagi nie doleciały do API: " + żądanie);
+      }
+      // Uwagi są jednorazowe — po użyciu pole ma być puste i schowane, żeby nie
+      // doklejały się po cichu do następnej próby.
+      if (nodes.get("#cards-regen-notes").value !== "") {
+        failures.push("uwagi zostały w polu po użyciu");
+      }
+      if (!nodes.get("#cards-regen-box").__classes.has("hidden")) {
+        failures.push("pole na uwagi nie schowało się po użyciu");
       }
       // Nowa treść ma wejść na obie strony karty OD RAZU — bez tego uczeń zapłacił za
       // wywołanie modelu i dalej patrzy na starą, odrzuconą kartę.

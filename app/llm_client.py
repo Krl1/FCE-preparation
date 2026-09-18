@@ -842,7 +842,20 @@ def _card_line(item: dict) -> str:
     # 300, nie 180: na prawdziwej bazie 17 z 219 wyjaśnień było dłuższych niż 180 znaków,
     # najdłuższe miało 246. Ucięcie w połowie zdania zabierało modelowi właśnie tę część,
     # dla której wyjaśnienie w ogóle było długie.
-    return line + f" | uwaga: {str(item.get('explanation') or '')[:300]}"
+    line += f" | uwaga: {str(item.get('explanation') or '')[:300]}"
+
+    # Uwagi i poprzednia wersja karty dotyczą WYŁĄCZNIE przegenerowania jednej karty.
+    # Idą na osobne wiersze pod swoją pozycją, żeby w partii wielu kart było widać,
+    # do której się odnoszą — i żeby pozycja bez uwag wyglądała dokładnie tak jak
+    # przed dodaniem tej funkcji.
+    prev_front = str(item.get("current_front") or "").strip()
+    prev_back = str(item.get("current_back") or "").strip()
+    if prev_front or prev_back:
+        line += f"\n  POPRZEDNIA KARTA — przód: {prev_front} | tył: {prev_back}"
+    notes = str(item.get("notes") or "").strip()
+    if notes:
+        line += f"\n  UWAGI UCZNIA: {notes}"
+    return line
 
 
 def generate_cards(items: list[dict], lang: str = "pl") -> dict:
@@ -867,6 +880,15 @@ def generate_cards(items: list[dict], lang: str = "pl") -> dict:
         "pomyłki; ma wyprodukować formę poprawną.\n"
         if "NIE POKAZUJ" in listing else ""
     )
+    # Tak samo warunkowo jak zakaz wyżej: instrukcja o uwagach pojawia się tylko wtedy,
+    # gdy któraś pozycja je niesie. Wsadowe przygotowanie nie ma czego doradzać, a jego
+    # prompt ma zostać nietknięty.
+    revise_line = (
+        "\nPozycja opatrzona UWAGAMI UCZNIA: ułóż jej kartę OD NOWA tak, żeby uwagi "
+        "zostały spełnione, i nie powtarzaj wersji podanej jako POPRZEDNIA KARTA. "
+        "Uwagi dotyczą wyłącznie tej pozycji, przy której stoją.\n"
+        if "UWAGI UCZNIA" in listing else ""
+    )
     shape = ('{"cards": [{"ref": str, "shape": "translate"|"gap", "front": str, '
              '"back": str, "shape_reason": str}]}')
     prompt = (
@@ -887,7 +909,7 @@ def generate_cards(items: list[dict], lang: str = "pl") -> dict:
         "wyjaśniające, dlaczego tak.\n\n"
         "Użyj sugerowanego kształtu. Jeśli materiał wyraźnie do niego nie pasuje, możesz "
         "wybrać drugi, ale MUSISZ wtedy wypełnić 'shape_reason' jednym zdaniem; "
-        f"odstępstwo bez uzasadnienia zostanie odrzucone.\n{forbid_line}\n"
+        f"odstępstwo bez uzasadnienia zostanie odrzucone.\n{forbid_line}{revise_line}\n"
         f"'ref' przepisz dokładnie z listy. Zwróć WYŁĄCZNIE JSON w kształcie: {shape}"
     )
     return _call_json(prompt, kind="cards")

@@ -514,3 +514,67 @@ def test_generate_cards_with_no_items_skips_the_model(monkeypatch):
 
     monkeypatch.setattr(llm_client, "_call_json", explode)
     assert llm_client.generate_cards([]) == {"cards": []}
+
+
+# --- Uwagi do przegenerowania karty ------------------------------------------
+
+def _prompt_for(monkeypatch, items):
+    """Zwraca prompt, który poszedłby do modelu dla tych pozycji."""
+    seen = {}
+
+    def fake_call(prompt, kind="other"):
+        seen["prompt"] = prompt
+        return {"cards": []}
+
+    monkeypatch.setattr(llm_client, "_call_json", fake_call)
+    llm_client.generate_cards(items)
+    return seen["prompt"]
+
+
+def test_material_carries_the_notes_and_the_card_being_replaced(monkeypatch):
+    """Uwagi bez poprzedniej wersji karty byłyby bezużyteczne: „skróć to" nie znaczy
+    nic, jeśli model nie wie, co jest „tym"."""
+    item = _card_item()
+    item.update(notes="za długie zdanie", current_front="Stary przód",
+                current_back="Stary tył")
+    prompt = _prompt_for(monkeypatch, [item])
+    assert "za długie zdanie" in prompt
+    assert "Stary przód" in prompt
+    assert "Stary tył" in prompt
+
+
+def test_notes_come_with_an_instruction_what_to_do_with_them(monkeypatch):
+    """Sam tekst uwag w materiale to za mało — model musi wiedzieć, że ma je spełnić
+    i nie powtórzyć poprzedniej wersji."""
+    item = _card_item()
+    item.update(notes="daj inny przykład", current_front="Stary", current_back="Tył")
+    prompt = _prompt_for(monkeypatch, [item])
+    assert "UWAGI UCZNIA" in prompt
+    assert "POPRZEDNIA KARTA" in prompt
+
+
+def test_material_without_notes_is_untouched(monkeypatch):
+    """Wsadowe przygotowanie idzie tą samą funkcją co przegenerowanie. Pozycja bez
+    uwag musi dawać prompt nieodróżnialny od tego sprzed dodania uwag — inaczej
+    zmieniamy ścieżkę, którą przygotowuje się 285 kart naraz."""
+    prompt = _prompt_for(monkeypatch, [_card_item()])
+    assert "UWAGI UCZNIA" not in prompt
+    assert "POPRZEDNIA KARTA" not in prompt
+
+
+def test_empty_notes_are_the_same_as_none(monkeypatch):
+    item = _card_item()
+    item.update(notes="   ", current_front="", current_back="")
+    assert "UWAGI UCZNIA" not in _prompt_for(monkeypatch, [item])
+
+
+def test_one_item_with_notes_does_not_annotate_the_others(monkeypatch):
+    """Instrukcja o uwagach jest wspólna dla całego promptu, ale sam tekst uwag ma
+    siedzieć wyłącznie przy swojej pozycji."""
+    plain = _card_item(ref="error:2")
+    plain["correct_text"] = "bez uwag"
+    withnotes = _card_item(ref="error:1")
+    withnotes.update(notes="skróć", current_front="Stary", current_back="Tył")
+    prompt = _prompt_for(monkeypatch, [plain, withnotes])
+    linia_bez_uwag = [w for w in prompt.splitlines() if "bez uwag" in w][0]
+    assert "skróć" not in linia_bez_uwag

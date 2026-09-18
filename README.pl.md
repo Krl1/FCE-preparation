@@ -147,7 +147,9 @@ Uwaga: pliki tekstowe idą przez model, więc ich import **kosztuje wywołania s
   jest polskie zdanie, które masz powiedzieć po angielsku, a przy gramatyce — angielskie zdanie
   z luką. Na odwrocie poprawna forma i jedno zdanie, dlaczego tak. Treść powstaje raz, po
   kliknięciu **Przygotuj karty**; potem przewracanie jest natychmiastowe i nic nie kosztuje.
-  Gdy któraś karta wyjdzie słabo, **Przegeneruj** układa ją od nowa. Odkrywasz odpowiedź
+  Gdy któraś karta wyjdzie słabo, **Przegeneruj** układa ją od nowa — możesz przy tym
+  dopisać uwagi („za długie", „daj inny przykład"), a model dostanie je razem z kartą,
+  którą zastępuje. Bez uwag jest to po prostu kolejne losowanie. Odkrywasz odpowiedź
   i oceniasz **Umiem** albo **Nie umiem** — spacją i klawiszem `n`, bez sięgania po mysz.
 
   Każda karta ma **własny termin powtórki**: umiesz → wraca za 1, 3, 7, 14, 30, 90 dni;

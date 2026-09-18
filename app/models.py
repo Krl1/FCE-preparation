@@ -247,6 +247,26 @@ class DisputeRequest(BaseModel):
 
 # --- Fiszki -------------------------------------------------------------------
 
+# Sufit długości uwag do przegenerowania. Idą wprost do promptu, więc tekst wklejony
+# przez przypadek rozdmuchałby żądanie i jego koszt. Kilka zdań wskazówek mieści się
+# swobodnie.
+CARD_NOTES_MAX = 500
+
+
+class CardRegenerate(BaseModel):
+    """Uwagi do ponownego ułożenia JEDNEJ karty.
+
+    Jednorazowe: nigdzie się nie zapisują, więc kolejne przegenerowanie znowu zaczyna
+    od czystej kartki. Puste uwagi oznaczają zachowanie sprzed tej funkcji — ułożenie
+    karty od nowa bez żadnych wskazówek."""
+    notes: str = ""
+
+    @model_validator(mode="after")
+    def _przytnij(self) -> "CardRegenerate":
+        self.notes = (self.notes or "").strip()[:CARD_NOTES_MAX]
+        return self
+
+
 class CardGrade(BaseModel):
     """Ocena karty. Serwer nie ufa klientowi — cokolwiek innego niż 'known'
     reguła odstępu potraktuje jako pomyłkę."""

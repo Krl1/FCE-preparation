@@ -150,7 +150,9 @@ does not — it is parsed locally).
   front is a Polish sentence you have to say in English, and for grammar it is an English
   sentence with a gap. The back carries the correct form and one sentence on why. Content is
   generated once, when you click **Prepare cards**; after that flipping is instant and costs
-  nothing. If a card comes out weak, **Regenerate** rebuilds it. You reveal the answer and
+  nothing. If a card comes out weak, **Regenerate** rebuilds it — you can add a note first
+  ("too long", "use a different example") and the model receives it together with the card
+  it is replacing. Without a note it is simply another roll of the dice. You reveal the answer and
   grade it **I know it** or **I don't** — with the space bar and `n`, without reaching for the
   mouse.
 

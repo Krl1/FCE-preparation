@@ -1265,3 +1265,74 @@ def test_regenerating_a_group_card_sends_no_wrong_form(app_ctx, monkeypatch):
     assert sent[0]["student_text"] == ""
     assert sent[0]["correct_text"] == "depend + on"
     assert sent[0]["explanation"] == "zawsze 'on'"
+
+
+# --- Uwagi do przegenerowania karty ------------------------------------------
+
+def _material_spy(main_mod, monkeypatch):
+    """Przechwytuje materiał lecący do modelu, zamiast go wołać."""
+    sent = []
+
+    def spy(items, lang="pl"):
+        sent.extend(items)
+        return {"cards": [{"ref": i["ref"], "shape": i["suggested_shape"],
+                           "front": "Przód ______", "back": "Tył"} for i in items]}
+
+    monkeypatch.setattr(main_mod.llm_client, "generate_cards", spy)
+    return sent
+
+
+def test_regenerate_passes_the_notes_and_the_card_being_replaced(app_ctx, monkeypatch):
+    client, main_mod = app_ctx
+    _eid, cid = _prepared_card(client, main_mod, monkeypatch)
+    przed = client.get("/api/cards/session").json()["cards"][0]
+    sent = _material_spy(main_mod, monkeypatch)
+    res = client.post(f"/api/cards/{cid}/regenerate",
+                      json={"notes": "za długie zdanie"})
+    assert res.status_code == 200
+    assert sent[0]["notes"] == "za długie zdanie"
+    assert sent[0]["current_front"] == przed["front"]
+    assert sent[0]["current_back"] == przed["back"]
+
+
+def test_regenerate_without_a_body_behaves_exactly_as_before(app_ctx, monkeypatch):
+    """Obietnica złożona przy projektowaniu: puste uwagi to dokładnie dzisiejsze
+    zachowanie — ślepe ułożenie od nowa, bez podpowiedzi i bez poprzedniej wersji."""
+    client, main_mod = app_ctx
+    _eid, cid = _prepared_card(client, main_mod, monkeypatch)
+    sent = _material_spy(main_mod, monkeypatch)
+    assert client.post(f"/api/cards/{cid}/regenerate").status_code == 200
+    assert sent[0]["notes"] == ""
+    assert sent[0]["current_front"] == ""
+    assert sent[0]["current_back"] == ""
+
+
+def test_blank_notes_count_as_no_notes(app_ctx, monkeypatch):
+    client, main_mod = app_ctx
+    _eid, cid = _prepared_card(client, main_mod, monkeypatch)
+    sent = _material_spy(main_mod, monkeypatch)
+    client.post(f"/api/cards/{cid}/regenerate", json={"notes": "   "})
+    assert sent[0]["notes"] == ""
+    assert sent[0]["current_front"] == ""
+
+
+def test_overlong_notes_are_capped(app_ctx, monkeypatch):
+    """Uwagi idą wprost do promptu, więc muszą mieć sufit — inaczej tekst wklejony
+    przez przypadek rozdmuchuje żądanie i jego koszt."""
+    client, main_mod = app_ctx
+    _eid, cid = _prepared_card(client, main_mod, monkeypatch)
+    sent = _material_spy(main_mod, monkeypatch)
+    client.post(f"/api/cards/{cid}/regenerate", json={"notes": "x" * 900})
+    assert len(sent[0]["notes"]) == 500
+
+
+def test_batch_preparation_sends_no_notes(app_ctx, monkeypatch):
+    """Wsadowe przygotowanie nie ma czego doradzać. Ta ścieżka obsługuje setki kart
+    naraz i przeszła pełny przegląd — uwagi nie mogą jej po cichu zmienić."""
+    client, main_mod = app_ctx
+    _card_error(client)
+    sent = _material_spy(main_mod, monkeypatch)
+    client.post("/api/cards/prepare")
+    assert sent[0]["notes"] == ""
+    assert sent[0]["current_front"] == ""
+    assert sent[0]["current_back"] == ""
