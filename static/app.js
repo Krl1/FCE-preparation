@@ -114,6 +114,9 @@ const I18N = {
     "kind.drill": "Ćwiczenia do błędów",
     "kind.explain": "Wyjaśnienia",
     "kind.extract": "Import (ekstrakcja)",
+    "kind.card": "Ulepszanie fiszek",
+    "kind.group": "Grupowanie błędów",
+    "kind.dispute": "Zastrzeżenia",
     "kind.other": "Inne",
     "groups.modeItems": "Wpisy",
     "groups.modeGroups": "Grupy",
@@ -137,6 +140,21 @@ const I18N = {
     "groups.orphanKeep": "Zostaw",
     "groups.orphanDelete": "Usuń grupę",
     "groups.assigned": "Dopięto: {assigned}, nowych grup: {created}, bez przypisania: {unassigned}",
+    "tab.cards": "Fiszki",
+    "cards.topic": "Temat",
+    "cards.allTopics": "Wszystkie tematy",
+    "cards.newLimit": "Nowe dziennie",
+    "cards.start": "Zacznij sesję",
+    "cards.reveal": "Pokaż odpowiedź",
+    "cards.known": "Umiem",
+    "cards.unknown": "Nie umiem",
+    "cards.improve": "Ulepsz tę kartę",
+    "cards.counter": "Dziś: {done} kart · do powtórki: {due} · zaległych: {overdue}",
+    "cards.noneToday": "Na dziś nic. Wróć jutro — albo dołóż nowych kart, podnosząc limit.",
+    "cards.noSources": "Nie ma z czego robić fiszek — dziennik błędów jest pusty.",
+    "cards.done": "Gotowe. Przerobione karty: {n}.",
+    "cards.leech": "Ta reguła wraca uparcie — przerób ją w „Ćwicz błędy”.",
+    "cards.leechGo": "Ćwicz ten błąd",
   },
   en: {
     "app.title": "FCE Trainer",
@@ -249,6 +267,9 @@ const I18N = {
     "kind.drill": "Mistake drills",
     "kind.explain": "Explanations",
     "kind.extract": "Import (extraction)",
+    "kind.card": "Flashcard improvements",
+    "kind.group": "Mistake grouping",
+    "kind.dispute": "Disputes",
     "kind.other": "Other",
     "groups.modeItems": "Entries",
     "groups.modeGroups": "Groups",
@@ -272,6 +293,21 @@ const I18N = {
     "groups.orphanKeep": "Keep",
     "groups.orphanDelete": "Delete group",
     "groups.assigned": "Attached: {assigned}, new groups: {created}, unassigned: {unassigned}",
+    "tab.cards": "Flashcards",
+    "cards.topic": "Topic",
+    "cards.allTopics": "All topics",
+    "cards.newLimit": "New per day",
+    "cards.start": "Start session",
+    "cards.reveal": "Show answer",
+    "cards.known": "I know it",
+    "cards.unknown": "I don't",
+    "cards.improve": "Improve this card",
+    "cards.counter": "Today: {done} cards · due: {due} · overdue: {overdue}",
+    "cards.noneToday": "Nothing due today. Come back tomorrow — or raise the limit for more new cards.",
+    "cards.noSources": "Nothing to make flashcards from — your mistake log is empty.",
+    "cards.done": "Done. Cards reviewed: {n}.",
+    "cards.leech": "This rule keeps coming back — practise it in \"Practice mistakes\".",
+    "cards.leechGo": "Practise this mistake",
   },
 };
 
@@ -403,6 +439,7 @@ function setLang(lang) {
   applyStaticI18n();
   fillTypeSelects();
   populateTopics();
+  fillCardsTopics();
   if ($("#view-errors").classList.contains("is-active")) {
     loadErrors();
     // Panel grup ma własne etykiety tematów i liczniki wpisów — bez tego zostałyby
@@ -446,6 +483,7 @@ document.querySelectorAll(".tab").forEach((tab) => {
     if (tab.dataset.view === "errors") loadErrors();
     if (tab.dataset.view === "tips") loadTips();
     if (tab.dataset.view === "stats") loadStats();
+    if (tab.dataset.view === "cards") loadCardsProgress();
   });
 });
 
@@ -463,6 +501,7 @@ async function init() {
   TAXONOMY.topics.forEach((tp) => { TOPIC_LABELS[tp.id] = { pl: tp.label, en: tp.label_en }; });
 
   fillTypeSelects();
+  fillCardsTopics();
   $("#practice-type").addEventListener("change", populateTopics);
   $("#external-type").addEventListener("change", toggleExternalKeyword);
   populateTopics();
@@ -1650,5 +1689,223 @@ function renderUsage(d) {
     });
   }
 }
+
+// --- Fiszki -------------------------------------------------------------------
+
+let cardsQueue = [];
+let cardsIndex = 0;
+let cardsDone = 0;
+let cardsTotalSources = 0;
+// Ocena leci bez przycisku (spacja i `n`), a `withBusy(…, null, …)` nie ma czego zablokować.
+// Bez tej flagi dwa szybkie naciśnięcia oceniają tę samą kartę dwa razy i przeskakują
+// następną — czyli gubią ją z dzisiejszej kolejki.
+let cardsGrading = false;
+
+/** Selektor tematu dla fiszek: pusta wartość = wszystkie tematy. */
+function fillCardsTopics() {
+  const sel = $("#cards-topic");
+  if (!sel) return;
+  const keep = sel.value;
+  sel.innerHTML = "";
+  const all = elem("option", null, t("cards.allTopics"));
+  all.value = "";
+  sel.appendChild(all);
+  (TAXONOMY.topics || []).forEach((tp) => {
+    const opt = elem("option", null, topicLabel(tp.id));
+    opt.value = tp.id;
+    sel.appendChild(opt);
+  });
+  sel.value = keep;
+}
+
+function renderCardsCounter(progress) {
+  $("#cards-counter").textContent = t("cards.counter")
+    .replace("{done}", progress.done_today)
+    .replace("{due}", progress.due_now)
+    .replace("{overdue}", progress.overdue);
+  $("#cards-new-limit").value = progress.new_limit;
+  cardsTotalSources = progress.total_sources;
+}
+
+/** Licznik nad sesją ma być prawdziwy od razu po wejściu w zakładkę, a nie dopiero
+ *  po „Zacznij sesję". Zapytanie jest darmowe — nie dotyka modelu. */
+function loadCardsProgress() {
+  return withBusy("loader.loading", null, async () => {
+    try {
+      renderCardsCounter(await api("/api/cards/progress"));
+    } catch (e) {
+      showError("#cards-error", e.message);
+    }
+  });
+}
+
+function loadCardsSession() {
+  return withBusy("loader.loading", $("#cards-start"), async () => {
+    try {
+      const topic = $("#cards-topic").value;
+      const qs = `/api/cards/session?lang=${LANG}` + (topic ? `&topic=${topic}` : "");
+      const body = await api(qs);
+      cardsQueue = body.cards;
+      cardsIndex = 0;
+      cardsDone = 0;
+      renderCardsCounter(body.progress);
+      showCard();
+    } catch (e) {
+      // NIE `#cards-empty` — ten kontener trzyma statyczny `<p id="cards-empty-text">`,
+      // który `showCard()` czyta przy każdym pustym stanie; `showError` czyściłby go
+      // trwale przy pierwszym błędzie. `#cards-error` jest pustym kontenerem wynikowym.
+      showError("#cards-error", e.message);
+    }
+  });
+}
+
+function showCard() {
+  const card = cardsQueue[cardsIndex];
+  // Banner błędu należy do POPRZEDNIEJ karty. `#cards-area` to statyczny markup, którego
+  // nic tu nie przebudowuje, więc nieczyszczony banner wisiałby pod każdą kolejną kartą.
+  $("#cards-error").innerHTML = "";
+  $("#cards-error").classList.add("hidden");
+  const bar = $("#cards-progress-bar");
+  bar.style.width = cardsQueue.length
+    ? Math.round((cardsIndex / cardsQueue.length) * 100) + "%" : "0%";
+
+  if (!card) {
+    $("#cards-area").classList.add("hidden");
+    $("#cards-empty").classList.remove("hidden");
+    $("#cards-empty-text").textContent =
+      cardsDone ? t("cards.done").replace("{n}", cardsDone)
+      : cardsTotalSources === 0 ? t("cards.noSources")
+      : t("cards.noneToday");
+    return;
+  }
+  $("#cards-empty").classList.add("hidden");
+  $("#cards-area").classList.remove("hidden");
+  $("#cards-topic-label").textContent = card.topic_label || topicLabel(card.topic);
+  $("#cards-front").textContent = card.front;
+  $("#cards-back").textContent = card.back;
+  $("#cards-back").classList.add("hidden");
+  $("#cards-leech").classList.add("hidden");
+  $("#cards-reveal").classList.remove("hidden");
+  ["#cards-known", "#cards-unknown", "#cards-improve"].forEach(
+    (s) => $(s).classList.add("hidden"));
+}
+
+function revealCard() {
+  const card = cardsQueue[cardsIndex];
+  if (!card) return;
+  $("#cards-back").classList.remove("hidden");
+  $("#cards-reveal").classList.add("hidden");
+  ["#cards-known", "#cards-unknown"].forEach((s) => $(s).classList.remove("hidden"));
+  // Ulepszyć da się tylko kartę, która już istnieje w bazie, nie jest grupą (grupa nie ma
+  // pary błędnie → poprawnie, więc serwer takie żądanie odrzuca) i nie została jeszcze
+  // ulepszona — drugie kliknięcie byłoby drugą opłatą za to samo.
+  if (card.card_id && card.source_kind !== "group" && !card.improved) {
+    $("#cards-improve").classList.remove("hidden");
+  }
+  // Czyścimy zawsze, nie tylko w gałęzi `card.leech` — inaczej po karcie-pijawce
+  // poprzednia notka (i jej listener) zostają w DOM pod `.hidden`.
+  const box = $("#cards-leech");
+  box.innerHTML = "";
+  if (card.leech) {
+    box.appendChild(elem("span", "", t("cards.leech")));
+    const go = elem("button", "btn-sm",
+                    t(card.source_kind === "group" ? "groups.practiceThis" : "cards.leechGo"));
+    go.addEventListener("click", () => {
+      if (card.source_kind === "group") focusOnGroup(card.source);
+      else focusOnError(card.source);
+    });
+    box.appendChild(go);
+    box.classList.remove("hidden");
+  }
+}
+
+function gradeCard(grade) {
+  if (cardsGrading) return undefined;
+  const card = cardsQueue[cardsIndex];
+  if (!card) return undefined;
+  cardsGrading = true;
+  return withBusy("loader.saving", null, async () => {
+    try {
+      const out = card.card_id
+        ? await api(`/api/cards/${card.card_id}/grade`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ grade }),
+          })
+        : await api("/api/cards/grade-new", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ source_kind: card.source_kind,
+                                   source_id: card.source_id, grade }),
+          });
+      cardsDone += 1;
+      renderCardsCounter(out.progress);
+      cardsIndex += 1;
+      showCard();
+    } catch (e) {
+      // NIE `#cards-area` — to statyczny markup, który `showCard()` tylko nadpisuje
+      // polami; doklejony banner zostawałby pod każdą następną kartą.
+      showError("#cards-error", e.message);
+    } finally {
+      cardsGrading = false;
+    }
+  });
+}
+
+$("#cards-start").addEventListener("click", loadCardsSession);
+$("#cards-reveal").addEventListener("click", revealCard);
+$("#cards-known").addEventListener("click", () => gradeCard("known"));
+$("#cards-unknown").addEventListener("click", () => gradeCard("unknown"));
+
+$("#cards-improve").addEventListener("click", () =>
+  withBusy("loader.loading", $("#cards-improve"), async () => {
+    const card = cardsQueue[cardsIndex];
+    if (!card || !card.card_id) return;
+    try {
+      const out = await api(`/api/cards/${card.card_id}/improve?lang=${LANG}`,
+                            { method: "POST" });
+      card.front = out.front;
+      card.back = out.back;
+      card.improved = true;
+      $("#cards-improve").classList.add("hidden");
+      $("#cards-front").textContent = out.front;
+      $("#cards-back").textContent = out.back;
+    } catch (e) {
+      // Jak wyżej: `#cards-area` jest statyczne, banner musi trafić do `#cards-error`.
+      showError("#cards-error", e.message);
+    }
+  }));
+
+$("#cards-new-limit").addEventListener("change", () =>
+  withBusy("loader.saving", null, async () => {
+    // `Number("")` to 0, a zero po cichu wyłączyłoby nowe karty. Puste pole znaczy
+    // „nic nie zmieniam", nie „zero".
+    const raw = String($("#cards-new-limit").value ?? "").trim();
+    if (raw === "") return;
+    try {
+      renderCardsCounter(await api("/api/cards/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ new_per_day: Number(raw) }),
+      }));
+    } catch (e) {
+      // NIE `#cards-counter` — to inline `<span>`, a `showError` wstawia blokowy
+      // `<div class="error-banner">`.
+      showError("#cards-error", e.message);
+    }
+  }));
+
+// Spacja odkrywa i zalicza, `n` oznacza pomyłkę — czterdzieści kart przechodzi się klawiaturą.
+document.addEventListener("keydown", (e) => {
+  if ($("#view-cards").classList.contains("is-active") === false) return;
+  if (e.target && ["INPUT", "SELECT", "TEXTAREA"].includes(e.target.tagName)) return;
+  if (e.key === " ") {
+    e.preventDefault();
+    if ($("#cards-back").classList.contains("hidden")) revealCard();
+    else gradeCard("known");
+  } else if (e.key === "n" || e.key === "N") {
+    if (!$("#cards-back").classList.contains("hidden")) gradeCard("unknown");
+  }
+});
 
 init();

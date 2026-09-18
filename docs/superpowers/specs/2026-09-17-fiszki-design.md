@@ -153,7 +153,10 @@ liczona tak samo jak zaliczenia błędów, ale w osobnej tabeli i **bez udziału
 Drabinka: `1 → 3 → 7 → 14 → 30 → 90` dni.
 
 - **Umiem** → następny szczebel (z 90 zostaje 90).
-- **Nie umiem** → powrót na 1 dzień.
+- **Nie umiem** → karta zaplanowana (odstęp ≥ 1 dnia) wraca na 1 dzień; karta, której uczeń
+  nie umiał ani razu (odstęp 0), zostaje w DZISIEJSZEJ kolejce. Wspinaczka po drabince
+  zaczyna się dopiero od pierwszego trafienia — fiszka nie może odkładać na jutro właśnie
+  tego materiału, który jest najsłabszy.
 
 Bez współczynnika łatwości: przy dwóch przyciskach nie ma z czego go liczyć, a wyliczanie
 go mimo to dałoby liczbę, która wygląda mądrze i nic nie znaczy.
@@ -177,6 +180,7 @@ potrzebne są ćwiczenia, a aplikacja już je ma.
 |---|---|
 | `GET /api/cards/session` | kolejka na dziś (`topic`, `lang`) z wyrenderowanymi frontami i rewersami |
 | `POST /api/cards/{id}/grade` | ocena (`known`/`unknown`), aktualizacja harmonogramu, zwrot postępu |
+| `POST /api/cards/grade-new` | pierwsza ocena źródła bez karty — wiersz karty powstaje dopiero tutaj |
 | `POST /api/cards/{id}/improve` | jednorazowe ulepszenie karty modelem |
 | `GET /api/cards/progress` | licznik dzienny i liczba zaległych |
 | `POST /api/cards/settings` | limit nowych kart dziennie |

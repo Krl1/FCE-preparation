@@ -430,3 +430,177 @@ def test_migration_adds_group_id_to_legacy_errors_table(tmp_path):
         db.get_connection(path).close()
     finally:
         conn.close()
+
+
+# --- Fiszki -------------------------------------------------------------------
+
+def _card_err(conn, topic="prepositions", student="depends from"):
+    return db.insert_error(conn, source="test", exercise_type="imported", topic=topic,
+                           student_text=student, correct_text="depends on",
+                           explanation="kalka z polskiego", severity="minor")
+
+
+def test_create_and_get_card(conn):
+    eid = _card_err(conn)
+    cid = db.create_card(conn, source_kind="error", source_id=eid,
+                         due_on="2026-09-17", interval_days=1)
+    card = db.get_card(conn, cid)
+    assert card["source_kind"] == "error"
+    assert card["source_id"] == eid
+    assert card["due_on"] == "2026-09-17"
+    assert card["front_override"] is None
+
+
+def test_one_card_per_source(conn):
+    eid = _card_err(conn)
+    db.create_card(conn, source_kind="error", source_id=eid,
+                   due_on="2026-09-17", interval_days=1)
+    with pytest.raises(sqlite3.IntegrityError):
+        db.create_card(conn, source_kind="error", source_id=eid,
+                       due_on="2026-09-18", interval_days=3)
+
+
+def test_get_card_by_source(conn):
+    eid = _card_err(conn)
+    cid = db.create_card(conn, source_kind="error", source_id=eid,
+                         due_on="2026-09-17", interval_days=1)
+    assert db.get_card_by_source(conn, "error", eid)["id"] == cid
+    assert db.get_card_by_source(conn, "group", eid) is None
+
+
+def test_update_card_schedule(conn):
+    eid = _card_err(conn)
+    cid = db.create_card(conn, source_kind="error", source_id=eid,
+                         due_on="2026-09-17", interval_days=1)
+    assert db.update_card_schedule(conn, cid, due_on="2026-09-24", interval_days=7) is True
+    card = db.get_card(conn, cid)
+    assert card["due_on"] == "2026-09-24"
+    assert card["interval_days"] == 7
+
+
+def test_set_card_override(conn):
+    eid = _card_err(conn)
+    cid = db.create_card(conn, source_kind="error", source_id=eid,
+                         due_on="2026-09-17", interval_days=1)
+    assert db.set_card_override(conn, cid, front="It ___ on the weather.",
+                                back="depends on") is True
+    card = db.get_card(conn, cid)
+    assert card["front_override"] == "It ___ on the weather."
+    assert card["back_override"] == "depends on"
+
+
+def test_card_unknown_count_only_counts_failures(conn):
+    eid = _card_err(conn)
+    cid = db.create_card(conn, source_kind="error", source_id=eid,
+                         due_on="2026-09-17", interval_days=1)
+    db.insert_card_review(conn, card_id=cid, grade="unknown")
+    db.insert_card_review(conn, card_id=cid, grade="known")
+    db.insert_card_review(conn, card_id=cid, grade="unknown")
+    assert db.card_unknown_count(conn, cid) == 2
+
+
+def test_cards_due_returns_today_and_earlier(conn):
+    a, b, c = _card_err(conn, student="a"), _card_err(conn, student="b"), _card_err(conn, student="c")
+    db.create_card(conn, source_kind="error", source_id=a, due_on="2026-09-10", interval_days=1)
+    db.create_card(conn, source_kind="error", source_id=b, due_on="2026-09-17", interval_days=1)
+    db.create_card(conn, source_kind="error", source_id=c, due_on="2026-09-30", interval_days=1)
+    rows = db.cards_due(conn, "2026-09-17")
+    assert [r["source_id"] for r in rows] == [a, b]
+    # `card_id` musi być w wyniku pod TĄ nazwą — czyta go flashcards.build_queue.
+    assert all(r["card_id"] for r in rows)
+
+
+def test_cards_due_filters_by_topic(conn):
+    a = _card_err(conn, topic="prepositions", student="a")
+    b = _card_err(conn, topic="articles", student="b")
+    for eid in (a, b):
+        db.create_card(conn, source_kind="error", source_id=eid,
+                       due_on="2026-09-17", interval_days=1)
+    got = [r["source_id"] for r in db.cards_due(conn, "2026-09-17", topic="articles")]
+    assert got == [b]
+
+
+def test_sources_without_card_skips_those_that_have_one(conn):
+    a, b = _card_err(conn, student="a"), _card_err(conn, student="b")
+    db.create_card(conn, source_kind="error", source_id=a,
+                   due_on="2026-09-17", interval_days=1)
+    got = [r["source_id"] for r in db.sources_without_card(conn)]
+    assert got == [b]
+
+
+def test_sources_without_card_includes_groups(conn):
+    gid = db.insert_group(conn, rule="depend + on", explanation="e", topic="prepositions")
+    kinds = {r["source_kind"] for r in db.sources_without_card(conn)}
+    assert "group" in kinds
+    assert gid in [r["source_id"] for r in db.sources_without_card(conn)
+                   if r["source_kind"] == "group"]
+
+
+def test_cards_done_today_counts_distinct_cards(conn):
+    eid = _card_err(conn)
+    cid = db.create_card(conn, source_kind="error", source_id=eid,
+                         due_on="2026-09-17", interval_days=1)
+    db.insert_card_review(conn, card_id=cid, grade="unknown")
+    db.insert_card_review(conn, card_id=cid, grade="known")
+    assert db.cards_done_today(conn) == 1
+
+
+def test_cards_overdue_counts_only_the_past(conn):
+    a, b = _card_err(conn, student="a"), _card_err(conn, student="b")
+    db.create_card(conn, source_kind="error", source_id=a, due_on="2026-09-10", interval_days=1)
+    db.create_card(conn, source_kind="error", source_id=b, due_on="2026-09-17", interval_days=1)
+    assert db.cards_overdue(conn, "2026-09-17") == 1
+
+
+def test_count_card_sources_covers_both_kinds(conn):
+    """Licznik źródeł rozstrzyga, czy pusty ekran mówi „wszystko na dziś zrobione",
+    czy „nie ma z czego robić fiszek" — musi widzieć i wpisy, i grupy."""
+    assert db.count_card_sources(conn) == 0
+    _card_err(conn, student="a")
+    assert db.count_card_sources(conn) == 1
+    db.insert_group(conn, rule="depend + on", explanation="e", topic="prepositions")
+    assert db.count_card_sources(conn) == 2
+
+
+def test_deleting_an_error_removes_its_card_and_reviews(conn):
+    """Kaskada jest RĘCZNA — PRAGMA foreign_keys jest wyłączone, więc deklaratywne
+    ON DELETE CASCADE nic by nie zrobiło. Ten test pada, jeśli ktoś usunie sprzątanie."""
+    eid = _card_err(conn)
+    cid = db.create_card(conn, source_kind="error", source_id=eid,
+                         due_on="2026-09-17", interval_days=1)
+    db.insert_card_review(conn, card_id=cid, grade="known")
+    db.delete_error(conn, eid)
+    assert db.get_card(conn, cid) is None
+    assert conn.execute("SELECT COUNT(*) FROM card_reviews WHERE card_id = ?",
+                        (cid,)).fetchone()[0] == 0
+
+
+def test_deleting_a_group_removes_its_card_and_reviews(conn):
+    gid = db.insert_group(conn, rule="r", explanation="e", topic="articles")
+    cid = db.create_card(conn, source_kind="group", source_id=gid,
+                         due_on="2026-09-17", interval_days=1)
+    db.insert_card_review(conn, card_id=cid, grade="known")
+    db.delete_group(conn, gid)
+    assert db.get_card(conn, cid) is None
+    assert conn.execute("SELECT COUNT(*) FROM card_reviews WHERE card_id = ?",
+                        (cid,)).fetchone()[0] == 0
+
+
+def test_deleting_an_error_leaves_other_cards_alone(conn):
+    a, b = _card_err(conn, student="a"), _card_err(conn, student="b")
+    keep = db.create_card(conn, source_kind="error", source_id=b,
+                          due_on="2026-09-17", interval_days=1)
+    db.create_card(conn, source_kind="error", source_id=a,
+                   due_on="2026-09-17", interval_days=1)
+    db.delete_error(conn, a)
+    assert db.get_card(conn, keep) is not None
+
+
+def test_cards_do_not_touch_the_streak(conn):
+    """Fiszki mają własny licznik; seria mierzy co innego."""
+    eid = _card_err(conn)
+    cid = db.create_card(conn, source_kind="error", source_id=eid,
+                         due_on="2026-09-17", interval_days=1)
+    db.insert_card_review(conn, card_id=cid, grade="known")
+    assert db.reviews_done_today(conn) == 0
+    assert db.reviews_per_day(conn) == {}

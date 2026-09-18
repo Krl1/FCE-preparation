@@ -148,6 +148,35 @@ CREATE TABLE IF NOT EXISTS group_drill_scores (
 );
 
 CREATE INDEX IF NOT EXISTS idx_group_drill ON group_drill_scores(group_id, created_at);
+
+-- Fiszki. Karta jest WIDOKIEM na źródło: treść renderuje się przy pokazaniu, w bazie
+-- leży tylko harmonogram i opcjonalna treść ulepszona przez model.
+-- Świadomie bez kolumn `ease`, `reps` i `lapses`: przy stałej drabince odstępów `ease`
+-- nie miałoby czytelnika, a powtórki i pomyłki wyliczają się z `card_reviews`.
+CREATE TABLE IF NOT EXISTS cards (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at     TEXT NOT NULL,
+    updated_at     TEXT NOT NULL,
+    source_kind    TEXT NOT NULL,      -- 'error' | 'group'
+    source_id      INTEGER NOT NULL,
+    due_on         TEXT NOT NULL,      -- 'YYYY-MM-DD'
+    interval_days  INTEGER NOT NULL,
+    front_override TEXT,
+    back_override  TEXT,
+    UNIQUE (source_kind, source_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_cards_due ON cards(due_on);
+
+CREATE TABLE IF NOT EXISTS card_reviews (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    card_id    INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    grade      TEXT NOT NULL           -- 'known' | 'unknown'
+);
+
+CREATE INDEX IF NOT EXISTS idx_card_reviews_card ON card_reviews(card_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_card_reviews_created ON card_reviews(created_at);
 """
 
 
@@ -462,6 +491,12 @@ def mark_dispute_applied(conn: sqlite3.Connection, dispute_id: int) -> None:
 
 @_synchronized
 def delete_error(conn: sqlite3.Connection, error_id: int) -> bool:
+    # Karta jest widokiem na ten wpis — bez źródła nie ma czego pokazać. Sprzątamy
+    # ręcznie, bo PRAGMA foreign_keys jest wyłączone i kaskada deklaratywna nic by nie dała.
+    conn.execute("DELETE FROM card_reviews WHERE card_id IN ("
+                 "  SELECT id FROM cards WHERE source_kind = 'error' AND source_id = ?)",
+                 (error_id,))
+    conn.execute("DELETE FROM cards WHERE source_kind = 'error' AND source_id = ?", (error_id,))
     cur = conn.execute("DELETE FROM errors WHERE id = ?", (error_id,))
     conn.commit()
     return cur.rowcount > 0
@@ -668,7 +703,12 @@ def update_group(conn: sqlite3.Connection, group_id: int, *, rule: str, explanat
 @_synchronized
 def delete_group(conn: sqlite3.Connection, group_id: int) -> bool:
     """Usuwa grupę; jej wpisy wracają do puli nieprzypisanych. Zaliczenia w
-    `group_reviews` zostają — usunięcie nie cofa zdobytego celu ani serii."""
+    `group_reviews` zostają — usunięcie nie cofa zdobytego celu ani serii.
+    Karta grupy znika razem z grupą: jest widokiem na nią, nie bytem obok niej."""
+    conn.execute("DELETE FROM card_reviews WHERE card_id IN ("
+                 "  SELECT id FROM cards WHERE source_kind = 'group' AND source_id = ?)",
+                 (group_id,))
+    conn.execute("DELETE FROM cards WHERE source_kind = 'group' AND source_id = ?", (group_id,))
     conn.execute("UPDATE errors SET group_id = NULL WHERE group_id = ?", (group_id,))
     cur = conn.execute("DELETE FROM error_groups WHERE id = ?", (group_id,))
     conn.commit()
@@ -789,3 +829,153 @@ def group_topic_counts(conn: sqlite3.Connection) -> list[dict]:
         "FROM error_groups g GROUP BY g.topic ORDER BY count DESC"
     ).fetchall()
     return [dict(r) for r in rows]
+
+
+# --- Fiszki -------------------------------------------------------------------
+
+@_synchronized
+def create_card(conn: sqlite3.Connection, *, source_kind: str, source_id: int,
+                due_on: str, interval_days: int) -> int:
+    now = _now()
+    cur = conn.execute(
+        "INSERT INTO cards (created_at, updated_at, source_kind, source_id, due_on, interval_days) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (now, now, source_kind, source_id, due_on, interval_days),
+    )
+    conn.commit()
+    return int(cur.lastrowid)
+
+
+@_synchronized
+def get_card(conn: sqlite3.Connection, card_id: int) -> Optional[dict]:
+    row = conn.execute("SELECT * FROM cards WHERE id = ?", (card_id,)).fetchone()
+    return dict(row) if row else None
+
+
+@_synchronized
+def get_card_by_source(conn: sqlite3.Connection, source_kind: str,
+                       source_id: int) -> Optional[dict]:
+    row = conn.execute(
+        "SELECT * FROM cards WHERE source_kind = ? AND source_id = ?",
+        (source_kind, source_id),
+    ).fetchone()
+    return dict(row) if row else None
+
+
+@_synchronized
+def update_card_schedule(conn: sqlite3.Connection, card_id: int, *,
+                         due_on: str, interval_days: int) -> bool:
+    cur = conn.execute(
+        "UPDATE cards SET due_on = ?, interval_days = ?, updated_at = ? WHERE id = ?",
+        (due_on, interval_days, _now(), card_id),
+    )
+    conn.commit()
+    return cur.rowcount > 0
+
+
+@_synchronized
+def set_card_override(conn: sqlite3.Connection, card_id: int, *,
+                      front: str, back: str) -> bool:
+    """Zapisuje treść ulepszoną przez model. Od tej chwili front i rewers biorą się
+    z zapisanego tekstu zamiast z renderowania ze źródła."""
+    cur = conn.execute(
+        "UPDATE cards SET front_override = ?, back_override = ?, updated_at = ? WHERE id = ?",
+        (front, back, _now(), card_id),
+    )
+    conn.commit()
+    return cur.rowcount > 0
+
+
+@_synchronized
+def insert_card_review(conn: sqlite3.Connection, *, card_id: int, grade: str) -> None:
+    """Log ocen. NIE jest idempotentny w obrębie dnia — w sesji ta sama karta może
+    wrócić, a każde podejście ma zostać zapisane."""
+    conn.execute("INSERT INTO card_reviews (card_id, created_at, grade) VALUES (?, ?, ?)",
+                 (card_id, _now(), grade))
+    conn.commit()
+
+
+@_synchronized
+def card_unknown_count(conn: sqlite3.Connection, card_id: int) -> int:
+    row = conn.execute(
+        "SELECT COUNT(*) AS n FROM card_reviews WHERE card_id = ? AND grade = 'unknown'",
+        (card_id,),
+    ).fetchone()
+    return int(row["n"])
+
+
+@_synchronized
+def cards_due(conn: sqlite3.Connection, today: str,
+              topic: Optional[str] = None) -> list[dict]:
+    """Karty zaplanowane na dziś lub wcześniej, z tematem ze źródła.
+
+    Temat karty to temat jej źródła, dlatego zapytanie łączy się z obiema tabelami
+    źródłowymi — wpis w dzienniku ma temat w `errors.topic`, grupa w `error_groups.topic`."""
+    # `c.id AS card_id`, bo `flashcards.build_queue` czyta właśnie ten klucz —
+    # gołe `c.*` dałoby kolumnę `id` i wysypało składanie kolejki na KeyError.
+    sql = (
+        "SELECT c.*, c.id AS card_id, COALESCE(e.topic, g.topic) AS topic "
+        "FROM cards c "
+        "LEFT JOIN errors e ON c.source_kind = 'error' AND e.id = c.source_id "
+        "LEFT JOIN error_groups g ON c.source_kind = 'group' AND g.id = c.source_id "
+        "WHERE c.due_on <= ?"
+    )
+    params: list = [today]
+    if topic:
+        sql += " AND COALESCE(e.topic, g.topic) = ?"
+        params.append(topic)
+    sql += " ORDER BY c.due_on, c.id"
+    return [dict(r) for r in conn.execute(sql, params).fetchall()]
+
+
+@_synchronized
+def sources_without_card(conn: sqlite3.Connection, topic: Optional[str] = None,
+                         limit: int = 500) -> list[dict]:
+    """Źródła, które nie mają jeszcze karty — kandydaci na nowe pozycje w kolejce."""
+    err_sql = (
+        "SELECT 'error' AS source_kind, e.id AS source_id, e.topic AS topic, e.created_at "
+        "FROM errors e WHERE NOT EXISTS ("
+        "  SELECT 1 FROM cards c WHERE c.source_kind = 'error' AND c.source_id = e.id)"
+    )
+    grp_sql = (
+        "SELECT 'group' AS source_kind, g.id AS source_id, g.topic AS topic, g.created_at "
+        "FROM error_groups g WHERE NOT EXISTS ("
+        "  SELECT 1 FROM cards c WHERE c.source_kind = 'group' AND c.source_id = g.id)"
+    )
+    params: list = []
+    if topic:
+        err_sql += " AND e.topic = ?"
+        grp_sql += " AND g.topic = ?"
+        params = [topic, topic]
+    sql = f"{err_sql} UNION ALL {grp_sql} ORDER BY created_at, source_id LIMIT ?"
+    params.append(limit)
+    return [dict(r) for r in conn.execute(sql, params).fetchall()]
+
+
+@_synchronized
+def cards_done_today(conn: sqlite3.Connection) -> int:
+    """Ile RÓŻNYCH kart przerobiono dziś. Osobny licznik — seria 🔥 go nie widzi."""
+    row = conn.execute(
+        "SELECT COUNT(DISTINCT card_id) AS n FROM card_reviews "
+        "WHERE substr(created_at, 1, 10) = ?",
+        (_today(),),
+    ).fetchone()
+    return int(row["n"])
+
+
+@_synchronized
+def cards_overdue(conn: sqlite3.Connection, today: str) -> int:
+    row = conn.execute("SELECT COUNT(*) AS n FROM cards WHERE due_on < ?", (today,)).fetchone()
+    return int(row["n"])
+
+
+@_synchronized
+def count_card_sources(conn: sqlite3.Connection) -> int:
+    """Ile jest w ogóle źródeł, z których da się zrobić fiszkę (wpisy + grupy).
+
+    Pozwala odróżnić „wszystko na dziś zrobione" od „nie ma z czego robić fiszek" —
+    milczący pusty ekran nie rozróżnia tych dwóch rzeczy."""
+    row = conn.execute(
+        "SELECT (SELECT COUNT(*) FROM errors) + (SELECT COUNT(*) FROM error_groups) AS n"
+    ).fetchone()
+    return int(row["n"])

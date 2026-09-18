@@ -23,7 +23,7 @@ const htmlIds = new Set([...html.matchAll(/id="([^"]+)"/g)].map((m) => m[1]));
 // Pola odpowiedzi są tworzone dynamicznie, więc nie ma ich w HTML.
 const DYNAMIC_IDS = /^(practice|tips)-answer(-\d+)?$/;
 
-const VIEWS = ["practice", "tips", "external", "errors", "stats"];
+const VIEWS = ["practice", "tips", "external", "errors", "stats", "cards"];
 
 const handlers = {};        // "klucz|zdarzenie" -> [fn]
 const nodes = new Map();    // klucz -> atrapa elementu
@@ -99,6 +99,9 @@ global.document = {
   documentElement: makeNode("html"),
   body: makeNode("body"),
   title: "",
+  // Jeden globalny handler klawiatury (skróty fiszek) — rejestrowany na `document`,
+  // nie na konkretnym węźle, więc trzyma się osobno od handlerów per-element.
+  addEventListener(ev, fn) { (handlers["document|" + ev] ||= []).push(fn); },
   createElement: (tag) => {
     const n = makeNode(`new:${tag}:${created.length}`);
     created.push(n);
@@ -277,6 +280,29 @@ const routes = {
                             emptied_group_rule: "depend + on" },
   "/api/groups/assign": { assigned: 1, created: 1, unassigned: 0 },
   "/api/groups/regroup": { assigned: 0, created: 1, unassigned: 0 },
+  // Kształt `source` odpowiada realnej odpowiedzi backendu: dla `source_kind: "error"`
+  // to pełny wpis z dziennika, dla `"group"` — pełny obiekt grupy. Atrapa BEZ tego pola
+  // ukrywałaby błędy w gałęzi pijawki (`revealCard` czyta `card.source` dopiero po kliknięciu
+  // „Ćwicz ten błąd/tę grupę”).
+  "/api/cards/session": { cards: [
+    { card_id: null, source_kind: "error", source_id: 1, topic: "prepositions",
+      topic_label: "Przyimki", front: "depends from", back: "depends on\n\nkalka",
+      leech: false, improved: false,
+      source: { id: 1, created_at: "2026-09-17T10:00:00+02:00", source: "external",
+                exercise_type: "external", topic: "prepositions", topic_label: "Przyimki",
+                student_text: "depends from", correct_text: "depends on",
+                explanation: "kalka z polskiego", severity: "minor", group_id: null } },
+    // Karta-pijawka: reguła wraca uparcie, więc backend proponuje skok do grupy.
+    { card_id: 9, source_kind: "group", source_id: 1, topic: "prepositions",
+      topic_label: "Przyimki", front: "depend ___ on", back: "depend on",
+      leech: true, improved: false,
+      source: { id: 1, rule: "depend + on", explanation: "kalka z polskiego",
+                topic: "prepositions", topic_label: "Przyimki", member_count: 2 } },
+  ],
+    progress: { done_today: 0, overdue: 0, due_now: 2, new_limit: 20, total_sources: 2 } },
+  "/api/cards/grade-new": { card_id: 1, interval_days: 1, due_on: "2026-09-18",
+    leech: false, progress: { done_today: 1, overdue: 0, due_now: 1, new_limit: 20, total_sources: 2 } },
+  "/api/cards/progress": { done_today: 0, overdue: 0, due_now: 1, new_limit: 20, total_sources: 2 },
 };
 
 const calls = [];
@@ -308,6 +334,22 @@ const fire = async (key, ev = "click") => {
   const fns = handlers[key + "|" + ev] || [];
   if (!fns.length) { failures.push("brak handlera dla " + key); return; }
   for (const fn of fns) await fn({ preventDefault() {} });
+};
+
+/** Symuluje `keydown` na `document` (skróty fiszek) — `tag` udaje `e.target.tagName`,
+ *  żeby sprawdzić, że skrót nie odpala się w polu tekstowym. */
+const fireKey = async (key, tag = "BODY") => {
+  const fns = handlers["document|keydown"] || [];
+  for (const fn of fns) await fn({ key, target: { tagName: tag }, preventDefault() {} });
+};
+
+/** Dwa naciśnięcia klawisza JEDNO PO DRUGIM, bez czekania na pierwsze — dokładnie tak
+ *  wypada szybkie dwukrotne uderzenie w spację. Osobny helper, bo `fireKey` czeka na
+ *  handler, a samo to czekanie przepuściłoby odpowiedź serwera i schowało błąd. */
+const fireKeyTwice = (key, tag = "BODY") => {
+  const fns = handlers["document|keydown"] || [];
+  for (const fn of fns) fn({ key, target: { tagName: tag }, preventDefault() {} });
+  for (const fn of fns) fn({ key, target: { tagName: tag }, preventDefault() {} });
 };
 
 /** Klika element tworzony dynamicznie, wskazany przez klasę (np. przycisk zastrzeżenia). */
@@ -677,6 +719,128 @@ const setInput = (id, value) => {
       routes["/api/grade"] = MULTI_RESULT;
       await fire(".lang:pl"); await settle();
       await fire("#tips-mode-errors"); await settle();
+    }],
+    ["Fiszki: sesja → odkrycie → ocena nieistniejącej karty", async () => {
+      await fire(".tab:cards"); await settle();
+      await fire("#cards-start"); await settle();
+      await fire("#cards-reveal"); await settle();
+      if (hasClass("#cards-back", "hidden")) failures.push("rewers fiszki nie odkrył się");
+      await fire("#cards-known"); await settle();
+      if (!calls.some((c) => c.includes("/api/cards/grade-new"))) {
+        failures.push("ocena fiszki nie poleciała na serwer");
+      }
+    }],
+    ["Fiszki: karta-pijawka pokazuje podpowiedź z przyciskiem", async () => {
+      created.length = 0;
+      // Kontynuacja poprzedniego scenariusza: zaliczenie pierwszej karty przesunęło
+      // kolejkę na drugą pozycję — kartę-pijawkę z fikstury sesji (leech: true).
+      await fire("#cards-reveal"); await settle();
+      if (hasClass("#cards-leech", "hidden")) {
+        failures.push("podpowiedź o pijawce nie pokazała się przy karcie-pijawce");
+      }
+      const leechBtns = created.filter((n) => String(n.className || "").includes("btn-sm"));
+      // Karta-pijawka z fikstury jest GRUPOWA, więc przycisk ma mówić o grupie.
+      if (leechBtns.length !== 1 || leechBtns[0].textContent !== "Ćwicz tę grupę") {
+        failures.push("brak przycisku „Ćwicz tę grupę” przy grupowej karcie-pijawce: " +
+          leechBtns.map((n) => n.textContent).join(", "));
+      }
+      if (await fireByClass("btn-sm")) {
+        await settle();
+        if (!hasClass("#view-tips", "is-active")) {
+          failures.push("„Ćwicz ten błąd” przy pijawce nie przeniosło do „Ćwicz błędy”");
+        }
+        if (nodeText("#tips-from") !== "depend + on") {
+          failures.push("skok z pijawki nie pokazał reguły grupy: " + nodeText("#tips-from"));
+        }
+      }
+      await fire(".tab:cards"); await settle();
+    }],
+    ["Fiszki: skróty klawiszowe (spacja/n) i blokada w polu tekstowym", async () => {
+      routes["/api/cards/session"] = {
+        cards: [
+          { card_id: null, source_kind: "error", source_id: 2, topic: "prepositions",
+            topic_label: "Przyimki", front: "front1", back: "back1", leech: false },
+          { card_id: null, source_kind: "error", source_id: 3, topic: "prepositions",
+            topic_label: "Przyimki", front: "front2", back: "back2", leech: false },
+        ],
+        progress: { done_today: 0, overdue: 0, due_now: 2, new_limit: 20, total_sources: 2 },
+      };
+      await fire(".tab:cards"); await settle();
+      await fire("#cards-start"); await settle();
+
+      // W polu tekstowym spacja/„n" NIE mogą odkrywać ani oceniać fiszki.
+      const before = calls.length;
+      await fireKey(" ", "INPUT");
+      if (!hasClass("#cards-back", "hidden")) {
+        failures.push("spacja w polu tekstowym odkryła fiszkę");
+      }
+      await fireKey("n", "INPUT");
+      if (calls.length !== before) {
+        failures.push("skrót klawiszowy zadziałał mimo fokusu w polu tekstowym");
+      }
+
+      // Poza polem tekstowym: spacja odkrywa, potem zalicza jako „umiem".
+      await fireKey(" ");
+      if (hasClass("#cards-back", "hidden")) failures.push("spacja nie odkryła fiszki");
+      await fireKey(" "); await settle();
+      if (!calls.some((c) => c.includes("/api/cards/grade-new"))) {
+        failures.push("spacja po odkryciu nie zaliczyła fiszki");
+      }
+
+      // Druga karta: odkrycie + „n" zalicza jako „nie umiem".
+      await fireKey(" ");
+      if (hasClass("#cards-back", "hidden")) failures.push("spacja nie odkryła drugiej fiszki");
+      await fireKey("n"); await settle();
+      const lastGrade = calls.filter((c) => c.includes("/api/cards/grade-new")).pop();
+      if (!lastGrade || !lastGrade.includes('"grade":"unknown"')) {
+        failures.push('klawisz „n" nie zaliczył fiszki jako „nie umiem": ' + lastGrade);
+      }
+      routes["/api/cards/session"] = {
+        cards: [
+          { card_id: null, source_kind: "error", source_id: 1, topic: "prepositions",
+            topic_label: "Przyimki", front: "depends from", back: "depends on\n\nkalka",
+            leech: false }],
+        progress: { done_today: 0, overdue: 0, due_now: 1, new_limit: 20, total_sources: 1 },
+      };
+    }],
+    ["Fiszki: dwa szybkie naciśnięcia spacji oceniają kartę raz", async () => {
+      routes["/api/cards/session"] = {
+        cards: [
+          { card_id: null, source_kind: "error", source_id: 4, topic: "prepositions",
+            topic_label: "Przyimki", front: "front1", back: "back1",
+            leech: false, improved: false },
+          { card_id: null, source_kind: "error", source_id: 5, topic: "prepositions",
+            topic_label: "Przyimki", front: "front2", back: "back2",
+            leech: false, improved: false },
+        ],
+        progress: { done_today: 0, overdue: 0, due_now: 2, new_limit: 20, total_sources: 2 },
+      };
+      await fire(".tab:cards"); await settle();
+      await fire("#cards-start"); await settle();
+
+      await fireKey(" ");                 // odkrycie rewersu
+      const before = calls.filter((c) => c.includes("/api/cards/grade-new")).length;
+      fireKeyTwice(" ");                  // dwie oceny, zanim pierwsza zdąży wrócić
+      await settle();
+
+      const graded = calls.filter((c) => c.includes("/api/cards/grade-new")).length - before;
+      if (graded !== 1) {
+        failures.push("podwójna spacja wysłała ocen: " + graded + " (powinna jedną)");
+      }
+      if (nodeText("#cards-front") !== "front2") {
+        failures.push("druga fiszka wypadła z kolejki, widać: " + nodeText("#cards-front"));
+      }
+      if (hasClass("#cards-area", "hidden")) {
+        failures.push("kolejka skończyła się przedwcześnie po podwójnej spacji");
+      }
+
+      routes["/api/cards/session"] = {
+        cards: [
+          { card_id: null, source_kind: "error", source_id: 1, topic: "prepositions",
+            topic_label: "Przyimki", front: "depends from", back: "depends on\n\nkalka",
+            leech: false, improved: false }],
+        progress: { done_today: 0, overdue: 0, due_now: 1, new_limit: 20, total_sources: 1 },
+      };
     }],
     ["Statystyki", async () => fire(".tab:stats")],
     ["zmiana języka EN → PL", async () => { await fire(".lang:en"); await fire(".lang:pl"); }],

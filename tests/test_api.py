@@ -983,3 +983,178 @@ def test_exercise_requires_exactly_one_unit(app_ctx):
     assert client.post("/api/tips/exercise", json={"lang": "pl"}).status_code == 422
     assert client.post("/api/tips/exercise",
                        json={"error_id": 1, "group_id": 1}).status_code == 422
+
+
+# --- Fiszki -------------------------------------------------------------------
+
+def _card_error(client, student="depends from", topic="prepositions"):
+    res = client.post("/api/errors", json={
+        "topic": topic, "student_text": student, "correct_text": "depends on",
+        "explanation": "kalka z polskiego", "severity": "minor",
+        "exercise_type": "imported",
+    })
+    assert res.status_code == 200
+    return res.json()["id"]
+
+
+def test_session_renders_cards_from_the_journal(app_ctx):
+    client, _ = app_ctx
+    eid = _card_error(client)
+    body = client.get("/api/cards/session").json()
+    assert len(body["cards"]) == 1
+    card = body["cards"][0]
+    assert card["source_kind"] == "error"
+    assert card["source_id"] == eid
+    assert card["card_id"] is None          # karta jeszcze nie istnieje
+    assert "depends from" in card["front"]
+    assert "depends on" in card["back"]
+
+
+def test_session_never_calls_the_model(app_ctx, monkeypatch):
+    """Cała wartość fiszek to natychmiastowość — kolejka musi być darmowa."""
+    client, main_mod = app_ctx
+    _card_error(client)
+
+    def explode(prompt, kind="other"):
+        raise AssertionError("kolejka fiszek nie może wołać modelu")
+
+    monkeypatch.setattr(main_mod.llm_client, "_invoke", explode)
+    assert client.get("/api/cards/session").status_code == 200
+
+
+def test_session_respects_the_new_card_limit(app_ctx):
+    client, _ = app_ctx
+    for n in range(5):
+        _card_error(client, student=f"błąd {n}")
+    client.post("/api/cards/settings", json={"new_per_day": 2})
+    assert len(client.get("/api/cards/session").json()["cards"]) == 2
+
+
+def test_session_filters_by_topic(app_ctx):
+    client, _ = app_ctx
+    _card_error(client, student="a", topic="prepositions")
+    _card_error(client, student="b", topic="articles")
+    body = client.get("/api/cards/session?topic=articles").json()
+    assert [c["front"].count("b") for c in body["cards"]] == [1]
+
+
+def test_grading_a_new_source_creates_the_card_and_schedules_it(app_ctx):
+    client, _ = app_ctx
+    eid = _card_error(client)
+    out = client.post("/api/cards/grade-new", json={
+        "source_kind": "error", "source_id": eid, "grade": "known"}).json()
+    assert out["interval_days"] == 1
+    assert out["leech"] is False
+    assert out["progress"]["done_today"] == 1
+
+
+def test_known_climbs_and_unknown_resets(app_ctx):
+    client, _ = app_ctx
+    eid = _card_error(client)
+    first = client.post("/api/cards/grade-new", json={
+        "source_kind": "error", "source_id": eid, "grade": "known"}).json()
+    cid = first["card_id"]
+    second = client.post(f"/api/cards/{cid}/grade", json={"grade": "known"}).json()
+    assert second["interval_days"] == 3
+    third = client.post(f"/api/cards/{cid}/grade", json={"grade": "unknown"}).json()
+    assert third["interval_days"] == 1
+
+
+def test_card_becomes_a_leech_after_four_failures(app_ctx):
+    client, _ = app_ctx
+    eid = _card_error(client)
+    out = client.post("/api/cards/grade-new", json={
+        "source_kind": "error", "source_id": eid, "grade": "unknown"}).json()
+    cid = out["card_id"]
+    for _ in range(2):
+        out = client.post(f"/api/cards/{cid}/grade", json={"grade": "unknown"}).json()
+    assert out["leech"] is False
+    out = client.post(f"/api/cards/{cid}/grade", json={"grade": "unknown"}).json()
+    assert out["leech"] is True
+
+
+def test_grading_a_missing_card_is_404(app_ctx):
+    client, _ = app_ctx
+    assert client.post("/api/cards/999/grade", json={"grade": "known"}).status_code == 404
+
+
+def test_grade_rejects_an_unknown_source_kind(app_ctx):
+    client, _ = app_ctx
+    assert client.post("/api/cards/grade-new", json={
+        "source_kind": "wymyślony", "source_id": 1, "grade": "known"}).status_code == 422
+
+
+def test_improve_stores_the_override_and_session_serves_it(app_ctx, monkeypatch):
+    client, main_mod = app_ctx
+    eid = _card_error(client)
+    out = client.post("/api/cards/grade-new", json={
+        "source_kind": "error", "source_id": eid, "grade": "unknown"}).json()
+    cid = out["card_id"]
+    _stub_llm(main_mod, monkeypatch, {"front": "It ______ on the weather.",
+                                      "back": "depends on"})
+    improved = client.post(f"/api/cards/{cid}/improve").json()
+    assert improved["front"] == "It ______ on the weather."
+    served = client.get("/api/cards/session").json()["cards"][0]
+    assert served["front"] == "It ______ on the weather."
+    assert served["improved"] is True
+
+
+def test_improved_card_keeps_the_source_explanation_on_the_back(app_ctx, monkeypatch):
+    """Ulepszenie nie może skasować powodu, dla którego karta istnieje.
+
+    Prompt ulepszania mówi modelowi, że wyjaśnienie uczeń już widzi, więc model go nie
+    dopisuje — rewers musi je dokleić ze źródła."""
+    client, main_mod = app_ctx
+    eid = _card_error(client)
+    out = client.post("/api/cards/grade-new", json={
+        "source_kind": "error", "source_id": eid, "grade": "unknown"}).json()
+    cid = out["card_id"]
+    _stub_llm(main_mod, monkeypatch, {"front": "It ______ on the weather.",
+                                      "back": "depends on"})
+    assert client.post(f"/api/cards/{cid}/improve").status_code == 200
+
+    served = client.get("/api/cards/session").json()["cards"][0]
+    assert "depends on" in served["back"]
+    assert "kalka z polskiego" in served["back"]
+
+
+def test_improving_a_group_card_is_rejected_without_calling_the_model(app_ctx, monkeypatch):
+    """Grupa nie ma pary błędnie → poprawnie, więc prompt byłby sam ze sobą sprzeczny."""
+    client, main_mod = app_ctx
+    eid = _card_error(client)
+    _stub_llm(main_mod, monkeypatch, {"assignments": [
+        {"error_id": eid, "new_group": {"rule": "depend + on", "explanation": "zawsze 'on'",
+                                        "topic": "prepositions"}}]})
+    client.post("/api/groups/assign")
+    gid = client.get("/api/groups").json()["groups"][0]["id"]
+    out = client.post("/api/cards/grade-new", json={
+        "source_kind": "group", "source_id": gid, "grade": "unknown"}).json()
+    cid = out["card_id"]
+
+    def explode(prompt, kind="other"):
+        raise AssertionError("ulepszanie karty grupowej nie może wołać modelu")
+
+    monkeypatch.setattr(main_mod.llm_client, "_invoke", explode)
+    res = client.post(f"/api/cards/{cid}/improve")
+    assert res.status_code == 400
+    assert "grup" in res.json()["detail"].lower()
+
+
+def test_progress_reports_counters_without_touching_the_streak(app_ctx):
+    client, main_mod = app_ctx
+    eid = _card_error(client)
+    client.post("/api/cards/grade-new", json={
+        "source_kind": "error", "source_id": eid, "grade": "known"})
+    prog = client.get("/api/cards/progress").json()
+    assert prog["done_today"] == 1
+    assert prog["new_limit"] == main_mod.DEFAULT_NEW_CARDS_PER_DAY
+    assert client.get("/api/tips/progress").json()["done"] == 0
+
+
+def test_deleting_the_error_removes_it_from_the_session(app_ctx):
+    client, _ = app_ctx
+    eid = _card_error(client)
+    client.post("/api/cards/grade-new", json={
+        "source_kind": "error", "source_id": eid, "grade": "known"})
+    client.delete(f"/api/errors/{eid}")
+    assert client.get("/api/cards/session").json()["cards"] == []
