@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from app import llm_client
+from app import flashcards, llm_client
 
 
 def test_extract_json_plain():
@@ -403,53 +403,73 @@ def test_generate_drill_without_contexts_keeps_old_prompt_shape(monkeypatch):
     assert "depends from" in seen["prompt"]
 
 
-# --- Ulepszanie fiszki --------------------------------------------------------
+# --- Generowanie treści fiszek ------------------------------------------------
 
-def test_improve_card_returns_front_and_back(monkeypatch):
-    monkeypatch.setattr(llm_client, "_call_json", lambda prompt, kind="other": {
-        "front": "It ______ on the weather.", "back": "depends on"})
-    front, back = llm_client.improve_card("depends from", "depends on", "kalka")
-    assert front == "It ______ on the weather."
-    assert back == "depends on"
+def _card_item(ref="error:1", topic="collocations", shape="translate"):
+    return {"ref": ref, "topic": topic, "topic_label": "Kolokacje",
+            "student_text": "in home", "correct_text": "at home",
+            "explanation": "stały zwrot", "suggested_shape": shape}
 
 
-def test_improve_card_is_labelled_for_usage_stats(monkeypatch):
+def test_generate_cards_passes_the_material_and_the_suggestion(monkeypatch):
     seen = {}
 
     def fake_call(prompt, kind="other"):
-        seen["kind"] = kind
-        seen["prompt"] = prompt
-        return {"front": "f ______", "back": "b"}
+        seen["prompt"], seen["kind"] = prompt, kind
+        return {"cards": []}
 
     monkeypatch.setattr(llm_client, "_call_json", fake_call)
-    llm_client.improve_card("depends from", "depends on", "kalka")
-    assert seen["kind"] == "card"
-    assert "depends from" in seen["prompt"]
-    assert "depends on" in seen["prompt"]
+    llm_client.generate_cards([_card_item()])
+    assert seen["kind"] == "cards"
+    assert "at home" in seen["prompt"]
+    assert "error:1" in seen["prompt"]
+    assert "translate" in seen["prompt"]
 
 
-def test_improve_card_demands_a_gap_in_the_front(monkeypatch):
-    """Karta bez luki nie wymusza przypomnienia — to tylko przepisana para."""
+def test_generate_cards_forbids_showing_the_wrong_form(monkeypatch):
+    """Cały powód tej zmiany: forma błędna nie może trafić na kartę, a model ma ją
+    w danych wejściowych, więc zakaz musi być w prompcie wprost."""
     seen = {}
 
     def fake_call(prompt, kind="other"):
         seen["prompt"] = prompt
-        return {"front": "f ______", "back": "b"}
+        return {"cards": []}
 
     monkeypatch.setattr(llm_client, "_call_json", fake_call)
-    llm_client.improve_card("depends from", "depends on", "kalka")
-    assert "______" in seen["prompt"]
+    llm_client.generate_cards([_card_item()])
+    assert "NIE WOLNO" in seen["prompt"]
+    assert "in home" in seen["prompt"]          # podana jako forma do unikania
 
 
-def test_improve_card_rejects_an_answer_without_a_gap(monkeypatch):
-    monkeypatch.setattr(llm_client, "_call_json", lambda prompt, kind="other": {
-        "front": "Jak jest poprawnie?", "back": "depends on"})
-    with pytest.raises(llm_client.LLMError):
-        llm_client.improve_card("depends from", "depends on", "kalka")
+def test_generate_cards_explains_the_gap_marker(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(llm_client, "_call_json",
+                        lambda prompt, kind="other": seen.setdefault("p", prompt) and {} or {"cards": []})
+    llm_client.generate_cards([_card_item(shape="gap")])
+    assert flashcards.GAP_MARK in seen["p"]
 
 
-def test_improve_card_rejects_empty_fields(monkeypatch):
-    monkeypatch.setattr(llm_client, "_call_json", lambda prompt, kind="other": {
-        "front": "It ______ on it.", "back": "   "})
-    with pytest.raises(llm_client.LLMError):
-        llm_client.improve_card("depends from", "depends on", "kalka")
+def test_group_material_carries_no_forbidden_form(monkeypatch):
+    """Grupa nie ma formy błędnej, więc w jej wierszu nie ma czego zakazywać."""
+    seen = {}
+
+    def fake_call(prompt, kind="other"):
+        seen["prompt"] = prompt
+        return {"cards": []}
+
+    monkeypatch.setattr(llm_client, "_call_json", fake_call)
+    llm_client.generate_cards([{"ref": "group:4", "topic": "articles",
+                                "topic_label": "Przedimki", "student_text": "",
+                                "correct_text": "Przedimek przed rzeczownikiem",
+                                "explanation": "policzalne wymagają przedimka",
+                                "suggested_shape": "gap"}])
+    assert "NIE POKAZUJ" not in seen["prompt"]
+    assert "Przedimek przed rzeczownikiem" in seen["prompt"]
+
+
+def test_generate_cards_with_no_items_skips_the_model(monkeypatch):
+    def explode(prompt, kind="other"):
+        raise AssertionError("pusta partia nie może wołać modelu")
+
+    monkeypatch.setattr(llm_client, "_call_json", explode)
+    assert llm_client.generate_cards([]) == {"cards": []}

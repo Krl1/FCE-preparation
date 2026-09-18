@@ -13,6 +13,7 @@ import os
 import subprocess
 
 from . import fce_taxonomy as tax
+from . import flashcards
 from .models import ErrorItem, GeneratedExercise, GradingResult
 
 CLAUDE_BIN = os.environ.get("FCE_CLAUDE_BIN", "claude")
@@ -826,40 +827,60 @@ def explain_error(topic: str, student_text: str, correct_text: str, lang: str = 
     return str(data.get("explanation", "")).strip()
 
 
-# --- Ulepszanie fiszki --------------------------------------------------------
+# --- Generowanie treści fiszek ------------------------------------------------
 
-_CARD_GAP = "______"
+def _card_line(item: dict) -> str:
+    """Jeden wiersz materiału. Zakaz dopisujemy TYLKO wtedy, gdy jest co zakazywać:
+    grupa nie ma formy błędnej, a pusty zakaz podpowiadałby modelowi, że czegoś mu
+    brakuje."""
+    wrong = str(item.get("student_text") or "").strip()
+    line = (f"- ref={item['ref']} | temat={item.get('topic_label', item.get('topic', ''))} "
+            f"| sugerowany kształt: {item['suggested_shape']} "
+            f"| poprawnie: {item.get('correct_text', '')}")
+    if wrong:
+        line += f" | NIE POKAZUJ: {wrong}"
+    return line + f" | uwaga: {str(item.get('explanation') or '')[:180]}"
 
 
-def improve_card(student_text: str, correct_text: str, explanation: str,
-                 lang: str = "pl") -> tuple[str, str]:
-    """Zamienia parę „błędnie → poprawnie" w kartę wymuszającą przypomnienie.
+def generate_cards(items: list[dict], lang: str = "pl") -> dict:
+    """Układa treść fiszek dla partii wpisów. Jedno wywołanie na partię.
 
-    Jedno wywołanie na kliknięcie ucznia — wynik zapisuje się na stałe, więc karta
-    jest potem darmowa. Zwraca `(front, back)`.
-
-    Odpowiedź bez luki jest odrzucana: karta, która tylko przepisuje parę, nie zmusza
-    do przypomnienia, a po to się ją ulepsza.
+    Zwraca SUROWY słownik od modelu — walidacja (nieznany ref, zły kształt, odstępstwo
+    bez powodu, brak luki) należy do `app/flashcards.py`, żeby dała się testować bez
+    wołania modelu.
     """
+    if not items:
+        return {"cards": []}
+
     lang_name = _lang_name(lang)
-    shape = '{"front": str, "back": str}'
+    listing = "\n".join(_card_line(i) for i in items)
+    # Zakaz dopisujemy do promptu TYLKO wtedy, gdy przynajmniej jedna pozycja niesie
+    # formę błędną (ma wiersz "NIE POKAZUJ") — dokładnie tak samo jak przy pojedynczym
+    # wierszu w `_card_line`. Partia złożona wyłącznie z grup nie ma czego zakazywać,
+    # a wspominanie zakazu bez treści do zakazania tylko myliłoby model.
+    forbid_line = (
+        "\nNIE WOLNO umieszczać formy z pola 'NIE POKAZUJ' ani na przodzie, ani na tyle "
+        "karty — ani w cudzysłowie, ani jako przykład błędu. Uczeń ma nie widzieć swojej "
+        "pomyłki; ma wyprodukować formę poprawną.\n"
+        if "NIE POKAZUJ" in listing else ""
+    )
+    shape = ('{"cards": [{"ref": str, "shape": "translate"|"gap", "front": str, '
+             '"back": str, "shape_reason": str}]}')
     prompt = (
         f"{_EXAMINER_SYSTEM}\n\n"
-        "Zamień błąd ucznia w fiszkę wymuszającą PRZYPOMNIENIE poprawnej formy.\n\n"
-        f"Błędnie: {student_text}\n"
-        f"Poprawnie: {correct_text}\n"
-        f"Wyjaśnienie: {explanation}\n\n"
-        f"'front' to JEDNO krótkie zdanie po angielsku z luką zapisaną jako {_CARD_GAP} — "
-        "naturalne, w nowym kontekście, nie przepisane z powyższego błędu.\n"
-        f"'back' to sama poprawna forma wpisywana w lukę (bez całego zdania).\n"
-        f"Nie tłumacz ani nie komentuj; wyjaśnienie uczeń już widzi po {lang_name}.\n\n"
-        f"Zwróć WYŁĄCZNIE JSON w kształcie: {shape}"
+        "Układasz fiszki dla ucznia przygotowującego się do FCE. Fiszka ma go UCZYĆ "
+        "poprawnej formy, a nie sprawdzać, czy rozpozna swoją pomyłkę.\n\n"
+        f"MATERIAŁ:\n{listing}\n\n"
+        "Dla KAŻDEJ pozycji zwróć dokładnie jedną kartę w jednym z dwóch kształtów:\n"
+        f"- 'translate' — 'front' to naturalne zdanie po {lang_name}, które uczeń ma "
+        "powiedzieć po angielsku; 'back' to angielska wersja.\n"
+        f"- 'gap' — 'front' to krótkie angielskie zdanie z luką zapisaną jako "
+        f"{flashcards.GAP_MARK}; 'back' to sama forma wpisywana w lukę.\n"
+        f"W obu kształtach dopisz na końcu 'back' jedno krótkie zdanie po {lang_name} "
+        "wyjaśniające, dlaczego tak.\n\n"
+        "Użyj sugerowanego kształtu. Jeśli materiał wyraźnie do niego nie pasuje, możesz "
+        "wybrać drugi, ale MUSISZ wtedy wypełnić 'shape_reason' jednym zdaniem; "
+        f"odstępstwo bez uzasadnienia zostanie odrzucone.\n{forbid_line}\n"
+        f"'ref' przepisz dokładnie z listy. Zwróć WYŁĄCZNIE JSON w kształcie: {shape}"
     )
-    data = _call_json(prompt, kind="card")
-    front = str(data.get("front") or "").strip()
-    back = str(data.get("back") or "").strip()
-    if not front or not back:
-        raise LLMError("Model nie zwrócił kompletnej fiszki.")
-    if _CARD_GAP not in front:
-        raise LLMError("Model nie umieścił luki w treści fiszki.")
-    return front, back
+    return _call_json(prompt, kind="cards")
