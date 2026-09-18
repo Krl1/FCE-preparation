@@ -347,6 +347,21 @@ h2 { font-size: 1.05rem; }
    może konkurować z samym zdaniem — stąd mniejszy rozmiar i stonowany kolor. */
 .card-hint { margin-top: .4rem; font-size: .95rem; opacity: .75; font-style: italic; }
 
-/* Licznik rundy: pojawia się dopiero od drugiej rundy, więc musi być widoczny od razu,
-   ale nie może przykrywać samej karty. */
-.cards-round { margin-top: .4rem; font-size: .9rem; opacity: .8; }
+/* Pasek sesji ma DWA segmenty: zielony rośnie przy „Umiem", czerwony przy „Nie umiem".
+   Pomyłka też jest postępem — karta została przerobiona, tylko źle — więc pasek po
+   zamkniętej rundzie jest pełny niezależnie od wyniku, a proporcja widać na pierwszy
+   rzut oka. Flex, bo dwa segmenty mają stać obok siebie, a nie jeden pod drugim. */
+.goal-bar.cards-bar { display: flex; }
+/* `flex: none`, bo zaokrąglanie procentów potrafi dać sumę 101% — bez tego flex
+   ścisnąłby oba segmenty proporcjonalnie i zafałszował stosunek zielonego do czerwonego.
+   Nadmiar przycina `overflow: hidden` rodzica, co jest niewidoczne dla oka. */
+#cards-progress-known, #cards-progress-unknown { flex: none; }
+#cards-progress-known { background: var(--good); }
+#cards-progress-unknown { background: var(--bad); }
+
+/* Wiersz pod paskiem: licznik „ile z ilu w tej rundzie" i — od drugiej rundy — jej numer. */
+.cards-progress-line {
+  display: flex; justify-content: space-between; align-items: baseline;
+  margin-top: .4rem; font-size: .9rem; opacity: .8;
+}
+.cards-round { font-weight: 600; }

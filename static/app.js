@@ -148,7 +148,7 @@ const I18N = {
     "cards.startDue": "Tylko powtórki",
     "cards.startNew": "Tylko nowe",
     "cards.startAll": "Powtórz wszystko",
-    "cards.round": "Runda {r} — do poprawienia: {n}",
+    "cards.round": "Runda {r}",
     "cards.prepare": "Przygotuj karty",
     "cards.regenerate": "Przegeneruj",
     "cards.regenerateNotesPh": "Co poprawić w tej karcie? (opcjonalnie)",
@@ -314,7 +314,7 @@ const I18N = {
     "cards.startDue": "Repetitions only",
     "cards.startNew": "New only",
     "cards.startAll": "Review everything",
-    "cards.round": "Round {r} — left to get right: {n}",
+    "cards.round": "Round {r}",
     "cards.prepare": "Prepare cards",
     "cards.regenerate": "Regenerate",
     "cards.regenerateNotesPh": "What should change on this card? (optional)",
@@ -1722,8 +1722,10 @@ let cardsQueue = [];          // bieżąca RUNDA, nie cała sesja
 let cardsIndex = 0;
 let cardsPending = [];        // karty do poprawienia w następnej rundzie
 let cardsRound = 1;
-let cardsSessionSize = 0;     // ile kart miała sesja na starcie
-let cardsMastered = 0;        // ile z nich przeszło już poprawnie
+// Postęp liczymy w BIEŻĄCEJ rundzie: obok paska stoi licznik „ile z ilu", a od drugiej
+// rundy jej numer, więc wyzerowanie paska przestaje być zagadką i staje się informacją.
+let cardsRoundKnown = 0;
+let cardsRoundUnknown = 0;
 // Karty, za które POSZŁA już ocena do serwera. Liczy się pierwsza odpowiedź w sesji:
 // powtórki w kolejnych rundach są czystym ćwiczeniem i nie mogą przeliczać harmonogramu.
 let cardsGraded = new Set();
@@ -1808,8 +1810,8 @@ function loadCardsSession(mode) {
       cardsDone = 0;
       cardsPending = [];
       cardsRound = 1;
-      cardsSessionSize = body.cards.length;
-      cardsMastered = 0;
+      cardsRoundKnown = 0;
+      cardsRoundUnknown = 0;
       cardsGraded = new Set();
       cardsMode = body.mode || mode;
       renderCardsCounter(body.progress);
@@ -1823,14 +1825,27 @@ function loadCardsSession(mode) {
   });
 }
 
+// Pasek rośnie przy KAŻDEJ odpowiedzi — pomyłka też jest przerobioną kartą, tylko źle.
+// Zielony i czerwony segment stoją obok siebie, więc po zamkniętej rundzie pasek jest
+// pełny niezależnie od wyniku, a proporcja widać od razu. Segmenty są zsumowane, nie
+// ułożone chronologicznie: wersja z osobnym kawałkiem na odpowiedź nie dałaby się
+// sprawdzić testem, bo atrapa DOM w smoke nie wykrywa niewyczyszczonej zawartości.
+function renderCardsProgress() {
+  const wRundzie = cardsQueue.length;
+  const odpowiedzi = cardsRoundKnown + cardsRoundUnknown;
+  const proc = (n) => (wRundzie ? Math.round((n / wRundzie) * 100) : 0) + "%";
+  $("#cards-progress-known").style.width = proc(cardsRoundKnown);
+  $("#cards-progress-unknown").style.width = proc(cardsRoundUnknown);
+  $("#cards-progress-count").textContent = wRundzie ? `${odpowiedzi} / ${wRundzie}` : "";
+}
+
 // Licznik rundy pojawia się dopiero od drugiej — w pierwszej nie ma o czym informować,
 // a stały napis „Runda 1" tylko zaśmiecałby ekran.
 function renderCardsRound() {
   const box = $("#cards-round");
   const zostalo = cardsPending.length + Math.max(0, cardsQueue.length - cardsIndex);
   const widoczny = cardsRound > 1 && zostalo > 0;
-  box.textContent = widoczny
-    ? t("cards.round").replace("{r}", cardsRound).replace("{n}", zostalo) : "";
+  box.textContent = widoczny ? t("cards.round").replace("{r}", cardsRound) : "";
   box.classList.toggle("hidden", !widoczny);
 }
 
@@ -1843,6 +1858,8 @@ function advanceCard() {
     cardsPending = [];
     cardsIndex = 0;
     cardsRound += 1;
+    cardsRoundKnown = 0;
+    cardsRoundUnknown = 0;
   }
   showCard();
 }
@@ -1853,11 +1870,7 @@ function showCard() {
   // nic tu nie przebudowuje, więc nieczyszczony banner wisiałby pod każdą kolejną kartą.
   $("#cards-error").innerHTML = "";
   $("#cards-error").classList.add("hidden");
-  const bar = $("#cards-progress-bar");
-  // Postęp liczymy do OPANOWANIA całej sesji, nie do końca bieżącej rundy — inaczej
-  // pasek cofałby się na zero przy każdej nowej rundzie i wyglądał jak błąd.
-  bar.style.width = cardsSessionSize
-    ? Math.round((cardsMastered / cardsSessionSize) * 100) + "%" : "0%";
+  renderCardsProgress();
   renderCardsRound();
 
   if (!card) {
@@ -1948,8 +1961,8 @@ function gradeCard(grade) {
         cardsDone += 1;
         renderCardsCounter(out.progress);
       }
-      if (grade === "known") cardsMastered += 1;
-      else cardsPending.push(card);
+      if (grade === "known") cardsRoundKnown += 1;
+      else { cardsRoundUnknown += 1; cardsPending.push(card); }
       advanceCard();
     } catch (e) {
       // NIE `#cards-area` — to statyczny markup, który `showCard()` tylko nadpisuje

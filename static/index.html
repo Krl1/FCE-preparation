@@ -180,8 +180,14 @@
           <button id="cards-start-new" data-i18n="cards.startNew">Tylko nowe</button>
           <button id="cards-start-all" data-i18n="cards.startAll">Powtórz wszystko</button>
         </div>
-        <div class="goal-bar"><span id="cards-progress-bar"></span></div>
-        <div id="cards-round" class="cards-round hidden"></div>
+        <div class="goal-bar cards-bar">
+          <span id="cards-progress-known"></span>
+          <span id="cards-progress-unknown"></span>
+        </div>
+        <div class="cards-progress-line">
+          <span id="cards-progress-count"></span>
+          <span id="cards-round" class="cards-round hidden"></span>
+        </div>
       </div>
 
       <div id="cards-error"></div>

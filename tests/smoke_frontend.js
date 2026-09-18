@@ -951,19 +951,21 @@ const setInput = (id, value) => {
       const before = calls.length;
       await fire("#cards-start"); await settle();
 
-      const szerokosc = () => parseInt(nodes.get("#cards-progress-bar").style.width) || 0;
+      const szer = (id) => parseInt(nodes.get(id).style.width) || 0;
+      const licznik = () => nodeText("#cards-progress-count");
+
       await fire("#cards-reveal"); await settle();
       await fire("#cards-unknown"); await settle();   // karta 11 do poprawki
-      const poPomylce = szerokosc();
+      // Pomyłka też jest postępem — karta została przerobiona, tylko źle. Pasek ma się
+      // przesunąć czerwonym fragmentem, a nie stać w miejscu.
+      if (szer("#cards-progress-unknown") === 0) {
+        failures.push("\u201eNie umiem\u201d nie przesunęło paska czerwonym fragmentem");
+      }
+      if (licznik() !== "1 / 2") {
+        failures.push("licznik rundy po pierwszej odpowiedzi: " + licznik());
+      }
       await fire("#cards-reveal"); await settle();
       await fire("#cards-known"); await settle();     // karta 12 opanowana
-
-      // Pasek liczy opanowane karty z całej sesji, nie postęp w bieżącej rundzie —
-      // gdyby liczył rundę, druga runda cofnęłaby go na zero i wyglądałby na błąd.
-      if (szerokosc() < poPomylce) {
-        failures.push("pasek postępu cofnął się przy nowej rundzie: "
-          + poPomylce + "% -> " + szerokosc() + "%");
-      }
 
       // Runda pierwsza się skończyła, ale karta 11 czeka — sesja ma trwać dalej.
       if (nodeText("#cards-front") !== "pomylona") {
@@ -976,10 +978,25 @@ const setInput = (id, value) => {
       if (!nodeText("#cards-round").includes("Runda 2")) {
         failures.push("licznik rundy nie mówi, która to runda: " + nodeText("#cards-round"));
       }
+      // Druga runda liczy się od nowa i obejmuje TYLKO karty do poprawienia — mianownik
+      // ma spaść z 2 na 1, bo tyle kart pomyliłem.
+      if (licznik() !== "0 / 1") {
+        failures.push("licznik nie przeliczył się na drugą rundę: " + licznik());
+      }
+      if (szer("#cards-progress-known") !== 0 || szer("#cards-progress-unknown") !== 0) {
+        failures.push("pasek nie wyzerował się na początku drugiej rundy: zielony "
+          + szer("#cards-progress-known") + "%, czerwony "
+          + szer("#cards-progress-unknown") + "%");
+      }
 
       await fire("#cards-reveal"); await settle();
       await fire("#cards-known"); await settle();
 
+      if (szer("#cards-progress-known") !== 100 || szer("#cards-progress-unknown") !== 0) {
+        failures.push("po czystej rundzie pasek nie jest pełen na zielono: zielony "
+          + szer("#cards-progress-known") + "%, czerwony "
+          + szer("#cards-progress-unknown") + "%");
+      }
       // Liczy się PIERWSZA odpowiedź: powtórka nie może wysłać drugiej oceny, bo
       // przeliczyłaby odstęp i zbliżyła kartę do oznaczenia \u201euparta\u201d.
       const oceny = calls.slice(before).filter((c) => c.includes("/grade"));
