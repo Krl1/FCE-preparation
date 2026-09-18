@@ -595,8 +595,28 @@ def test_cards_done_today_counts_distinct_cards(conn):
 
 def test_cards_overdue_counts_only_the_past(conn):
     a, b = _card_err(conn, student="a"), _card_err(conn, student="b")
-    db.create_card(conn, source_kind="error", source_id=a, due_on="2026-09-10", interval_days=1)
-    db.create_card(conn, source_kind="error", source_id=b, due_on="2026-09-17", interval_days=1)
+    ca = db.create_card(conn, source_kind="error", source_id=a,
+                        due_on="2026-09-10", interval_days=1)
+    cb = db.create_card(conn, source_kind="error", source_id=b,
+                        due_on="2026-09-17", interval_days=1)
+    for cid in (ca, cb):
+        db.set_card_content(conn, cid, front="f", back="b", shape="translate", shape_reason="")
+    assert db.cards_overdue(conn, "2026-09-17") == 1
+
+
+def test_cards_overdue_ignores_cards_without_content(conn):
+    """Karta bez treści nie jest długiem do odrobienia.
+
+    Wiersz karty powstaje teraz przy PRZYGOTOWANIU, z terminem na dziś, więc karta
+    pominięta przez model od jutra miałaby przeterminowany `due_on` — a nie wchodzi
+    ani do `cards_due`, ani do `cards_new`. Uczeń widziałby zaległość, której nie ma
+    jak odrobić."""
+    eid = _card_err(conn)
+    cid = db.create_card(conn, source_kind="error", source_id=eid,
+                         due_on="2026-09-10", interval_days=0)
+    assert db.cards_overdue(conn, "2026-09-17") == 0
+    db.set_card_content(conn, cid, front="f", back="b", shape="translate", shape_reason="")
+    db.insert_card_review(conn, card_id=cid, grade="unknown")
     assert db.cards_overdue(conn, "2026-09-17") == 1
 
 

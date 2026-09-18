@@ -1064,7 +1064,17 @@ def cards_done_today(conn: sqlite3.Connection) -> int:
 
 @_synchronized
 def cards_overdue(conn: sqlite3.Connection, today: str) -> int:
-    row = conn.execute("SELECT COUNT(*) AS n FROM cards WHERE due_on < ?", (today,)).fetchone()
+    """Ile kart ma termin już przeterminowany.
+
+    Liczą się wyłącznie karty PRZYGOTOWANE. Wiersz karty powstaje przy przygotowaniu,
+    z terminem na dziś, więc karta pominięta przez model miałaby od jutra przeterminowany
+    `due_on`, nie wchodząc ani do `cards_due`, ani do `cards_new` — byłby to dług, którego
+    uczeń nie ma jak odrobić. Karta bez treści czeka na przygotowanie i mówi o tym
+    licznik nieprzygotowanych, nie licznik zaległości."""
+    row = conn.execute(
+        "SELECT COUNT(*) AS n FROM cards WHERE due_on < ? AND prepared_at IS NOT NULL",
+        (today,),
+    ).fetchone()
     return int(row["n"])
 
 

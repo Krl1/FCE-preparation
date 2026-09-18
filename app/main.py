@@ -615,6 +615,19 @@ def _load_source(source_kind: str, source_id: int) -> dict | None:
             else db.get_error(conn, source_id))
 
 
+def _unprepared_total() -> int:
+    """Ile pozycji czeka na treść — JEDNA definicja dla licznika i dla `remaining`.
+
+    Źródło bez wiersza karty liczy się tak samo jak karta bez treści: wiersz powstaje
+    dopiero przy przygotowaniu, więc sam brak wiersza nie znaczy, że nie ma czego
+    przygotować. Składniki są rozłączne — `count_unprepared` idzie po tabeli `cards`,
+    `sources_without_card` zwraca źródła, które wiersza jeszcze nie mają.
+
+    Licznik jest do pokazania na przycisku, nie do rozliczeń, więc ucięcie listy źródeł
+    na limicie zapytania (500) jest tu bez znaczenia."""
+    return db.count_unprepared(conn) + len(db.sources_without_card(conn))
+
+
 def _cards_progress() -> dict:
     today = _today_str()
     return {
@@ -627,12 +640,8 @@ def _cards_progress() -> dict:
         "total_sources": db.count_card_sources(conn),
         # Odróżnia „nie ma z czego robić fiszek" od „są, ale czekają na treść" —
         # bez tego uczeń z pełnym dziennikiem i zerem przygotowanych kart widziałby
-        # pusty ekran bez wskazówki, co kliknąć. Źródło bez wiersza karty liczy się
-        # tak samo jak karta bez treści: wiersz powstaje dopiero przy przygotowaniu,
-        # więc sam brak wiersza nie znaczy, że nie ma czego przygotować. Licznik jest
-        # do pokazania na przycisku, a nie do rozliczeń, więc ucięcie listy źródeł na
-        # limicie zapytania (500) jest tu bez znaczenia.
-        "unprepared": db.count_unprepared(conn) + len(db.sources_without_card(conn)),
+        # pusty ekran bez wskazówki, co kliknąć.
+        "unprepared": _unprepared_total(),
     }
 
 
@@ -743,8 +752,11 @@ def prepare_cards(lang: str = Query(default="pl")) -> dict:
         p, u = _prepare_batch(chunk, lang)
         prepared += p
         unprepared += u
+    # `remaining` liczy się tym samym wzorem, co licznik w postępie: przy bazie większej
+    # niż limit `sources_without_card` jedno kliknięcie nie zakłada wierszy dla wszystkich
+    # źródeł, a dwa wzory pokazałyby obok siebie dwie różne odpowiedzi na to samo pytanie.
     return {"prepared": prepared, "unprepared": unprepared,
-            "remaining": db.count_unprepared(conn)}
+            "remaining": _unprepared_total()}
 
 
 @app.post("/api/cards/{card_id}/regenerate")

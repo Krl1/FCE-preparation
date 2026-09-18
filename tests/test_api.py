@@ -1211,3 +1211,57 @@ def test_preparing_does_not_disturb_an_existing_schedule(app_ctx, monkeypatch):
     _stub_llm(main_mod, monkeypatch, _cards_payload([f"error:{eid}"]))
     client.post(f"/api/cards/{cid}/regenerate")
     assert main_mod.db.get_card(main_mod.conn, cid)["due_on"] == due_before
+
+
+def test_remaining_and_the_progress_counter_agree(app_ctx, monkeypatch):
+    """`remaining` z przygotowania i `unprepared` z postępu to ta sama liczba.
+
+    Przy bazie większej niż limit zapytania `sources_without_card` jedno kliknięcie nie
+    zakłada wierszy dla wszystkich źródeł — część czeka bez wiersza karty. Gdyby każdy
+    licznik miał własny wzór, zakładka pokazałaby obok siebie dwie różne odpowiedzi na
+    to samo pytanie „ile jeszcze zostało"."""
+    client, main_mod = app_ctx
+    eid = _card_error(client, student="a")
+    _card_error(client, student="b")
+    # Ucięcie listy źródeł udaje limit zapytania przy bazie większej, niż mieści się
+    # w jednym przebiegu — bez tego każdy wzór dałby tę samą liczbę i test nic nie mierzy.
+    real = main_mod.db.sources_without_card
+    monkeypatch.setattr(main_mod.db, "sources_without_card",
+                        lambda conn, *a, **kw: real(conn, *a, **kw)[:1])
+    _stub_llm(main_mod, monkeypatch, _cards_payload([f"error:{eid}"]))
+    out = client.post("/api/cards/prepare").json()
+    assert out["prepared"] == 1
+    assert out["remaining"] == 1
+    assert client.get("/api/cards/progress").json()["unprepared"] == out["remaining"]
+
+
+def test_regenerating_a_group_card_sends_no_wrong_form(app_ctx, monkeypatch):
+    """Grupa nie ma formy błędnej: `student_text` leci do modelu PUSTY, a materiałem
+    jest reguła. Reguła w polu „NIE POKAZUJ" zakazałaby modelowi jedynej treści, jaką
+    grupa niesie — a `regenerate` składa wiersz materiału własnym kodem, osobną ścieżką
+    niż wsadowe `cards_unprepared`, więc reguła musi być sprawdzona także tutaj."""
+    client, main_mod = app_ctx
+    eid = _card_error(client)
+    _stub_llm(main_mod, monkeypatch, {"assignments": [
+        {"error_id": eid, "new_group": {"rule": "depend + on", "explanation": "zawsze 'on'",
+                                        "topic": "prepositions"}}]})
+    client.post("/api/groups/assign")
+    gid = client.get("/api/groups").json()["groups"][0]["id"]
+    _stub_llm(main_mod, monkeypatch,
+              _cards_payload([f"error:{eid}", f"group:{gid}"]))
+    client.post("/api/cards/prepare")
+    cid = main_mod.db.get_card_by_source(main_mod.conn, "group", gid)["id"]
+
+    sent = []
+
+    def spy(items, lang="pl"):
+        sent.extend(items)
+        return {"cards": [{"ref": i["ref"], "shape": i["suggested_shape"],
+                           "front": "Przód ______", "back": "Tył"} for i in items]}
+
+    monkeypatch.setattr(main_mod.llm_client, "generate_cards", spy)
+    assert client.post(f"/api/cards/{cid}/regenerate").status_code == 200
+    assert len(sent) == 1
+    assert sent[0]["student_text"] == ""
+    assert sent[0]["correct_text"] == "depend + on"
+    assert sent[0]["explanation"] == "zawsze 'on'"
