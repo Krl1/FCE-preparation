@@ -145,10 +145,14 @@ does not — it is parsed locally).
   lets you move faster through many related slips: instead of a single sentence the model
   sees the rule and several contexts you broke it in. A group counts as **one mistake**
   toward the daily goal, so the 🔥 streak stays comparable between modes.
-- **Flashcards** — a fast sweep through many rules at once. A card is built from what your
-  journal already holds (wrong → right, or a group's rule with its contexts), so it appears
-  instantly and costs no model call. You reveal the answer and grade it **I know it** or
-  **I don't** — with the space bar and `n`, without reaching for the mouse.
+- **Flashcards** — a fast sweep through many rules at once. A card never shows your wrong form.
+  Depending on the material it takes one of two shapes: for vocabulary and collocations the
+  front is a Polish sentence you have to say in English, and for grammar it is an English
+  sentence with a gap. The back carries the correct form and one sentence on why. Content is
+  generated once, when you click **Prepare cards**; after that flipping is instant and costs
+  nothing. If a card comes out weak, **Regenerate** rebuilds it. You reveal the answer and
+  grade it **I know it** or **I don't** — with the space bar and `n`, without reaching for the
+  mouse.
 
   Every card carries **its own review date**: known → back in 1, 3, 7, 14, 30, 90 days;
   not known → back tomorrow. A card you have never got right once comes back the same day —
@@ -163,8 +167,7 @@ does not — it is parsed locally).
   The streak measures five correct exercises per mistake, while a card is a single click;
   mixing the two would devalue the former. A card you get wrong four times is marked as
   stubborn and offers a jump to *Practice mistakes* — if recall alone is not working,
-  exercises are. The **Improve this card** button is the only one that calls the model: it
-  turns the wrong → right pair into a gapped sentence, once and for all.
+  exercises are.
 - **Check external** — paste a task from a book along with your answer; the app marks it and proposes
   mistakes for you to confirm.
 - **My mistakes** — an overview of *Weak points* and the full *Mistake log*. Each entry has

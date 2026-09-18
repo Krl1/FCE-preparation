@@ -142,10 +142,13 @@ Uwaga: pliki tekstowe idą przez model, więc ich import **kosztuje wywołania s
   grupowy pozwala szybciej przejść przez wiele powiązanych pomyłek: zamiast jednego zdania
   model widzi regułę i kilka kontekstów, w których ją złamałeś. Do dziennego celu grupa
   liczy się **jak jeden błąd**, więc seria 🔥 pozostaje porównywalna między trybami.
-- **Fiszki** — szybki przelot przez wiele reguł naraz. Karta powstaje z tego, co już masz
-  w dzienniku (błędnie → poprawnie, albo reguła grupy wraz z kontekstami), więc pojawia się
-  natychmiast i nie kosztuje wywołania modelu. Odkrywasz odpowiedź i oceniasz **Umiem** albo
-  **Nie umiem** — spacją i klawiszem `n`, bez sięgania po mysz.
+- **Fiszki** — szybki przelot przez wiele reguł naraz. Karta nie pokazuje Twojej błędnej formy.
+  Zależnie od materiału ma jeden z dwóch kształtów: przy słownictwie i kolokacjach na przodzie
+  jest polskie zdanie, które masz powiedzieć po angielsku, a przy gramatyce — angielskie zdanie
+  z luką. Na odwrocie poprawna forma i jedno zdanie, dlaczego tak. Treść powstaje raz, po
+  kliknięciu **Przygotuj karty**; potem przewracanie jest natychmiastowe i nic nie kosztuje.
+  Gdy któraś karta wyjdzie słabo, **Przegeneruj** układa ją od nowa. Odkrywasz odpowiedź
+  i oceniasz **Umiem** albo **Nie umiem** — spacją i klawiszem `n`, bez sięgania po mysz.
 
   Każda karta ma **własny termin powtórki**: umiesz → wraca za 1, 3, 7, 14, 30, 90 dni;
   nie umiesz → wraca jutro. Kartę, której nie umiałeś ani razu, dostaniesz jeszcze dziś —
@@ -160,8 +163,7 @@ Uwaga: pliki tekstowe idą przez model, więc ich import **kosztuje wywołania s
   pięć poprawnych ćwiczeń na błąd, a karta to jedno kliknięcie; mieszanie obu zdewaluowałoby
   tę pierwszą miarę. Karta, na której pomylisz się cztery razy, oznacza się jako uparta
   i proponuje przeskok do *Ćwicz błędy* — jeśli samo przypominanie nie działa, potrzebne są
-  ćwiczenia. Przycisk **Ulepsz tę kartę** jest jedynym, który woła model: zamienia parę
-  błędnie → poprawnie w zdanie z luką, raz na zawsze.
+  ćwiczenia.
 - **Sprawdź z zewnątrz** — wklej zadanie z książki i swoją odpowiedź; aplikacja sprawdzi je i zaproponuje
   błędy do zatwierdzenia.
 - **Moje błędy** — przegląd słabych punktów i pełny dziennik błędów. Przy każdym błędzie przycisk
