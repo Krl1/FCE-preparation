@@ -72,7 +72,8 @@ def test_lexical_topics_default_to_translation():
 
 
 def test_grammar_topics_default_to_a_gap():
-    for topic in ("tenses", "articles", "gerund_infinitive", "quantifiers", "word_order"):
+    for topic in ("tenses", "articles", "gerund_infinitive", "quantifiers",
+                  "word_order", "reported_speech"):
         assert fc.default_shape(topic) == fc.SHAPE_GAP
 
 
@@ -207,7 +208,7 @@ SHAPE_GAP = "gap"
 _GAP_TOPICS = frozenset({
     "tenses", "articles", "gerund_infinitive", "quantifiers", "conditionals",
     "relative_clauses", "modals", "passive_voice", "comparatives",
-    "adverb_adjective", "word_order", "linkers",
+    "adverb_adjective", "word_order", "linkers", "reported_speech",
 })
 
 
@@ -398,6 +399,18 @@ def test_cards_unprepared_carries_the_source_fields(conn):
     assert row["explanation"] == "stały zwrot"
 
 
+def test_group_source_has_no_wrong_form(conn):
+    """Grupa nie ma formy błędnej — reguła nie może wyciec jako `student_text`,
+    bo prompt zakazuje pokazywania tego pola."""
+    gid = db.insert_group(conn, topic="articles", rule="Przedimek przed rzeczownikiem",
+                          explanation="policzalne wymagają przedimka")
+    db.create_card(conn, source_kind="group", source_id=gid,
+                   due_on="2026-09-18", interval_days=0)
+    row = [r for r in db.cards_unprepared(conn) if r["source_kind"] == "group"][0]
+    assert row["student_text"] == ""
+    assert row["correct_text"] == "Przedimek przed rzeczownikiem"
+
+
 def test_unprepared_cards_stay_out_of_both_queues(conn):
     eid = _prep_err(conn)
     db.create_card(conn, source_kind="error", source_id=eid,
@@ -499,7 +512,7 @@ def set_card_content(conn: sqlite3.Connection, card_id: int, *, front: str, back
 _UNPREPARED_SQL = (
     "SELECT c.id AS card_id, c.source_kind, c.source_id, "
     "       COALESCE(e.topic, g.topic) AS topic, "
-    "       COALESCE(e.student_text, g.rule) AS student_text, "
+    "       COALESCE(e.student_text, '') AS student_text, "
     "       COALESCE(e.correct_text, g.rule) AS correct_text, "
     "       COALESCE(e.explanation, g.explanation) AS explanation "
     "FROM cards c "
@@ -514,7 +527,11 @@ def cards_unprepared(conn: sqlite3.Connection, limit: int = 500) -> list[dict]:
     """Karty czekające na treść, wraz z polami źródła potrzebnymi do jej ułożenia.
 
     Warunek `COALESCE(e.id, g.id) IS NOT NULL` pomija karty osierocone — źródło mogło
-    zniknąć — żeby nie wysyłać modelowi pozycji bez treści do pracy."""
+    zniknąć — żeby nie wysyłać modelowi pozycji bez treści do pracy.
+
+    `student_text` grupy jest PUSTY, nie równy regule. Grupa nie ma formy błędnej: jej
+    materiałem jest reguła i wyjaśnienie. Gdyby reguła wyciekła tu jako `student_text`,
+    prompt zakazałby modelowi użycia jedynej sensownej treści, jaką grupa niesie."""
     rows = conn.execute(f"{_UNPREPARED_SQL} ORDER BY c.id LIMIT ?", (limit,)).fetchall()
     return [dict(r) for r in rows]
 
@@ -637,6 +654,24 @@ def test_generate_cards_explains_the_gap_marker(monkeypatch):
     assert flashcards.GAP_MARK in seen["p"]
 
 
+def test_group_material_carries_no_forbidden_form(monkeypatch):
+    """Grupa nie ma formy błędnej, więc w jej wierszu nie ma czego zakazywać."""
+    seen = {}
+
+    def fake_call(prompt, kind="other"):
+        seen["prompt"] = prompt
+        return {"cards": []}
+
+    monkeypatch.setattr(llm_client, "_call_json", fake_call)
+    llm_client.generate_cards([{"ref": "group:4", "topic": "articles",
+                                "topic_label": "Przedimki", "student_text": "",
+                                "correct_text": "Przedimek przed rzeczownikiem",
+                                "explanation": "policzalne wymagają przedimka",
+                                "suggested_shape": "gap"}])
+    assert "NIE POKAZUJ" not in seen["prompt"]
+    assert "Przedimek przed rzeczownikiem" in seen["prompt"]
+
+
 def test_generate_cards_with_no_items_skips_the_model(monkeypatch):
     def explode(prompt, kind="other"):
         raise AssertionError("pusta partia nie może wołać modelu")
@@ -661,11 +696,16 @@ i funkcję `improve_card`) i wstaw w jej miejsce:
 # --- Generowanie treści fiszek ------------------------------------------------
 
 def _card_line(item: dict) -> str:
-    return (f"- ref={item['ref']} | temat={item.get('topic_label', item.get('topic', ''))} "
+    """Jeden wiersz materiału. Zakaz dopisujemy TYLKO wtedy, gdy jest co zakazywać:
+    grupa nie ma formy błędnej, a pusty zakaz podpowiadałby modelowi, że czegoś mu
+    brakuje."""
+    wrong = str(item.get("student_text") or "").strip()
+    line = (f"- ref={item['ref']} | temat={item.get('topic_label', item.get('topic', ''))} "
             f"| sugerowany kształt: {item['suggested_shape']} "
-            f"| poprawnie: {item.get('correct_text', '')} "
-            f"| NIE POKAZUJ: {item.get('student_text', '')} "
-            f"| uwaga: {str(item.get('explanation') or '')[:180]}")
+            f"| poprawnie: {item.get('correct_text', '')}")
+    if wrong:
+        line += f" | NIE POKAZUJ: {wrong}"
+    return line + f" | uwaga: {str(item.get('explanation') or '')[:180]}"
 
 
 def generate_cards(items: list[dict], lang: str = "pl") -> dict:
@@ -936,7 +976,8 @@ def regenerate_card(card_id: int, lang: str = Query(default="pl")) -> dict:
     row = {
         "card_id": card_id, "source_kind": card["source_kind"],
         "source_id": card["source_id"], "topic": source["topic"],
-        "student_text": source.get("student_text") or source.get("rule", ""),
+        # Grupa nie ma formy błędnej — puste pole, nie reguła. Patrz `_card_line`.
+        "student_text": source.get("student_text") or "",
         "correct_text": source.get("correct_text") or source.get("rule", ""),
         "explanation": source.get("explanation", ""),
     }
