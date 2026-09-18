@@ -1893,10 +1893,14 @@ $("#cards-prepare").addEventListener("click", () =>
   withBusy("loader.loading", $("#cards-prepare"), async () => {
     try {
       const out = await api(`/api/cards/prepare?lang=${LANG}`, { method: "POST" });
+      // NAJPIERW odśwież licznik (uaktualnia `cardsTotalSources`/`cardsUnprepared`, które
+      // `showCard()` czyta przy pustym ekranie), a PODSUMOWANIE wpisz PO NIM — inaczej
+      // `renderCardsCounter()` wywołane przez `loadCardsProgress()` natychmiast nadpisze
+      // ten komunikat zwykłym licznikiem i uczeń nie zobaczy wyniku kosztownej operacji.
+      await loadCardsProgress();
       $("#cards-counter").textContent = t("cards.prepared")
         .replace("{n}", out.prepared).replace("{u}", out.unprepared)
         .replace("{r}", out.remaining);
-      await loadCardsProgress();
     } catch (e) {
       showError("#cards-error", e.message);
     }

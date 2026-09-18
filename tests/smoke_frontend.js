@@ -733,6 +733,13 @@ const setInput = (id, value) => {
       if (!calls.slice(before).some((c) => c.startsWith("POST /api/cards/prepare"))) {
         failures.push("przygotowanie kart nie wysłało żądania do API");
       }
+      // Podsumowanie („Przygotowano: 2, nieudanych: 0, zostało: 0" z fikstury) musi
+      // ZOSTAĆ widoczne po zakończeniu — inaczej uczeń nie wie, czy kosztowna operacja
+      // (dziesiątki sekund, prawdziwe pieniądze) coś dała, i klika ponownie w niepewności.
+      if (!nodeText("#cards-counter").includes("Przygotowano: 2")) {
+        failures.push("podsumowanie przygotowania kart zniknęło z licznika: " +
+          nodeText("#cards-counter"));
+      }
     }],
     ["Fiszki: sesja → odkrycie → ocena karty", async () => {
       await fire(".tab:cards"); await settle();
