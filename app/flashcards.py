@@ -53,10 +53,113 @@ def is_leech(unknown_count: int) -> bool:
     return unknown_count >= LEECH_THRESHOLD
 
 
+# Znacznik luki w karcie typu `gap`. Ten sam ciąg trafia do promptu i do walidacji,
+# więc nie może być dwoma literałami.
+GAP_MARK = "______"
+
+SHAPE_TRANSLATE = "translate"
+SHAPE_GAP = "gap"
+
+# Kształt karty zależy od materiału. Dla leksyki naturalne jest „powiedz to po angielsku";
+# dla gramatyki nie ma znaczenia słownikowego do podania, więc zostaje zdanie z luką.
+_GAP_TOPICS = frozenset({
+    "tenses", "articles", "gerund_infinitive", "quantifiers", "conditionals",
+    "relative_clauses", "modals", "passive_voice", "comparatives",
+    "adverb_adjective", "word_order", "linkers", "reported_speech",
+})
+
+
+def default_shape(topic: str) -> str:
+    """Sugerowany kształt karty dla tematu.
+
+    Temat spoza mapy dostaje kartę tłumaczeniową: nie wymaga poprawnie postawionej luki,
+    więc jest bezpieczniejszym domyślnym wyborem niż `gap`."""
+    return SHAPE_GAP if topic in _GAP_TOPICS else SHAPE_TRANSLATE
+
+
+def make_ref(source_kind: str, source_id: int) -> str:
+    """Jednoznaczny identyfikator pozycji w partii. Samo `source_id` nie wystarcza,
+    bo wpis w dzienniku i grupa mogą mieć ten sam numer."""
+    return f"{source_kind}:{source_id}"
+
+
+def parse_ref(ref: str) -> tuple[str, int] | None:
+    parts = str(ref or "").split(":")
+    if len(parts) != 2 or parts[0] not in ("error", "group"):
+        return None
+    try:
+        return parts[0], int(parts[1])
+    except ValueError:
+        return None
+
+
+@dataclass(frozen=True)
+class PreparedCard:
+    """Gotowa treść karty, zwalidowana i gotowa do zapisania."""
+    ref: str
+    source_kind: str
+    source_id: int
+    shape: str
+    front: str
+    back: str
+    shape_reason: str
+
+
+@dataclass(frozen=True)
+class CardPlan:
+    """Wynik jednej partii: co da się zapisać i co zostaje nieprzygotowane."""
+    prepared: tuple[PreparedCard, ...]
+    unprepared: tuple[str, ...]
+
+
+def plan_cards(model_output: dict | None, sent: list[dict]) -> CardPlan:
+    """Waliduje odpowiedź modelu na partię kart.
+
+    Pozycja niespójna wypada W CAŁOŚCI, a nie jest łatana. Gdyby serwer podmieniał
+    zły kształt na sugerowany, podałby treść ułożoną dla jednego kształtu pod etykietą
+    drugiego — karta z polskim zdaniem opisana jako luka. Lepiej zostawić ją
+    nieprzygotowaną: wróci przy kolejnym kliknięciu.
+    """
+    suggested = {str(item["ref"]): str(item["suggested_shape"]) for item in sent}
+    order = [str(item["ref"]) for item in sent]
+    accepted: dict[str, PreparedCard] = {}
+
+    for row in (model_output or {}).get("cards") or []:
+        if not isinstance(row, dict):
+            continue
+        ref = str(row.get("ref") or "")
+        if ref not in suggested or ref in accepted:
+            continue
+        parsed = parse_ref(ref)
+        if parsed is None:
+            continue
+        shape = str(row.get("shape") or "")
+        if shape not in (SHAPE_TRANSLATE, SHAPE_GAP):
+            continue
+        reason = str(row.get("shape_reason") or "").strip()
+        if shape != suggested[ref] and not reason:
+            continue  # odstępstwo bez powodu
+        front = str(row.get("front") or "").strip()
+        back = str(row.get("back") or "").strip()
+        if not front or not back:
+            continue
+        if shape == SHAPE_GAP and GAP_MARK not in front:
+            continue
+        kind, source_id = parsed
+        accepted[ref] = PreparedCard(ref=ref, source_kind=kind, source_id=source_id,
+                                     shape=shape, front=front, back=back,
+                                     shape_reason=reason if shape != suggested[ref] else "")
+
+    return CardPlan(
+        prepared=tuple(accepted[r] for r in order if r in accepted),
+        unprepared=tuple(r for r in order if r not in accepted),
+    )
+
+
 @dataclass(frozen=True)
 class QueueItem:
-    """Pozycja kolejki. `card_id is None` oznacza kartę, która jeszcze nie istnieje
-    w bazie — wiersz powstanie dopiero przy jej pierwszym pokazaniu."""
+    """Pozycja kolejki. Karta powstaje przy przygotowaniu treści, więc każda pozycja —
+    zaległa i nowa — niesie własne `card_id`."""
     source_kind: str
     source_id: int
     card_id: int | None
@@ -75,6 +178,10 @@ def build_queue(due: list[dict], new_sources: list[dict], new_limit: int) -> tup
         for d in due
     ]
     for src in new_sources[:max(0, new_limit)]:
+        # Po przeprojektowaniu treści nowa karta JUŻ istnieje w bazie (powstaje przy
+        # przygotowaniu, nie przy pierwszej ocenie), więc niesie własne id. Bez niego
+        # nie dałoby się jej ocenić — ścieżka „oceń źródło bez karty" znika.
         items.append(QueueItem(source_kind=str(src["source_kind"]),
-                               source_id=int(src["source_id"]), card_id=None))
+                               source_id=int(src["source_id"]),
+                               card_id=int(src["card_id"])))
     return tuple(items)
