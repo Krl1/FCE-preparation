@@ -479,11 +479,11 @@ W `app/db.py`, w definicji `CREATE TABLE IF NOT EXISTS cards`, dopisz przed zamy
     prepared_at    TEXT,
 ```
 
-i po definicji tabeli:
-
-```sql
-CREATE INDEX IF NOT EXISTS idx_cards_prepared ON cards(prepared_at);
-```
+**Indeksu NIE dodawaj do `_SCHEMA`.** `_SCHEMA` leci przez `executescript` przy każdym
+połączeniu i PRZED `_migrate`. Dla bazy, która ma już tabelę `cards`, `CREATE TABLE IF NOT
+EXISTS` jest no-opem, więc kolumny `prepared_at` jeszcze nie ma, gdy wykonywałby się indeks —
+i aplikacja wywala się przy starcie na `no such column: prepared_at`. Zweryfikowane na
+prawdziwej bazie. Wzorcem jest `idx_errors_group`, który siedzi wyłącznie w `_migrate`.
 
 W `_migrate`, przed `conn.commit()`:
 
