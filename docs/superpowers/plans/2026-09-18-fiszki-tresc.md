@@ -749,9 +749,14 @@ def generate_cards(items: list[dict], lang: str = "pl") -> dict:
         "Użyj sugerowanego kształtu. Jeśli materiał wyraźnie do niego nie pasuje, możesz "
         "wybrać drugi, ale MUSISZ wtedy wypełnić 'shape_reason' jednym zdaniem; "
         "odstępstwo bez uzasadnienia zostanie odrzucone.\n\n"
-        "NIE WOLNO umieszczać formy z pola 'NIE POKAZUJ' ani na przodzie, ani na tyle "
-        "karty — ani w cudzysłowie, ani jako przykład błędu. Uczeń ma nie widzieć swojej "
-        "pomyłki; ma wyprodukować formę poprawną.\n\n"
+        # Zakaz dopisujemy tylko wtedy, gdy w materiale jest co zakazywać — ten sam
+        # warunek co w `_card_line`. Partia złożona wyłącznie z grup nie niesie żadnej
+        # formy błędnej, a wspominanie zakazu bez treści do zakazania myli model.
+        + ("\nNIE WOLNO umieszczać formy z pola 'NIE POKAZUJ' ani na przodzie, ani na "
+           "tyle karty — ani w cudzysłowie, ani jako przykład błędu. Uczeń ma nie widzieć "
+           "swojej pomyłki; ma wyprodukować formę poprawną.\n\n"
+           if "NIE POKAZUJ" in listing else "")
+        +
         f"'ref' przepisz dokładnie z listy. Zwróć WYŁĄCZNIE JSON w kształcie: {shape}"
     )
     return _call_json(prompt, kind="cards")
