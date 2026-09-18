@@ -145,11 +145,15 @@ const I18N = {
     "cards.allTopics": "Wszystkie tematy",
     "cards.newLimit": "Nowe dziennie",
     "cards.start": "Zacznij sesję",
+    "cards.prepare": "Przygotuj karty",
+    "cards.regenerate": "Przegeneruj",
     "cards.reveal": "Pokaż odpowiedź",
     "cards.known": "Umiem",
     "cards.unknown": "Nie umiem",
-    "cards.improve": "Ulepsz tę kartę",
     "cards.counter": "Dziś: {done} kart · do powtórki: {due} · zaległych: {overdue}",
+    "cards.unprepared": "Nieprzygotowanych: {n}",
+    "cards.prepared": "Przygotowano: {n}, nieudanych: {u}, zostało: {r}",
+    "cards.needPrepare": "Żadna karta nie ma jeszcze treści — kliknij „Przygotuj karty”.",
     "cards.noneToday": "Na dziś nic. Wróć jutro — albo dołóż nowych kart, podnosząc limit.",
     "cards.noSources": "Nie ma z czego robić fiszek — dziennik błędów jest pusty.",
     "cards.done": "Gotowe. Przerobione karty: {n}.",
@@ -298,11 +302,15 @@ const I18N = {
     "cards.allTopics": "All topics",
     "cards.newLimit": "New per day",
     "cards.start": "Start session",
+    "cards.prepare": "Prepare cards",
+    "cards.regenerate": "Regenerate",
     "cards.reveal": "Show answer",
     "cards.known": "I know it",
     "cards.unknown": "I don't",
-    "cards.improve": "Improve this card",
     "cards.counter": "Today: {done} cards · due: {due} · overdue: {overdue}",
+    "cards.unprepared": "Unprepared: {n}",
+    "cards.prepared": "Prepared: {n}, failed: {u}, left: {r}",
+    "cards.needPrepare": "No card has content yet — click \"Prepare cards\".",
     "cards.noneToday": "Nothing due today. Come back tomorrow — or raise the limit for more new cards.",
     "cards.noSources": "Nothing to make flashcards from — your mistake log is empty.",
     "cards.done": "Done. Cards reviewed: {n}.",
@@ -1696,6 +1704,9 @@ let cardsQueue = [];
 let cardsIndex = 0;
 let cardsDone = 0;
 let cardsTotalSources = 0;
+// Ile kart wciąż czeka na treść — `showCard()` tego potrzebuje, by odróżnić „nic na dziś"
+// od „nic nie ma treści, trzeba kliknąć „Przygotuj karty"".
+let cardsUnprepared = 0;
 // Ocena leci bez przycisku (spacja i `n`), a `withBusy(…, null, …)` nie ma czego zablokować.
 // Bez tej flagi dwa szybkie naciśnięcia oceniają tę samą kartę dwa razy i przeskakują
 // następną — czyli gubią ją z dzisiejszej kolejki.
@@ -1719,12 +1730,19 @@ function fillCardsTopics() {
 }
 
 function renderCardsCounter(progress) {
-  $("#cards-counter").textContent = t("cards.counter")
+  // Dopisujemy liczbę nieprzygotowanych obok zwykłego licznika — inaczej łatwo przeoczyć,
+  // że część kart w bazie wciąż czeka na treść i sesja ich nie pokaże.
+  let text = t("cards.counter")
     .replace("{done}", progress.done_today)
     .replace("{due}", progress.due_now)
     .replace("{overdue}", progress.overdue);
+  if (progress.unprepared) {
+    text += " · " + t("cards.unprepared").replace("{n}", progress.unprepared);
+  }
+  $("#cards-counter").textContent = text;
   $("#cards-new-limit").value = progress.new_limit;
   cardsTotalSources = progress.total_sources;
+  cardsUnprepared = progress.unprepared;
 }
 
 /** Licznik nad sesją ma być prawdziwy od razu po wejściu w zakładkę, a nie dopiero
@@ -1775,6 +1793,9 @@ function showCard() {
     $("#cards-empty-text").textContent =
       cardsDone ? t("cards.done").replace("{n}", cardsDone)
       : cardsTotalSources === 0 ? t("cards.noSources")
+      // Źródła są, ale żadne nie ma jeszcze treści — bez tego uczeń widziałby to samo,
+      // co przy „nic na dziś", i nie wiedziałby, że trzeba kliknąć „Przygotuj karty".
+      : cardsTotalSources > 0 && cardsUnprepared >= cardsTotalSources ? t("cards.needPrepare")
       : t("cards.noneToday");
     return;
   }
@@ -1786,7 +1807,7 @@ function showCard() {
   $("#cards-back").classList.add("hidden");
   $("#cards-leech").classList.add("hidden");
   $("#cards-reveal").classList.remove("hidden");
-  ["#cards-known", "#cards-unknown", "#cards-improve"].forEach(
+  ["#cards-known", "#cards-unknown", "#cards-regenerate"].forEach(
     (s) => $(s).classList.add("hidden"));
 }
 
@@ -1796,11 +1817,11 @@ function revealCard() {
   $("#cards-back").classList.remove("hidden");
   $("#cards-reveal").classList.add("hidden");
   ["#cards-known", "#cards-unknown"].forEach((s) => $(s).classList.remove("hidden"));
-  // Ulepszyć da się tylko kartę, która już istnieje w bazie, nie jest grupą (grupa nie ma
-  // pary błędnie → poprawnie, więc serwer takie żądanie odrzuca) i nie została jeszcze
-  // ulepszona — drugie kliknięcie byłoby drugą opłatą za to samo.
-  if (card.card_id && card.source_kind !== "group" && !card.improved) {
-    $("#cards-improve").classList.remove("hidden");
+  // Warunek się upraszcza względem starego „ulepszania": pole `improved` znika z odpowiedzi,
+  // a przegenerować wolno też kartę grupy — to nie poprawka JEDNEJ pary błąd→poprawka, tylko
+  // ponowne ułożenie treści od zera, więc powtarzać można dowolną liczbę razy.
+  if (card.card_id) {
+    $("#cards-regenerate").classList.remove("hidden");
   }
   // Czyścimy zawsze, nie tylko w gałęzi `card.leech` — inaczej po karcie-pijawce
   // poprzednia notka (i jej listener) zostają w DOM pod `.hidden`.
@@ -1826,18 +1847,13 @@ function gradeCard(grade) {
   cardsGrading = true;
   return withBusy("loader.saving", null, async () => {
     try {
-      const out = card.card_id
-        ? await api(`/api/cards/${card.card_id}/grade`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ grade }),
-          })
-        : await api("/api/cards/grade-new", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ source_kind: card.source_kind,
-                                   source_id: card.source_id, grade }),
-          });
+      // Każda karta w kolejce ma teraz `card_id` — endpoint dla kart „bez wiersza w bazie"
+      // (`grade-new`) zniknął z backendu razem z tamtym stanem przejściowym.
+      const out = await api(`/api/cards/${card.card_id}/grade`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ grade }),
+      });
       cardsDone += 1;
       renderCardsCounter(out.progress);
       cardsIndex += 1;
@@ -1857,21 +1873,31 @@ $("#cards-reveal").addEventListener("click", revealCard);
 $("#cards-known").addEventListener("click", () => gradeCard("known"));
 $("#cards-unknown").addEventListener("click", () => gradeCard("unknown"));
 
-$("#cards-improve").addEventListener("click", () =>
-  withBusy("loader.loading", $("#cards-improve"), async () => {
+$("#cards-regenerate").addEventListener("click", () =>
+  withBusy("loader.loading", $("#cards-regenerate"), async () => {
     const card = cardsQueue[cardsIndex];
     if (!card || !card.card_id) return;
     try {
-      const out = await api(`/api/cards/${card.card_id}/improve?lang=${LANG}`,
+      const out = await api(`/api/cards/${card.card_id}/regenerate?lang=${LANG}`,
                             { method: "POST" });
       card.front = out.front;
       card.back = out.back;
-      card.improved = true;
-      $("#cards-improve").classList.add("hidden");
       $("#cards-front").textContent = out.front;
       $("#cards-back").textContent = out.back;
     } catch (e) {
-      // Jak wyżej: `#cards-area` jest statyczne, banner musi trafić do `#cards-error`.
+      showError("#cards-error", e.message);
+    }
+  }));
+
+$("#cards-prepare").addEventListener("click", () =>
+  withBusy("loader.loading", $("#cards-prepare"), async () => {
+    try {
+      const out = await api(`/api/cards/prepare?lang=${LANG}`, { method: "POST" });
+      $("#cards-counter").textContent = t("cards.prepared")
+        .replace("{n}", out.prepared).replace("{u}", out.unprepared)
+        .replace("{r}", out.remaining);
+      await loadCardsProgress();
+    } catch (e) {
       showError("#cards-error", e.message);
     }
   }));

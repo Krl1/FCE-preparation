@@ -285,9 +285,9 @@ const routes = {
   // ukrywałaby błędy w gałęzi pijawki (`revealCard` czyta `card.source` dopiero po kliknięciu
   // „Ćwicz ten błąd/tę grupę”).
   "/api/cards/session": { cards: [
-    { card_id: null, source_kind: "error", source_id: 1, topic: "prepositions",
+    { card_id: 1, source_kind: "error", source_id: 1, topic: "prepositions",
       topic_label: "Przyimki", front: "depends from", back: "depends on\n\nkalka",
-      leech: false, improved: false,
+      shape: "translate", leech: false,
       source: { id: 1, created_at: "2026-09-17T10:00:00+02:00", source: "external",
                 exercise_type: "external", topic: "prepositions", topic_label: "Przyimki",
                 student_text: "depends from", correct_text: "depends on",
@@ -295,14 +295,20 @@ const routes = {
     // Karta-pijawka: reguła wraca uparcie, więc backend proponuje skok do grupy.
     { card_id: 9, source_kind: "group", source_id: 1, topic: "prepositions",
       topic_label: "Przyimki", front: "depend ___ on", back: "depend on",
-      leech: true, improved: false,
+      shape: "cloze", leech: true,
       source: { id: 1, rule: "depend + on", explanation: "kalka z polskiego",
                 topic: "prepositions", topic_label: "Przyimki", member_count: 2 } },
   ],
-    progress: { done_today: 0, overdue: 0, due_now: 2, new_limit: 20, total_sources: 2 } },
-  "/api/cards/grade-new": { card_id: 1, interval_days: 1, due_on: "2026-09-18",
-    leech: false, progress: { done_today: 1, overdue: 0, due_now: 1, new_limit: 20, total_sources: 2 } },
-  "/api/cards/progress": { done_today: 0, overdue: 0, due_now: 1, new_limit: 20, total_sources: 2 },
+    progress: { done_today: 0, overdue: 0, due_now: 2, new_limit: 20, total_sources: 2,
+               unprepared: 0 } },
+  "/api/cards/prepare": { prepared: 2, unprepared: 0, remaining: 0 },
+  // Każda karta w kolejce ma teraz `card_id` — trasa `/1/grade` odpowiada karcie ID 1
+  // z fikstury sesji powyżej.
+  "/api/cards/1/grade": { card_id: 1, interval_days: 1, due_on: "2026-09-18",
+    leech: false, progress: { done_today: 1, overdue: 0, due_now: 1, new_limit: 20,
+                              total_sources: 2, unprepared: 0 } },
+  "/api/cards/progress": { done_today: 0, overdue: 0, due_now: 1, new_limit: 20,
+                           total_sources: 2, unprepared: 0 },
 };
 
 const calls = [];
@@ -720,13 +726,21 @@ const setInput = (id, value) => {
       await fire(".lang:pl"); await settle();
       await fire("#tips-mode-errors"); await settle();
     }],
-    ["Fiszki: sesja → odkrycie → ocena nieistniejącej karty", async () => {
+    ["Fiszki: przygotowanie treści kart", async () => {
+      await fire(".tab:cards"); await settle();
+      const before = calls.length;
+      await fire("#cards-prepare"); await settle();
+      if (!calls.slice(before).some((c) => c.startsWith("POST /api/cards/prepare"))) {
+        failures.push("przygotowanie kart nie wysłało żądania do API");
+      }
+    }],
+    ["Fiszki: sesja → odkrycie → ocena karty", async () => {
       await fire(".tab:cards"); await settle();
       await fire("#cards-start"); await settle();
       await fire("#cards-reveal"); await settle();
       if (hasClass("#cards-back", "hidden")) failures.push("rewers fiszki nie odkrył się");
       await fire("#cards-known"); await settle();
-      if (!calls.some((c) => c.includes("/api/cards/grade-new"))) {
+      if (!calls.some((c) => c.includes("/api/cards/1/grade"))) {
         failures.push("ocena fiszki nie poleciała na serwer");
       }
     }],
@@ -758,13 +772,22 @@ const setInput = (id, value) => {
     ["Fiszki: skróty klawiszowe (spacja/n) i blokada w polu tekstowym", async () => {
       routes["/api/cards/session"] = {
         cards: [
-          { card_id: null, source_kind: "error", source_id: 2, topic: "prepositions",
-            topic_label: "Przyimki", front: "front1", back: "back1", leech: false },
-          { card_id: null, source_kind: "error", source_id: 3, topic: "prepositions",
-            topic_label: "Przyimki", front: "front2", back: "back2", leech: false },
+          { card_id: 2, source_kind: "error", source_id: 2, topic: "prepositions",
+            topic_label: "Przyimki", front: "front1", back: "back1", shape: "translate",
+            leech: false },
+          { card_id: 3, source_kind: "error", source_id: 3, topic: "prepositions",
+            topic_label: "Przyimki", front: "front2", back: "back2", shape: "translate",
+            leech: false },
         ],
-        progress: { done_today: 0, overdue: 0, due_now: 2, new_limit: 20, total_sources: 2 },
+        progress: { done_today: 0, overdue: 0, due_now: 2, new_limit: 20, total_sources: 2,
+                   unprepared: 0 },
       };
+      routes["/api/cards/2/grade"] = { card_id: 2, interval_days: 1, due_on: "2026-09-18",
+        leech: false, progress: { done_today: 1, overdue: 0, due_now: 1, new_limit: 20,
+                                  total_sources: 2, unprepared: 0 } };
+      routes["/api/cards/3/grade"] = { card_id: 3, interval_days: 1, due_on: "2026-09-18",
+        leech: false, progress: { done_today: 2, overdue: 0, due_now: 0, new_limit: 20,
+                                  total_sources: 2, unprepared: 0 } };
       await fire(".tab:cards"); await settle();
       await fire("#cards-start"); await settle();
 
@@ -783,7 +806,7 @@ const setInput = (id, value) => {
       await fireKey(" ");
       if (hasClass("#cards-back", "hidden")) failures.push("spacja nie odkryła fiszki");
       await fireKey(" "); await settle();
-      if (!calls.some((c) => c.includes("/api/cards/grade-new"))) {
+      if (!calls.some((c) => c.includes("/api/cards/2/grade"))) {
         failures.push("spacja po odkryciu nie zaliczyła fiszki");
       }
 
@@ -791,39 +814,44 @@ const setInput = (id, value) => {
       await fireKey(" ");
       if (hasClass("#cards-back", "hidden")) failures.push("spacja nie odkryła drugiej fiszki");
       await fireKey("n"); await settle();
-      const lastGrade = calls.filter((c) => c.includes("/api/cards/grade-new")).pop();
+      const lastGrade = calls.filter((c) => c.includes("/api/cards/3/grade")).pop();
       if (!lastGrade || !lastGrade.includes('"grade":"unknown"')) {
         failures.push('klawisz „n" nie zaliczył fiszki jako „nie umiem": ' + lastGrade);
       }
       routes["/api/cards/session"] = {
         cards: [
-          { card_id: null, source_kind: "error", source_id: 1, topic: "prepositions",
+          { card_id: 1, source_kind: "error", source_id: 1, topic: "prepositions",
             topic_label: "Przyimki", front: "depends from", back: "depends on\n\nkalka",
-            leech: false }],
-        progress: { done_today: 0, overdue: 0, due_now: 1, new_limit: 20, total_sources: 1 },
+            shape: "translate", leech: false }],
+        progress: { done_today: 0, overdue: 0, due_now: 1, new_limit: 20, total_sources: 1,
+                   unprepared: 0 },
       };
     }],
     ["Fiszki: dwa szybkie naciśnięcia spacji oceniają kartę raz", async () => {
       routes["/api/cards/session"] = {
         cards: [
-          { card_id: null, source_kind: "error", source_id: 4, topic: "prepositions",
+          { card_id: 4, source_kind: "error", source_id: 4, topic: "prepositions",
             topic_label: "Przyimki", front: "front1", back: "back1",
-            leech: false, improved: false },
-          { card_id: null, source_kind: "error", source_id: 5, topic: "prepositions",
+            shape: "translate", leech: false },
+          { card_id: 5, source_kind: "error", source_id: 5, topic: "prepositions",
             topic_label: "Przyimki", front: "front2", back: "back2",
-            leech: false, improved: false },
+            shape: "translate", leech: false },
         ],
-        progress: { done_today: 0, overdue: 0, due_now: 2, new_limit: 20, total_sources: 2 },
+        progress: { done_today: 0, overdue: 0, due_now: 2, new_limit: 20, total_sources: 2,
+                   unprepared: 0 },
       };
+      routes["/api/cards/4/grade"] = { card_id: 4, interval_days: 1, due_on: "2026-09-18",
+        leech: false, progress: { done_today: 1, overdue: 0, due_now: 1, new_limit: 20,
+                                  total_sources: 2, unprepared: 0 } };
       await fire(".tab:cards"); await settle();
       await fire("#cards-start"); await settle();
 
       await fireKey(" ");                 // odkrycie rewersu
-      const before = calls.filter((c) => c.includes("/api/cards/grade-new")).length;
+      const before = calls.filter((c) => c.includes("/api/cards/4/grade")).length;
       fireKeyTwice(" ");                  // dwie oceny, zanim pierwsza zdąży wrócić
       await settle();
 
-      const graded = calls.filter((c) => c.includes("/api/cards/grade-new")).length - before;
+      const graded = calls.filter((c) => c.includes("/api/cards/4/grade")).length - before;
       if (graded !== 1) {
         failures.push("podwójna spacja wysłała ocen: " + graded + " (powinna jedną)");
       }
@@ -836,10 +864,11 @@ const setInput = (id, value) => {
 
       routes["/api/cards/session"] = {
         cards: [
-          { card_id: null, source_kind: "error", source_id: 1, topic: "prepositions",
+          { card_id: 1, source_kind: "error", source_id: 1, topic: "prepositions",
             topic_label: "Przyimki", front: "depends from", back: "depends on\n\nkalka",
-            leech: false, improved: false }],
-        progress: { done_today: 0, overdue: 0, due_now: 1, new_limit: 20, total_sources: 1 },
+            shape: "translate", leech: false }],
+        progress: { done_today: 0, overdue: 0, due_now: 1, new_limit: 20, total_sources: 1,
+                   unprepared: 0 },
       };
     }],
     ["Statystyki", async () => fire(".tab:stats")],
