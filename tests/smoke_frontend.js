@@ -305,7 +305,7 @@ const routes = {
     // Karta-pijawka: reguła wraca uparcie, więc backend proponuje skok do grupy.
     { card_id: 9, source_kind: "group", source_id: 1, topic: "prepositions",
       topic_label: "Przyimki", front: "You can ______ on him.", back: "depend",
-      shape: "gap", leech: true,
+      shape: "gap", hint: "możesz na nim polegać", leech: true,
       source: { id: 1, rule: "depend + on", explanation: "kalka z polskiego",
                 topic: "prepositions", topic_label: "Przyimki", member_count: 2 } },
   ],
@@ -315,6 +315,11 @@ const routes = {
   // Każda karta w kolejce ma teraz `card_id` — trasa `/1/grade` odpowiada karcie ID 1
   // z fikstury sesji powyżej.
   "/api/cards/1/grade": { card_id: 1, interval_days: 1, due_on: "2026-09-18",
+    leech: false, progress: { done_today: 1, overdue: 0, due_now: 1, new_limit: 20,
+                              total_sources: 2, unprepared: 0 } },
+  // Karta 7 to karta z LUKĄ ze scenariusza podpowiedzi — ocenienie jej przewija sesję
+  // na kartę tłumaczeniową, co pozwala sprawdzić, czy podpowiedź została wyczyszczona.
+  "/api/cards/7/grade": { card_id: 7, interval_days: 1, due_on: "2026-09-19",
     leech: false, progress: { done_today: 1, overdue: 0, due_now: 1, new_limit: 20,
                               total_sources: 2, unprepared: 0 } },
   "/api/cards/progress": { done_today: 0, overdue: 0, due_now: 1, new_limit: 20,
@@ -886,6 +891,40 @@ const setInput = (id, value) => {
         progress: { done_today: 0, overdue: 0, due_now: 1, new_limit: 20, total_sources: 1,
                    unprepared: 0 },
       };
+    }],
+    ["Fiszki: podpowiedź jest przy luce i znika przy karcie bez niej", async () => {
+      routes["/api/cards/session"] = {
+        cards: [
+          { card_id: 7, source_kind: "error", source_id: 7, topic: "tenses",
+            topic_label: "Czasy", front: "I ______ you tomorrow.", back: "will call",
+            shape: "gap", hint: "zadzwonię do ciebie", leech: false },
+          { card_id: 8, source_kind: "error", source_id: 8, topic: "prepositions",
+            topic_label: "Przyimki", front: "W domu jest cicho.", back: "at home",
+            shape: "translate", hint: "", leech: false },
+        ],
+        progress: { done_today: 0, overdue: 0, due_now: 2, new_limit: 20,
+                   total_sources: 2, unprepared: 0 },
+      };
+      await fire(".tab:cards"); await settle();
+      await fire("#cards-start"); await settle();
+      // Bez podpowiedzi „I ______ you tomorrow" pasuje do call, text, see i meet —
+      // to zgadywanka, nie sprawdzanie gramatyki.
+      if (nodeText("#cards-hint") !== "zadzwonię do ciebie") {
+        failures.push("brak podpowiedzi przy karcie z luką: " + nodeText("#cards-hint"));
+      }
+      if (nodes.get("#cards-hint").__classes.has("hidden")) {
+        failures.push("podpowiedź przy karcie z luką została ukryta");
+      }
+      await fire("#cards-reveal"); await settle();
+      await fire("#cards-known"); await settle();
+      // Karta tłumaczeniowa podpowiedzi nie ma. Gdyby została po poprzedniej karcie,
+      // uczeń czytałby wskazówkę do zdania, którego już nie widzi.
+      if (nodeText("#cards-hint") !== "") {
+        failures.push("podpowiedź została po poprzedniej karcie: " + nodeText("#cards-hint"));
+      }
+      if (!nodes.get("#cards-hint").__classes.has("hidden")) {
+        failures.push("pusta podpowiedź nie została ukryta");
+      }
     }],
     ["Fiszki: dwa szybkie naciśnięcia spacji oceniają kartę raz", async () => {
       routes["/api/cards/session"] = {

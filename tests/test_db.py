@@ -881,3 +881,78 @@ def test_cards_new_filters_by_topic(conn):
                             shape_reason="")
     got = [r["source_id"] for r in db.cards_new(conn, "2026-09-18", topic="articles")]
     assert got == [b]
+
+
+# --- Podpowiedź do karty z luką ----------------------------------------------
+
+def test_set_card_content_stores_the_hint(conn):
+    eid = _card_err(conn)
+    cid = db.create_card(conn, source_kind="error", source_id=eid,
+                         due_on="2026-09-18", interval_days=0)
+    db.set_card_content(conn, cid, front="I ______ you.", back="will call",
+                        shape="gap", shape_reason="", hint="zadzwonię do ciebie")
+    assert db.get_card(conn, cid)["hint"] == "zadzwonię do ciebie"
+
+
+def _legacy_prepared(path, rows):
+    """Baza z kartami PRZYGOTOWANYMI pod starym schematem — bez kolumny `hint`."""
+    legacy = sqlite3.connect(path)
+    legacy.executescript(
+        "CREATE TABLE cards ("
+        " id INTEGER PRIMARY KEY AUTOINCREMENT, created_at TEXT NOT NULL,"
+        " updated_at TEXT NOT NULL, source_kind TEXT NOT NULL, source_id INTEGER NOT NULL,"
+        " due_on TEXT NOT NULL, interval_days INTEGER NOT NULL,"
+        " front_override TEXT, back_override TEXT,"
+        " front TEXT, back TEXT, shape TEXT, shape_reason TEXT, prepared_at TEXT,"
+        " UNIQUE (source_kind, source_id));"
+    )
+    for sid, shape in rows:
+        legacy.execute(
+            "INSERT INTO cards (created_at, updated_at, source_kind, source_id, due_on,"
+            " interval_days, front, back, shape, prepared_at) VALUES"
+            " ('2026-01-01T10:00:00', '2026-01-01T10:00:00', 'error', ?, '2026-10-01',"
+            " 30, 'Przód ______', 'Tył', ?, '2026-09-18T10:00:00')", (sid, shape))
+    legacy.commit()
+    legacy.close()
+
+
+def test_migration_sends_hintless_gap_cards_back_for_preparation(tmp_path):
+    """137 kart z luką powstało, zanim podpowiedź istniała. Zamiast osobnego przycisku
+    migracja zdejmuje im `prepared_at`, przez co wracają do zwykłego obiegu: licznik
+    pokaże je jako nieprzygotowane, a „Przygotuj karty" ułoży je od nowa."""
+    path = tmp_path / "hintless.db"
+    _legacy_prepared(path, [(1, "gap"), (2, "translate")])
+
+    conn = db.get_connection(path)
+    try:
+        assert "hint" in {r["name"] for r in conn.execute("PRAGMA table_info(cards)")}
+        karty = {r["source_id"]: r for r in conn.execute("SELECT * FROM cards")}
+        assert karty[1]["prepared_at"] is None, "karta z luką ma wrócić do przygotowania"
+        # Karta tłumaczeniowa nie potrzebuje podpowiedzi — jej przód już jest po polsku,
+        # więc odsyłanie jej do ponownego ułożenia byłoby wydatkiem bez powodu.
+        assert karty[2]["prepared_at"] is not None, "karta tłumaczeniowa miała zostać"
+        # Harmonogram przeżywa: zmienia się to, co uczeń zobaczy, nie kiedy.
+        assert karty[1]["due_on"] == "2026-10-01"
+        assert karty[1]["interval_days"] == 30
+    finally:
+        conn.close()
+
+
+def test_migration_leaves_gap_cards_that_already_have_a_hint(tmp_path):
+    """Idempotencja: po przygotowaniu karty mają podpowiedzi, więc kolejne otwarcie
+    bazy nie może zdejmować im `prepared_at` w kółko."""
+    path = tmp_path / "hinted.db"
+    _legacy_prepared(path, [(1, "gap")])
+    conn = db.get_connection(path)
+    cid = conn.execute("SELECT id FROM cards WHERE source_id = 1").fetchone()["id"]
+    db.set_card_content(conn, cid, front="I ______ you.", back="will call",
+                        shape="gap", shape_reason="", hint="zadzwonię")
+    conn.close()
+
+    znowu = db.get_connection(path)
+    try:
+        karta = znowu.execute("SELECT * FROM cards WHERE source_id = 1").fetchone()
+        assert karta["prepared_at"] is not None
+        assert karta["hint"] == "zadzwonię"
+    finally:
+        znowu.close()

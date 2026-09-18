@@ -608,7 +608,10 @@ def _card_content(card: dict) -> dict:
     uczyło rozpoznawania własnej pomyłki zamiast produkcji formy poprawnej. Cena tej
     zmiany: poprawka wyjaśnienia w dzienniku nie dociera już sama do karty; od tego
     jest „Przegeneruj"."""
-    return {"front": card["front"], "back": card["back"], "shape": card["shape"]}
+    return {"front": card["front"], "back": card["back"], "shape": card["shape"],
+            # Podpowiedź jest pusta dla kart tłumaczeniowych — ich przód już jest po
+            # polsku. Frontend pokazuje wiersz tylko wtedy, gdy coś w niej jest.
+            "hint": card["hint"] or ""}
 
 
 def _load_source(source_kind: str, source_id: int) -> dict | None:
@@ -737,7 +740,7 @@ def _prepare_batch(rows: list[dict], lang: str) -> tuple[int, int]:
     for card in plan.prepared:
         db.set_card_content(conn, by_ref[card.ref]["card_id"], front=card.front,
                             back=card.back, shape=card.shape,
-                            shape_reason=card.shape_reason)
+                            shape_reason=card.shape_reason, hint=card.hint)
     return len(plan.prepared), len(plan.unprepared)
 
 

@@ -890,7 +890,7 @@ def generate_cards(items: list[dict], lang: str = "pl") -> dict:
         if "UWAGI UCZNIA" in listing else ""
     )
     shape = ('{"cards": [{"ref": str, "shape": "translate"|"gap", "front": str, '
-             '"back": str, "shape_reason": str}]}')
+             '"back": str, "shape_reason": str, "hint": str}]}')
     prompt = (
         f"{_EXAMINER_SYSTEM}\n\n"
         "Układasz fiszki dla ucznia przygotowującego się do FCE. Fiszka ma go UCZYĆ "
@@ -904,7 +904,13 @@ def generate_cards(items: list[dict], lang: str = "pl") -> dict:
         "- 'translate' — 'front' to naturalne zdanie po POLSKU, które uczeń ma "
         "powiedzieć po angielsku; 'back' to angielska wersja.\n"
         f"- 'gap' — 'front' to krótkie angielskie zdanie z luką zapisaną jako "
-        f"{flashcards.GAP_MARK}; 'back' to sama forma wpisywana w lukę.\n"
+        f"{flashcards.GAP_MARK}; 'back' to sama forma wpisywana w lukę. Do KAŻDEJ karty "
+        "'gap' dopisz 'hint': krótką podpowiedź po POLSKU mówiącą, CO ma stanąć w luce "
+        "(np. „zadzwonię do ciebie”, „że dawniej żyło się lepiej”). Przy słowie funkcyjnym "
+        "bez własnego znaczenia nazwij jego rolę (np. „przedimek przed nazwą kraju”). "
+        "Podpowiedź ma naprowadzać na sens — nie zdradzaj w niej angielskiej formy, bo "
+        "wtedy karta przestaje czegokolwiek uczyć. Karta 'translate' nie potrzebuje "
+        "podpowiedzi: jej przód już jest po polsku, więc zostaw tam 'hint' pusty.\n"
         f"W obu kształtach dopisz na końcu 'back' jedno krótkie zdanie po {lang_name} "
         "wyjaśniające, dlaczego tak.\n\n"
         "Użyj sugerowanego kształtu. Jeśli materiał wyraźnie do niego nie pasuje, możesz "

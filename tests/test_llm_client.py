@@ -578,3 +578,26 @@ def test_one_item_with_notes_does_not_annotate_the_others(monkeypatch):
     prompt = _prompt_for(monkeypatch, [plain, withnotes])
     linia_bez_uwag = [w for w in prompt.splitlines() if "bez uwag" in w][0]
     assert "skróć" not in linia_bez_uwag
+
+
+# --- Podpowiedź do karty z luką ----------------------------------------------
+
+def test_prompt_demands_a_polish_hint_for_gap_cards(monkeypatch):
+    """Bez podpowiedzi karta z luką każe zgadywać, jakie słowo miał na myśli model.
+    Prompt musi jej żądać wprost, bo serwer odrzuca karty `gap`, które jej nie mają —
+    milczący prompt oznaczałby odrzucanie całych partii."""
+    prompt = _prompt_for(monkeypatch, [_card_item(shape="gap")])
+    assert "hint" in prompt
+    assert "POLSKU" in prompt
+
+
+def test_prompt_says_the_hint_must_not_give_away_the_english_form(monkeypatch):
+    """Podpowiedź ma mówić, CO wyrazić — nie podawać gotowej odpowiedzi, bo wtedy
+    karta przestaje czegokolwiek uczyć."""
+    prompt = _prompt_for(monkeypatch, [_card_item(shape="gap")])
+    assert "nie zdradzaj" in prompt.lower()
+
+
+def test_hint_is_part_of_the_requested_json(monkeypatch):
+    prompt = _prompt_for(monkeypatch, [_card_item(shape="gap")])
+    assert '"hint"' in prompt

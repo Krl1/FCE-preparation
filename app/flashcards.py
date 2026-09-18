@@ -103,6 +103,9 @@ class PreparedCard:
     front: str
     back: str
     shape_reason: str
+    # Podpowiedź po polsku, mówiąca CO wpisać w lukę. Puste dla kart tłumaczeniowych —
+    # ich przód już jest po polsku, więc podpowiedź byłaby powtórzeniem.
+    hint: str
 
 
 @dataclass(frozen=True)
@@ -157,10 +160,18 @@ def plan_cards(model_output: dict | None, sent: list[dict]) -> CardPlan:
             continue
         if shape == SHAPE_GAP and GAP_MARK not in front:
             continue
+        # Karta z luką BEZ podpowiedzi nie sprawdza gramatyki, tylko każe zgadywać, jakie
+        # słowo miał na myśli model: „I ______ you tomorrow" pasuje do call, text, see
+        # i meet równie dobrze. Dlatego brak podpowiedzi odrzuca pozycję tak samo jak
+        # brak znacznika luki — inaczej wada wracałaby po cichu przy każdej partii.
+        hint = str(row.get("hint") or "").strip()
+        if shape == SHAPE_GAP and not hint:
+            continue
         kind, source_id = parsed
         accepted[ref] = PreparedCard(ref=ref, source_kind=kind, source_id=source_id,
                                      shape=shape, front=front, back=back,
-                                     shape_reason=reason if shape != suggested[ref] else "")
+                                     shape_reason=reason if shape != suggested[ref] else "",
+                                     hint=hint if shape == SHAPE_GAP else "")
 
     return CardPlan(
         prepared=tuple(accepted[r] for r in order if r in accepted),

@@ -145,7 +145,9 @@ Uwaga: pliki tekstowe idą przez model, więc ich import **kosztuje wywołania s
 - **Fiszki** — szybki przelot przez wiele reguł naraz. Karta nie pokazuje Twojej błędnej formy.
   Zależnie od materiału ma jeden z dwóch kształtów: przy słownictwie i kolokacjach na przodzie
   jest polskie zdanie, które masz powiedzieć po angielsku, a przy gramatyce — angielskie zdanie
-  z luką. Na odwrocie poprawna forma i jedno zdanie, dlaczego tak. Treść powstaje raz, po
+  z luką wraz z polską podpowiedzią, co w tę lukę wpisać. Bez podpowiedzi „I ______ you
+  tomorrow" pasowałoby równie dobrze do `call`, `text` i `see`, więc karta sprawdzałaby
+  zgadywanie, a nie gramatykę. Na odwrocie poprawna forma i jedno zdanie, dlaczego tak. Treść powstaje raz, po
   kliknięciu **Przygotuj karty**; potem przewracanie jest natychmiastowe i nic nie kosztuje.
   Gdy któraś karta wyjdzie słabo, **Przegeneruj** układa ją od nowa — możesz przy tym
   dopisać uwagi („za długie", „daj inny przykład"), a model dostanie je razem z kartą,

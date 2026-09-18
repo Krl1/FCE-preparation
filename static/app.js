@@ -1807,6 +1807,7 @@ function showCard() {
   $("#cards-area").classList.remove("hidden");
   $("#cards-topic-label").textContent = card.topic_label || topicLabel(card.topic);
   $("#cards-front").textContent = card.front;
+  renderCardHint(card.hint);
   $("#cards-back").textContent = card.back;
   $("#cards-back").classList.add("hidden");
   $("#cards-leech").classList.add("hidden");
@@ -1815,6 +1816,15 @@ function showCard() {
     (s) => $(s).classList.add("hidden"));
   // Uwagi są JEDNORAZOWE — nie przenoszą się na kolejną kartę ani na kolejną próbę.
   $("#cards-regen-notes").value = "";
+}
+
+// Podpowiedź mają tylko karty z luką — przód karty tłumaczeniowej już jest po polsku.
+// Czyścimy BEZWARUNKOWO, nie tylko w gałęzi „jest podpowiedź": inaczej po karcie z luką
+// zostałaby ona widoczna pod następną kartą, do której się nie odnosi.
+function renderCardHint(hint) {
+  const box = $("#cards-hint");
+  box.textContent = hint || "";
+  box.classList.toggle("hidden", !hint);
 }
 
 function revealCard() {
@@ -1904,7 +1914,9 @@ $("#cards-regen-go").addEventListener("click", () =>
       });
       card.front = out.front;
       card.back = out.back;
+      card.hint = out.hint;
       $("#cards-front").textContent = out.front;
+      renderCardHint(out.hint);
       $("#cards-back").textContent = out.back;
       $("#cards-regen-notes").value = "";
       $("#cards-regen-box").classList.add("hidden");

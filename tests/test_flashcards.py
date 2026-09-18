@@ -158,7 +158,8 @@ def test_accepts_a_card_matching_the_suggested_shape():
 def test_accepts_a_justified_deviation():
     out = {"cards": [{"ref": "error:1", "shape": "gap",
                       "front": "It ______ on the weather.", "back": "depends",
-                      "shape_reason": "przyimek związany z czasownikiem"}]}
+                      "shape_reason": "przyimek związany z czasownikiem",
+                      "hint": "zależy (od pogody)"}]}
     plan = fc.plan_cards(out, _sent())
     assert plan.prepared[0].shape == "gap"
     assert plan.prepared[0].shape_reason == "przyimek związany z czasownikiem"
@@ -225,3 +226,39 @@ def test_unprepared_keeps_the_order_sent():
     sent = [{"ref": "error:3", "suggested_shape": "translate"},
             {"ref": "error:1", "suggested_shape": "translate"}]
     assert fc.plan_cards({"cards": []}, sent).unprepared == ("error:3", "error:1")
+
+
+# --- Podpowiedź do karty z luką ----------------------------------------------
+
+def _gap_row(ref="error:1", hint="zadzwonię do ciebie", front="I ______ you tomorrow."):
+    row = {"ref": ref, "shape": "gap", "front": front, "back": "will call"}
+    if hint is not None:
+        row["hint"] = hint
+    return {"cards": [row]}
+
+
+def test_gap_card_carries_the_hint():
+    plan = fc.plan_cards(_gap_row(), _sent(shape=fc.SHAPE_GAP))
+    assert plan.prepared[0].hint == "zadzwonię do ciebie"
+
+
+def test_gap_card_without_a_hint_is_rejected():
+    """Bez podpowiedzi karta z luką nie sprawdza gramatyki, tylko każe zgadywać, jakie
+    słowo miał na myśli model — „I ______ you tomorrow" pasuje do call, text, see i meet.
+    Dlatego brak podpowiedzi odrzuca pozycję tak samo jak brak znacznika luki."""
+    assert fc.plan_cards(_gap_row(hint=None), _sent(shape=fc.SHAPE_GAP)).unprepared == ("error:1",)
+    assert fc.plan_cards(_gap_row(hint="   "), _sent(shape=fc.SHAPE_GAP)).unprepared == ("error:1",)
+
+
+def test_translate_card_needs_no_hint():
+    """Przód karty tłumaczeniowej JEST po polsku, więc podpowiedź byłaby powtórzeniem."""
+    out = {"cards": [{"ref": "error:1", "shape": "translate",
+                      "front": "W domu jest cicho.", "back": "at home"}]}
+    plan = fc.plan_cards(out, _sent())
+    assert plan.prepared[0].hint == ""
+
+
+def test_hint_on_a_translate_card_is_dropped():
+    out = {"cards": [{"ref": "error:1", "shape": "translate", "front": "W domu.",
+                      "back": "at home", "hint": "niepotrzebna"}]}
+    assert fc.plan_cards(out, _sent()).prepared[0].hint == ""

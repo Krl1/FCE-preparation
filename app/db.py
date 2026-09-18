@@ -173,6 +173,7 @@ CREATE TABLE IF NOT EXISTS cards (
     shape          TEXT,
     shape_reason   TEXT,
     prepared_at    TEXT,
+    hint           TEXT,
     UNIQUE (source_kind, source_id)
 );
 
@@ -265,10 +266,23 @@ def _migrate(conn: sqlite3.Connection) -> None:
     # `CREATE TABLE IF NOT EXISTS` obsługuje istniejące bazy sam, ale `ALTER TABLE
     # ADD COLUMN` nie jest idempotentne i wywaliłby się przy drugim otwarciu.
     card_cols = {r["name"] for r in conn.execute("PRAGMA table_info(cards)")}
-    for col in ("front", "back", "shape", "shape_reason", "prepared_at"):
+    for col in ("front", "back", "shape", "shape_reason", "prepared_at", "hint"):
         if col not in card_cols:
             conn.execute(f"ALTER TABLE cards ADD COLUMN {col} TEXT")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_cards_prepared ON cards(prepared_at)")
+
+    # Karty z luką powstałe ZANIM podpowiedź istniała pokazują samo angielskie zdanie
+    # z ______ i nie mówią, czego się od ucznia oczekuje: „I ______ you tomorrow" pasuje
+    # do call, text, see i meet. Zdejmujemy im `prepared_at`, przez co wracają do
+    # zwykłego obiegu — licznik pokaże je jako nieprzygotowane, a „Przygotuj karty"
+    # ułoży je od nowa. Harmonogramu NIE ruszamy: zmienia się to, co uczeń zobaczy,
+    # nie kiedy. Karty tłumaczeniowe pomijamy — ich przód już jest po polsku.
+    # Idempotentne: po przygotowaniu mają podpowiedź, więc warunek przestaje je łapać.
+    conn.execute(
+        "UPDATE cards SET prepared_at = NULL "
+        "WHERE shape = 'gap' AND prepared_at IS NOT NULL "
+        "  AND (hint IS NULL OR TRIM(hint) = '')"
+    )
     conn.commit()
 
 
@@ -940,16 +954,16 @@ def set_card_override(conn: sqlite3.Connection, card_id: int, *,
 
 @_synchronized
 def set_card_content(conn: sqlite3.Connection, card_id: int, *, front: str, back: str,
-                     shape: str, shape_reason: str) -> bool:
+                     shape: str, shape_reason: str, hint: str = "") -> bool:
     """Zapisuje wygenerowaną treść i oznacza kartę jako przygotowaną.
 
     NIE dotyka `due_on` ani `interval_days`: przeprojektowanie treści zmienia to,
     co uczeń widzi, nie to, kiedy to widzi."""
     now = _now()
     cur = conn.execute(
-        "UPDATE cards SET front = ?, back = ?, shape = ?, shape_reason = ?, "
+        "UPDATE cards SET front = ?, back = ?, shape = ?, shape_reason = ?, hint = ?, "
         "prepared_at = ?, updated_at = ? WHERE id = ?",
-        (front, back, shape, shape_reason, now, now, card_id),
+        (front, back, shape, shape_reason, hint, now, now, card_id),
     )
     conn.commit()
     return cur.rowcount > 0

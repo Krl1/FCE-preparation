@@ -342,3 +342,7 @@ h2 { font-size: 1.05rem; }
              border-top: 1px solid var(--line); padding-top: .8rem; margin-top: .8rem; }
 #cards-progress-bar { display: block; height: 100%; background: var(--accent);
                       border-radius: inherit; transition: width .2s; }
+
+/* Podpowiedź pod zdaniem z luką: mówi, CO wpisać, więc musi być czytelna, ale nie
+   może konkurować z samym zdaniem — stąd mniejszy rozmiar i stonowany kolor. */
+.card-hint { margin-top: .4rem; font-size: .95rem; opacity: .75; font-style: italic; }

@@ -1336,3 +1336,49 @@ def test_batch_preparation_sends_no_notes(app_ctx, monkeypatch):
     assert sent[0]["notes"] == ""
     assert sent[0]["current_front"] == ""
     assert sent[0]["current_back"] == ""
+
+
+# --- Podpowiedź do karty z luką ----------------------------------------------
+
+def _gap_payload(refs, hint="zadzwonię do ciebie"):
+    return {"cards": [{"ref": r, "shape": "gap", "front": "I ______ you tomorrow.",
+                       "back": "will call", "hint": hint} for r in refs]}
+
+
+def test_session_serves_the_hint(app_ctx, monkeypatch):
+    client, main_mod = app_ctx
+    eid = _card_error(client, topic="tenses")
+    _stub_llm(main_mod, monkeypatch, _gap_payload([f"error:{eid}"]))
+    assert client.post("/api/cards/prepare").json()["prepared"] == 1
+    karta = client.get("/api/cards/session").json()["cards"][0]
+    assert karta["shape"] == "gap"
+    assert karta["hint"] == "zadzwonię do ciebie"
+
+
+def test_gap_card_without_a_hint_stays_unprepared(app_ctx, monkeypatch):
+    """Serwer odrzuca całą pozycję, więc karta zostaje nieprzygotowana i wraca przy
+    kolejnym kliknięciu — zamiast trafić do sesji w postaci, na którą uczeń narzekał."""
+    client, main_mod = app_ctx
+    eid = _card_error(client, topic="tenses")
+    _stub_llm(main_mod, monkeypatch, _gap_payload([f"error:{eid}"], hint=""))
+    out = client.post("/api/cards/prepare").json()
+    assert out == {"prepared": 0, "unprepared": 1, "remaining": 1}
+    assert client.get("/api/cards/session").json()["cards"] == []
+
+
+def test_translate_card_has_an_empty_hint(app_ctx, monkeypatch):
+    client, main_mod = app_ctx
+    eid = _card_error(client)
+    _stub_llm(main_mod, monkeypatch, _cards_payload([f"error:{eid}"]))
+    client.post("/api/cards/prepare")
+    assert client.get("/api/cards/session").json()["cards"][0]["hint"] == ""
+
+
+def test_regenerate_returns_the_hint(app_ctx, monkeypatch):
+    client, main_mod = app_ctx
+    eid = _card_error(client, topic="tenses")
+    _stub_llm(main_mod, monkeypatch, _gap_payload([f"error:{eid}"]))
+    client.post("/api/cards/prepare")
+    cid = client.get("/api/cards/session").json()["cards"][0]["card_id"]
+    _stub_llm(main_mod, monkeypatch, _gap_payload([f"error:{eid}"], hint="nowa podpowiedź"))
+    assert client.post(f"/api/cards/{cid}/regenerate").json()["hint"] == "nowa podpowiedź"

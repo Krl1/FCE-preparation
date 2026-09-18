@@ -148,7 +148,9 @@ does not — it is parsed locally).
 - **Flashcards** — a fast sweep through many rules at once. A card never shows your wrong form.
   Depending on the material it takes one of two shapes: for vocabulary and collocations the
   front is a Polish sentence you have to say in English, and for grammar it is an English
-  sentence with a gap. The back carries the correct form and one sentence on why. Content is
+  sentence with a gap plus a Polish hint about what belongs in it. Without the hint "I ______
+  you tomorrow" would fit `call`, `text` and `see` equally well, so the card would test
+  guesswork rather than grammar. The back carries the correct form and one sentence on why. Content is
   generated once, when you click **Prepare cards**; after that flipping is instant and costs
   nothing. If a card comes out weak, **Regenerate** rebuilds it — you can add a note first
   ("too long", "use a different example") and the model receives it together with the card
