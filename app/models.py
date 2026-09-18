@@ -253,18 +253,5 @@ class CardGrade(BaseModel):
     grade: str
 
 
-class CardGradeNew(BaseModel):
-    """Ocena źródła, które nie ma jeszcze karty — wiersz powstaje przy tej ocenie."""
-    source_kind: str
-    source_id: int
-    grade: str
-
-    @model_validator(mode="after")
-    def known_source_kind(self):
-        if self.source_kind not in ("error", "group"):
-            raise ValueError("source_kind musi być 'error' albo 'group'.")
-        return self
-
-
 class CardSettings(BaseModel):
     new_per_day: int

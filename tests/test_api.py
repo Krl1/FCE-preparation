@@ -997,21 +997,43 @@ def _card_error(client, student="depends from", topic="prepositions"):
     return res.json()["id"]
 
 
-def test_session_renders_cards_from_the_journal(app_ctx):
-    client, _ = app_ctx
-    eid = _card_error(client)
+def _cards_payload(refs, shape="translate"):
+    return {"cards": [{"ref": r, "shape": shape, "front": f"Przód {r}",
+                       "back": f"Tył {r}"} for r in refs]}
+
+
+def _prepared_card(client, main_mod, monkeypatch, student="depends from",
+                   topic="prepositions"):
+    """Wpis w dzienniku wraz z gotową kartą. Zwraca (error_id, card_id).
+
+    Karta musi mieć TREŚĆ, żeby w ogóle wejść do kolejki, więc każdy test oceniania
+    zaczyna się od przygotowania — pierwsza ocena nie zakłada już wiersza karty."""
+    eid = _card_error(client, student=student, topic=topic)
+    _stub_llm(main_mod, monkeypatch, _cards_payload([f"error:{eid}"]))
+    assert client.post("/api/cards/prepare").json()["prepared"] == 1
+    return eid, main_mod.db.get_card_by_source(main_mod.conn, "error", eid)["id"]
+
+
+def test_session_renders_cards_from_the_journal(app_ctx, monkeypatch):
+    client, main_mod = app_ctx
+    eid, cid = _prepared_card(client, main_mod, monkeypatch)
     body = client.get("/api/cards/session").json()
     assert len(body["cards"]) == 1
     card = body["cards"][0]
     assert card["source_kind"] == "error"
     assert card["source_id"] == eid
-    assert card["card_id"] is None          # karta jeszcze nie istnieje
-    assert "depends from" in card["front"]
-    assert "depends on" in card["back"]
+    assert card["card_id"] == cid       # karta istnieje, zanim uczeń ją zobaczy
+    assert card["front"] == f"Przód error:{eid}"
+    # Pełne źródło leci obok treści — przycisk „Ćwicz błędy" przy karcie go czyta.
+    assert card["source"]["correct_text"] == "depends on"
+    assert card["topic_label"] == "Przyimki"
 
 
 def test_session_never_calls_the_model(app_ctx, monkeypatch):
-    """Cała wartość fiszek to natychmiastowość — kolejka musi być darmowa."""
+    """Cała wartość fiszek to natychmiastowość — kolejka musi być darmowa.
+
+    Wpis bez przygotowanej karty nie może wywołać modelu „po drodze": kolejka ma go
+    pominąć, a nie douczyć w locie."""
     client, main_mod = app_ctx
     _card_error(client)
 
@@ -1022,51 +1044,49 @@ def test_session_never_calls_the_model(app_ctx, monkeypatch):
     assert client.get("/api/cards/session").status_code == 200
 
 
-def test_session_respects_the_new_card_limit(app_ctx):
-    client, _ = app_ctx
-    for n in range(5):
-        _card_error(client, student=f"błąd {n}")
+def test_session_respects_the_new_card_limit(app_ctx, monkeypatch):
+    client, main_mod = app_ctx
+    refs = [f"error:{_card_error(client, student=f'błąd {n}')}" for n in range(5)]
+    _stub_llm(main_mod, monkeypatch, _cards_payload(refs))
+    assert client.post("/api/cards/prepare").json()["prepared"] == 5
     client.post("/api/cards/settings", json={"new_per_day": 2})
     assert len(client.get("/api/cards/session").json()["cards"]) == 2
 
 
-def test_session_filters_by_topic(app_ctx):
-    client, _ = app_ctx
-    _card_error(client, student="a", topic="prepositions")
-    _card_error(client, student="b", topic="articles")
-    body = client.get("/api/cards/session?topic=articles").json()
-    assert [c["front"].count("b") for c in body["cards"]] == [1]
+def test_session_filters_by_topic(app_ctx, monkeypatch):
+    client, main_mod = app_ctx
+    aid = _card_error(client, student="a", topic="prepositions")
+    bid = _card_error(client, student="b", topic="collocations")
+    _stub_llm(main_mod, monkeypatch, _cards_payload([f"error:{aid}", f"error:{bid}"]))
+    assert client.post("/api/cards/prepare").json()["prepared"] == 2
+    body = client.get("/api/cards/session?topic=collocations").json()
+    assert [c["source_id"] for c in body["cards"]] == [bid]
 
 
-def test_grading_a_new_source_creates_the_card_and_schedules_it(app_ctx):
-    client, _ = app_ctx
-    eid = _card_error(client)
-    out = client.post("/api/cards/grade-new", json={
-        "source_kind": "error", "source_id": eid, "grade": "known"}).json()
+def test_grading_a_prepared_card_schedules_it(app_ctx, monkeypatch):
+    client, main_mod = app_ctx
+    _, cid = _prepared_card(client, main_mod, monkeypatch)
+    out = client.post(f"/api/cards/{cid}/grade", json={"grade": "known"}).json()
     assert out["interval_days"] == 1
     assert out["leech"] is False
     assert out["progress"]["done_today"] == 1
 
 
-def test_known_climbs_and_unknown_resets(app_ctx):
-    client, _ = app_ctx
-    eid = _card_error(client)
-    first = client.post("/api/cards/grade-new", json={
-        "source_kind": "error", "source_id": eid, "grade": "known"}).json()
-    cid = first["card_id"]
+def test_known_climbs_and_unknown_resets(app_ctx, monkeypatch):
+    client, main_mod = app_ctx
+    _, cid = _prepared_card(client, main_mod, monkeypatch)
+    first = client.post(f"/api/cards/{cid}/grade", json={"grade": "known"}).json()
+    assert first["interval_days"] == 1
     second = client.post(f"/api/cards/{cid}/grade", json={"grade": "known"}).json()
     assert second["interval_days"] == 3
     third = client.post(f"/api/cards/{cid}/grade", json={"grade": "unknown"}).json()
     assert third["interval_days"] == 1
 
 
-def test_card_becomes_a_leech_after_four_failures(app_ctx):
-    client, _ = app_ctx
-    eid = _card_error(client)
-    out = client.post("/api/cards/grade-new", json={
-        "source_kind": "error", "source_id": eid, "grade": "unknown"}).json()
-    cid = out["card_id"]
-    for _ in range(2):
+def test_card_becomes_a_leech_after_four_failures(app_ctx, monkeypatch):
+    client, main_mod = app_ctx
+    _, cid = _prepared_card(client, main_mod, monkeypatch)
+    for _ in range(3):
         out = client.post(f"/api/cards/{cid}/grade", json={"grade": "unknown"}).json()
     assert out["leech"] is False
     out = client.post(f"/api/cards/{cid}/grade", json={"grade": "unknown"}).json()
@@ -1078,83 +1098,116 @@ def test_grading_a_missing_card_is_404(app_ctx):
     assert client.post("/api/cards/999/grade", json={"grade": "known"}).status_code == 404
 
 
-def test_grade_rejects_an_unknown_source_kind(app_ctx):
-    client, _ = app_ctx
-    assert client.post("/api/cards/grade-new", json={
-        "source_kind": "wymyślony", "source_id": 1, "grade": "known"}).status_code == 422
-
-
-def test_improve_stores_the_override_and_session_serves_it(app_ctx, monkeypatch):
+def test_progress_reports_counters_without_touching_the_streak(app_ctx, monkeypatch):
     client, main_mod = app_ctx
-    eid = _card_error(client)
-    out = client.post("/api/cards/grade-new", json={
-        "source_kind": "error", "source_id": eid, "grade": "unknown"}).json()
-    cid = out["card_id"]
-    _stub_llm(main_mod, monkeypatch, {"front": "It ______ on the weather.",
-                                      "back": "depends on"})
-    improved = client.post(f"/api/cards/{cid}/improve").json()
-    assert improved["front"] == "It ______ on the weather."
-    served = client.get("/api/cards/session").json()["cards"][0]
-    assert served["front"] == "It ______ on the weather."
-    assert served["improved"] is True
-
-
-def test_improved_card_keeps_the_source_explanation_on_the_back(app_ctx, monkeypatch):
-    """Ulepszenie nie może skasować powodu, dla którego karta istnieje.
-
-    Prompt ulepszania mówi modelowi, że wyjaśnienie uczeń już widzi, więc model go nie
-    dopisuje — rewers musi je dokleić ze źródła."""
-    client, main_mod = app_ctx
-    eid = _card_error(client)
-    out = client.post("/api/cards/grade-new", json={
-        "source_kind": "error", "source_id": eid, "grade": "unknown"}).json()
-    cid = out["card_id"]
-    _stub_llm(main_mod, monkeypatch, {"front": "It ______ on the weather.",
-                                      "back": "depends on"})
-    assert client.post(f"/api/cards/{cid}/improve").status_code == 200
-
-    served = client.get("/api/cards/session").json()["cards"][0]
-    assert "depends on" in served["back"]
-    assert "kalka z polskiego" in served["back"]
-
-
-def test_improving_a_group_card_is_rejected_without_calling_the_model(app_ctx, monkeypatch):
-    """Grupa nie ma pary błędnie → poprawnie, więc prompt byłby sam ze sobą sprzeczny."""
-    client, main_mod = app_ctx
-    eid = _card_error(client)
-    _stub_llm(main_mod, monkeypatch, {"assignments": [
-        {"error_id": eid, "new_group": {"rule": "depend + on", "explanation": "zawsze 'on'",
-                                        "topic": "prepositions"}}]})
-    client.post("/api/groups/assign")
-    gid = client.get("/api/groups").json()["groups"][0]["id"]
-    out = client.post("/api/cards/grade-new", json={
-        "source_kind": "group", "source_id": gid, "grade": "unknown"}).json()
-    cid = out["card_id"]
-
-    def explode(prompt, kind="other"):
-        raise AssertionError("ulepszanie karty grupowej nie może wołać modelu")
-
-    monkeypatch.setattr(main_mod.llm_client, "_invoke", explode)
-    res = client.post(f"/api/cards/{cid}/improve")
-    assert res.status_code == 400
-    assert "grup" in res.json()["detail"].lower()
-
-
-def test_progress_reports_counters_without_touching_the_streak(app_ctx):
-    client, main_mod = app_ctx
-    eid = _card_error(client)
-    client.post("/api/cards/grade-new", json={
-        "source_kind": "error", "source_id": eid, "grade": "known"})
+    _, cid = _prepared_card(client, main_mod, monkeypatch)
+    client.post(f"/api/cards/{cid}/grade", json={"grade": "known"})
     prog = client.get("/api/cards/progress").json()
     assert prog["done_today"] == 1
     assert prog["new_limit"] == main_mod.DEFAULT_NEW_CARDS_PER_DAY
+    assert prog["unprepared"] == 0
     assert client.get("/api/tips/progress").json()["done"] == 0
 
 
-def test_deleting_the_error_removes_it_from_the_session(app_ctx):
-    client, _ = app_ctx
-    eid = _card_error(client)
-    client.post("/api/cards/grade-new", json={
-        "source_kind": "error", "source_id": eid, "grade": "known"})
+def test_deleting_the_error_removes_it_from_the_session(app_ctx, monkeypatch):
+    client, main_mod = app_ctx
+    eid, _ = _prepared_card(client, main_mod, monkeypatch)
     client.delete(f"/api/errors/{eid}")
     assert client.get("/api/cards/session").json()["cards"] == []
+
+
+# --- Treść fiszki -------------------------------------------------------------
+
+def test_unprepared_cards_stay_out_of_the_session(app_ctx):
+    client, _ = app_ctx
+    _card_error(client)
+    body = client.get("/api/cards/session").json()
+    assert body["cards"] == []
+    assert body["progress"]["unprepared"] >= 1
+
+
+def test_prepare_fills_content_and_the_session_serves_it(app_ctx, monkeypatch):
+    client, main_mod = app_ctx
+    eid = _card_error(client)
+    _stub_llm(main_mod, monkeypatch, _cards_payload([f"error:{eid}"]))
+    out = client.post("/api/cards/prepare").json()
+    assert out == {"prepared": 1, "unprepared": 0, "remaining": 0}
+    card = client.get("/api/cards/session").json()["cards"][0]
+    assert card["front"] == f"Przód error:{eid}"
+    assert card["shape"] == "translate"
+
+
+def test_prepared_card_never_shows_the_wrong_form(app_ctx, monkeypatch):
+    """Wyrazisty fixture, nie ogólne sprawdzenie podciągu: 35 z 219 wpisów ma formę
+    błędną krótszą niż pięć znaków (`in`, `at`, `-`), więc ogólny test padałby na
+    niemal każdym poprawnym angielskim zdaniu."""
+    client, main_mod = app_ctx
+    eid = _card_error(client, student="in home")
+    _stub_llm(main_mod, monkeypatch, _cards_payload([f"error:{eid}"]))
+    client.post("/api/cards/prepare")
+    card = client.get("/api/cards/session").json()["cards"][0]
+    assert "in home" not in card["front"].lower()
+    assert "in home" not in card["back"].lower()
+
+
+def test_prepare_without_candidates_does_not_call_the_model(app_ctx, monkeypatch):
+    client, main_mod = app_ctx
+
+    def explode(prompt, kind="other"):
+        raise AssertionError("nie ma czego przygotowywać")
+
+    monkeypatch.setattr(main_mod.llm_client, "_invoke", explode)
+    assert client.post("/api/cards/prepare").json() == {
+        "prepared": 0, "unprepared": 0, "remaining": 0}
+
+
+def test_session_still_never_calls_the_model(app_ctx, monkeypatch):
+    client, main_mod = app_ctx
+    eid = _card_error(client)
+    _stub_llm(main_mod, monkeypatch, _cards_payload([f"error:{eid}"]))
+    client.post("/api/cards/prepare")
+
+    def explode(prompt, kind="other"):
+        raise AssertionError("kolejka fiszek nie może wołać modelu")
+
+    monkeypatch.setattr(main_mod.llm_client, "_invoke", explode)
+    assert client.get("/api/cards/session").status_code == 200
+
+
+def test_rejected_entry_stays_unprepared_and_retries(app_ctx, monkeypatch):
+    client, main_mod = app_ctx
+    eid = _card_error(client)
+    _stub_llm(main_mod, monkeypatch, {"cards": [
+        {"ref": f"error:{eid}", "shape": "gap", "front": "bez luki", "back": "b",
+         "shape_reason": "powód"}]})
+    assert client.post("/api/cards/prepare").json() == {
+        "prepared": 0, "unprepared": 1, "remaining": 1}
+    _stub_llm(main_mod, monkeypatch, _cards_payload([f"error:{eid}"]))
+    assert client.post("/api/cards/prepare").json() == {
+        "prepared": 1, "unprepared": 0, "remaining": 0}
+
+
+def test_regenerate_replaces_the_content(app_ctx, monkeypatch):
+    client, main_mod = app_ctx
+    eid = _card_error(client)
+    _stub_llm(main_mod, monkeypatch, _cards_payload([f"error:{eid}"]))
+    client.post("/api/cards/prepare")
+    cid = client.get("/api/cards/session").json()["cards"][0]["card_id"]
+    _stub_llm(main_mod, monkeypatch, {"cards": [
+        {"ref": f"error:{eid}", "shape": "translate", "front": "Nowy przód",
+         "back": "Nowy tył"}]})
+    assert client.post(f"/api/cards/{cid}/regenerate").json()["front"] == "Nowy przód"
+    assert client.get("/api/cards/session").json()["cards"][0]["front"] == "Nowy przód"
+
+
+def test_preparing_does_not_disturb_an_existing_schedule(app_ctx, monkeypatch):
+    client, main_mod = app_ctx
+    eid = _card_error(client)
+    _stub_llm(main_mod, monkeypatch, _cards_payload([f"error:{eid}"]))
+    client.post("/api/cards/prepare")
+    cid = client.get("/api/cards/session").json()["cards"][0]["card_id"]
+    graded = client.post(f"/api/cards/{cid}/grade", json={"grade": "known"}).json()
+    due_before = graded["due_on"]
+    _stub_llm(main_mod, monkeypatch, _cards_payload([f"error:{eid}"]))
+    client.post(f"/api/cards/{cid}/regenerate")
+    assert main_mod.db.get_card(main_mod.conn, cid)["due_on"] == due_before

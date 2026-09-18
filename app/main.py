@@ -19,7 +19,6 @@ from . import fce_taxonomy as tax
 from . import flashcards, grouping, llm_client, pricing, srs, streak
 from .models import (
     CardGrade,
-    CardGradeNew,
     CardSettings,
     CompleteRequest,
     DisputeRequest,
@@ -592,30 +591,23 @@ def _today_str() -> str:
     return date.today().isoformat()
 
 
-def _render_card(source_kind: str, source: dict, card: dict | None, lang: str) -> dict:
-    """Treść karty. Renderujemy ze ŹRÓDŁA, więc poprawione w dzienniku wyjaśnienie
-    widać natychmiast; `*_override` (jeśli jest) wygrywa, bo to treść ulepszona modelem.
+CARD_BATCH_SIZE = 40
 
-    Wyjaśnienie ze źródła zostaje POD ulepszonym rewersem. Prompt ulepszania mówi modelowi,
-    że „wyjaśnienie uczeń już widzi", więc model go nie powtarza — gdyby rewers kończył się
-    na samym override, jedyne płatne kliknięcie w całej funkcji kasowałoby powód, dla
-    którego karta w ogóle istnieje. Tak też poprawka wyjaśnienia w dzienniku nadal dociera
-    do ulepszonej karty."""
-    if card and card.get("front_override") and card.get("back_override"):
-        back = card["back_override"]
-        explanation = source.get("explanation")
-        if explanation:
-            back += "\n\n" + explanation
-        return {"front": card["front_override"], "back": back}
-    if source_kind == "group":
-        members = db.list_group_members(conn, source["id"])
-        contexts = [f"{m['student_text']} → {m['correct_text']}" for m in members[:5]]
-        back = source["explanation"]
-        if contexts:
-            back += "\n\n" + "\n".join(contexts)
-        return {"front": source["rule"], "back": back}
-    return {"front": source["student_text"],
-            "back": f"{source['correct_text']}\n\n{source['explanation']}"}
+# Bezpiecznik na patologiczną bazę, nie zwykły tryb pracy: spec zakłada ~285 kart i ~8
+# wywołań na JEDNO kliknięcie, więc próg musi być wyraźnie wyżej, żeby nie zmuszać do
+# drugiego kliknięcia tam, gdzie obiecaliśmy jedno. Reszta, jeśli kiedyś powstanie, czeka
+# na kolejne kliknięcie, a `remaining` mówi wprost, ile zostało.
+CARD_PREPARE_MAX = 400
+
+
+def _card_content(card: dict) -> dict:
+    """Treść karty bierze się teraz z KOLUMN, nie z renderowania ze źródła.
+
+    Renderowanie ze źródła pokazywało na przodzie `student_text`, czyli formę błędną —
+    uczyło rozpoznawania własnej pomyłki zamiast produkcji formy poprawnej. Cena tej
+    zmiany: poprawka wyjaśnienia w dzienniku nie dociera już sama do karty; od tego
+    jest „Przegeneruj"."""
+    return {"front": card["front"], "back": card["back"], "shape": card["shape"]}
 
 
 def _load_source(source_kind: str, source_id: int) -> dict | None:
@@ -633,27 +625,38 @@ def _cards_progress() -> dict:
         # Rozróżnia „wszystko na dziś zrobione" od „nie ma z czego robić fiszek".
         # Bez tego pusty ekran mówiłby to samo w obu przypadkach.
         "total_sources": db.count_card_sources(conn),
+        # Odróżnia „nie ma z czego robić fiszek" od „są, ale czekają na treść" —
+        # bez tego uczeń z pełnym dziennikiem i zerem przygotowanych kart widziałby
+        # pusty ekran bez wskazówki, co kliknąć. Źródło bez wiersza karty liczy się
+        # tak samo jak karta bez treści: wiersz powstaje dopiero przy przygotowaniu,
+        # więc sam brak wiersza nie znaczy, że nie ma czego przygotować. Licznik jest
+        # do pokazania na przycisku, a nie do rozliczeń, więc ucięcie listy źródeł na
+        # limicie zapytania (500) jest tu bez znaczenia.
+        "unprepared": db.count_unprepared(conn) + len(db.sources_without_card(conn)),
     }
 
 
 @app.get("/api/cards/session")
 def cards_session(lang: str = Query(default="pl"),
                   topic: str | None = Query(default=None)) -> dict:
-    """Kolejka na dziś. NIE wywołuje modelu — cała wartość fiszek to natychmiastowość."""
+    """Kolejka na dziś. NIE wywołuje modelu — cała wartość fiszek to natychmiastowość.
+
+    Nowe pozycje biorą się teraz z `cards_new` (karty przygotowane, bez ani jednej oceny),
+    a nie z `sources_without_card`: pod nowym projektem karta istnieje, zanim uczeń ją
+    zobaczy, bo najpierw musi dostać treść."""
     today = _today_str()
     limit = db.get_int_setting(conn, "cards_new_per_day", DEFAULT_NEW_CARDS_PER_DAY)
     queue = flashcards.build_queue(
         db.cards_due(conn, today, topic=topic),
-        db.sources_without_card(conn, topic=topic),
+        db.cards_new(conn, today, topic=topic),
         limit,
     )
     out = []
     for item in queue:
         source = _load_source(item.source_kind, item.source_id)
-        if source is None:
-            continue  # źródło zniknęło między zapytaniami — pomijamy, nie wywalamy sesji
-        card = db.get_card(conn, item.card_id) if item.card_id else None
-        rendered = _render_card(item.source_kind, source, card, lang)
+        card = db.get_card(conn, item.card_id)
+        if source is None or card is None:
+            continue  # źródło lub karta zniknęły między zapytaniami — pomijamy, nie psujemy sesji
         # Pełne źródło leci w odpowiedzi, bo przycisk przy karcie upartej skacze do
         # „Ćwicz błędy" z TĄ jednostką — a setFocus/setFocusGroup czytają nazwane pola.
         # Grupie trzeba jeszcze dołożyć member_count: get_group go nie zwraca, a
@@ -669,12 +672,8 @@ def cards_session(lang: str = Query(default="pl"),
             "topic": source["topic"],
             "topic_label": tax.topic_label(source["topic"], lang),
             "source": source_payload,
-            "leech": flashcards.is_leech(
-                db.card_unknown_count(conn, item.card_id)) if item.card_id else False,
-            # Karta już ulepszona — frontend chowa przycisk, żeby uczeń nie zapłacił
-            # drugi raz za to samo. README obiecuje „raz na zawsze".
-            "improved": bool(card and card.get("front_override")),
-            **rendered,
+            "leech": flashcards.is_leech(db.card_unknown_count(conn, item.card_id)),
+            **_card_content(card),
         })
     return {"cards": out, "progress": _cards_progress()}
 
@@ -701,45 +700,75 @@ def grade_card(card_id: int, req: CardGrade) -> dict:
     return _apply_grade(card, req.grade)
 
 
-@app.post("/api/cards/grade-new")
-def grade_new_card(req: CardGradeNew) -> dict:
-    """Pierwsza ocena źródła: wiersz karty powstaje dopiero tutaj."""
-    if _load_source(req.source_kind, req.source_id) is None:
-        raise HTTPException(status_code=404, detail="Nie znaleziono źródła tej fiszki.")
-    existing = db.get_card_by_source(conn, req.source_kind, req.source_id)
-    if existing is None:
-        card_id = db.create_card(conn, source_kind=req.source_kind, source_id=req.source_id,
-                                 due_on=_today_str(), interval_days=0)
-        existing = db.get_card(conn, card_id)
-    return _apply_grade(existing, req.grade)
+def _prepare_batch(rows: list[dict], lang: str) -> tuple[int, int]:
+    """Przygotowuje jedną partię. Zwraca (przygotowane, nieprzygotowane)."""
+    items = [{
+        "ref": flashcards.make_ref(r["source_kind"], r["source_id"]),
+        "topic": r["topic"],
+        "topic_label": tax.topic_label(r["topic"], lang),
+        "student_text": r["student_text"],
+        "correct_text": r["correct_text"],
+        "explanation": r["explanation"],
+        "suggested_shape": flashcards.default_shape(r["topic"]),
+    } for r in rows]
+    by_ref = {i["ref"]: r for i, r in zip(items, rows)}
+
+    try:
+        raw = llm_client.generate_cards(items, lang=lang)
+    except llm_client.LLMError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    plan = flashcards.plan_cards(raw, items)
+    for card in plan.prepared:
+        db.set_card_content(conn, by_ref[card.ref]["card_id"], front=card.front,
+                            back=card.back, shape=card.shape,
+                            shape_reason=card.shape_reason)
+    return len(plan.prepared), len(plan.unprepared)
 
 
-@app.post("/api/cards/{card_id}/improve")
-def improve_card(card_id: int, lang: str = Query(default="pl")) -> dict:
-    """Jedyne miejsce w fiszkach, które kosztuje wywołanie modelu — i tylko na kliknięcie.
+@app.post("/api/cards/prepare")
+def prepare_cards(lang: str = Query(default="pl")) -> dict:
+    """Wsadowo układa treść kart. Jedyne — obok przegenerowania — miejsce, które kosztuje.
 
-    Karty grupowe są tu odrzucane. Grupa nie ma pary „błędnie → poprawnie": jej treścią jest
-    reguła, więc prompt ulepszania dostałby tę samą regułę w polu błędnym i poprawnym i kazał
-    modelowi poprawić zdanie do niego samego. Sensowny prompt dla grupy (reguła plus kilka
-    prawdziwych kontekstów) to osobna funkcja, nie poprawka — do tego czasu lepiej nie brać
-    za to pieniędzy. Frontend z tego powodu w ogóle nie pokazuje przycisku przy grupie."""
+    Najpierw zakłada wiersze dla źródeł bez karty, potem przerabia wszystkie karty
+    bez treści: i te świeże, i te powstałe pod poprzednim projektem."""
+    today = _today_str()
+    for src in db.sources_without_card(conn):
+        db.create_card(conn, source_kind=src["source_kind"], source_id=src["source_id"],
+                       due_on=today, interval_days=0)
+
+    prepared = unprepared = 0
+    for chunk in grouping.chunks(db.cards_unprepared(conn, CARD_PREPARE_MAX),
+                                 CARD_BATCH_SIZE):
+        p, u = _prepare_batch(chunk, lang)
+        prepared += p
+        unprepared += u
+    return {"prepared": prepared, "unprepared": unprepared,
+            "remaining": db.count_unprepared(conn)}
+
+
+@app.post("/api/cards/{card_id}/regenerate")
+def regenerate_card(card_id: int, lang: str = Query(default="pl")) -> dict:
+    """Układa treść tej jednej karty od nowa — gdy wyszła słabo."""
     card = db.get_card(conn, card_id)
     if card is None:
         raise HTTPException(status_code=404, detail="Nie znaleziono fiszki o tym id.")
-    if card["source_kind"] == "group":
-        raise HTTPException(
-            status_code=400,
-            detail="Karty grupowej nie da się ulepszyć: grupa nie ma pary błędnie → poprawnie.")
     source = _load_source(card["source_kind"], card["source_id"])
     if source is None:
         raise HTTPException(status_code=404, detail="Nie znaleziono źródła tej fiszki.")
-    student, correct = source["student_text"], source["correct_text"]
-    try:
-        front, back = llm_client.improve_card(student, correct, source["explanation"], lang=lang)
-    except llm_client.LLMError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
-    db.set_card_override(conn, card_id, front=front, back=back)
-    return {"front": front, "back": back}
+    row = {
+        "card_id": card_id, "source_kind": card["source_kind"],
+        "source_id": card["source_id"], "topic": source["topic"],
+        # Grupa nie ma formy błędnej — puste pole, nie reguła. Patrz `_card_line`.
+        "student_text": source.get("student_text") or "",
+        "correct_text": source.get("correct_text") or source.get("rule", ""),
+        "explanation": source.get("explanation", ""),
+    }
+    prepared, _ = _prepare_batch([row], lang)
+    if not prepared:
+        raise HTTPException(status_code=502,
+                            detail="Model nie zwrócił użytecznej treści karty.")
+    return _card_content(db.get_card(conn, card_id))
 
 
 @app.get("/api/cards/progress")
