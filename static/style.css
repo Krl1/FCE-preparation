@@ -346,3 +346,7 @@ h2 { font-size: 1.05rem; }
 /* Podpowiedź pod zdaniem z luką: mówi, CO wpisać, więc musi być czytelna, ale nie
    może konkurować z samym zdaniem — stąd mniejszy rozmiar i stonowany kolor. */
 .card-hint { margin-top: .4rem; font-size: .95rem; opacity: .75; font-style: italic; }
+
+/* Licznik rundy: pojawia się dopiero od drugiej rundy, więc musi być widoczny od razu,
+   ale nie może przykrywać samej karty. */
+.cards-round { margin-top: .4rem; font-size: .9rem; opacity: .8; }

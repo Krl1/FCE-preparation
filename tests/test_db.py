@@ -956,3 +956,55 @@ def test_migration_leaves_gap_cards_that_already_have_a_hint(tmp_path):
         assert karta["hint"] == "zadzwonię"
     finally:
         znowu.close()
+
+
+# --- Tryb „powtórz wszystko" --------------------------------------------------
+
+def _seen_card(conn, *, due_on, topic="prepositions", student="depends from"):
+    """Karta przerobiona: z treścią i z co najmniej jedną oceną."""
+    eid = _card_err(conn, topic=topic, student=student)
+    cid = db.create_card(conn, source_kind="error", source_id=eid,
+                         due_on=due_on, interval_days=7)
+    db.set_card_content(conn, cid, front="f", back="b", shape="translate",
+                        shape_reason="", hint="")
+    db.insert_card_review(conn, card_id=cid, grade="known")
+    return cid
+
+
+def test_cards_reviewed_ignores_the_due_date(conn):
+    """Tryb „powtórz wszystko" ma dać materiał, który już przerabiałeś, niezależnie od
+    tego, czy dziś wypada jego powtórka — inaczej nie da się usiąść i przejść całości."""
+    wczoraj = _seen_card(conn, due_on="2026-09-01", student="a")
+    przyszlosc = _seen_card(conn, due_on="2026-12-31", student="b")
+    wszystkie = [r["card_id"] for r in db.cards_reviewed(conn)]
+    assert sorted(wszystkie) == sorted([wczoraj, przyszlosc])
+    # Dla porównania: zwykła kolejka bierze tylko to, co na dziś.
+    assert [r["card_id"] for r in db.cards_due(conn, "2026-09-18")] == [wczoraj]
+
+
+def test_cards_reviewed_skips_cards_never_graded(conn):
+    """Karta bez ani jednej oceny jest NOWA, nie przerobiona — do trybu 4 nie wchodzi."""
+    _seen_card(conn, due_on="2026-09-01", student="a")
+    eid = _card_err(conn, student="nietknieta")
+    cid = db.create_card(conn, source_kind="error", source_id=eid,
+                         due_on="2026-09-18", interval_days=0)
+    db.set_card_content(conn, cid, front="f", back="b", shape="translate",
+                        shape_reason="", hint="")
+    assert cid not in [r["card_id"] for r in db.cards_reviewed(conn)]
+
+
+def test_cards_reviewed_skips_unprepared_and_orphaned(conn):
+    zywa = _seen_card(conn, due_on="2026-09-01", student="a")
+    bez_tresci = _card_err(conn, student="bez tresci")
+    cid = db.create_card(conn, source_kind="error", source_id=bez_tresci,
+                         due_on="2026-09-01", interval_days=1)
+    db.insert_card_review(conn, card_id=cid, grade="known")
+    osierocona = _seen_card(conn, due_on="2026-09-01", student="c")
+    db.delete_error(conn, db.get_card(conn, osierocona)["source_id"])
+    assert [r["card_id"] for r in db.cards_reviewed(conn)] == [zywa]
+
+
+def test_cards_reviewed_filters_by_topic(conn):
+    _seen_card(conn, due_on="2026-09-01", topic="prepositions", student="a")
+    b = _seen_card(conn, due_on="2026-09-01", topic="articles", student="b")
+    assert [r["card_id"] for r in db.cards_reviewed(conn, topic="articles")] == [b]

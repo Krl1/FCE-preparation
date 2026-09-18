@@ -592,6 +592,10 @@ def _today_str() -> str:
     return date.today().isoformat()
 
 
+# Cztery tryby startu sesji. Zbiory są dwa — materiał przerobiony i nowy — a tryby
+# różnią się tym, który biorą i czy termin powtórki ma znaczenie.
+CARD_MODES = ("both", "due", "new", "all")
+
 CARD_BATCH_SIZE = 40
 
 # Bezpiecznik na patologiczną bazę, nie zwykły tryb pracy: spec zakłada ~285 kart i ~8
@@ -651,19 +655,28 @@ def _cards_progress() -> dict:
 
 @app.get("/api/cards/session")
 def cards_session(lang: str = Query(default="pl"),
-                  topic: str | None = Query(default=None)) -> dict:
+                  topic: str | None = Query(default=None),
+                  mode: str = Query(default="both")) -> dict:
     """Kolejka na dziś. NIE wywołuje modelu — cała wartość fiszek to natychmiastowość.
 
     Nowe pozycje biorą się teraz z `cards_new` (karty przygotowane, bez ani jednej oceny),
     a nie z `sources_without_card`: pod nowym projektem karta istnieje, zanim uczeń ją
     zobaczy, bo najpierw musi dostać treść."""
+    if mode not in CARD_MODES:
+        raise HTTPException(status_code=422,
+                            detail=f"Nieznany tryb sesji: {mode}.")
     today = _today_str()
     limit = db.get_int_setting(conn, "cards_new_per_day", DEFAULT_NEW_CARDS_PER_DAY)
-    queue = flashcards.build_queue(
-        db.cards_due(conn, today, topic=topic),
-        db.cards_new(conn, today, topic=topic),
-        limit,
-    )
+    # „all" bierze materiał przerobiony BEZ względu na termin; pozostałe tryby trzymają
+    # się terminu. Nowe karty dochodzą tylko tam, gdzie uczeń o nie poprosił.
+    if mode == "all":
+        powtorki = db.cards_reviewed(conn, topic=topic)
+    elif mode in ("both", "due"):
+        powtorki = db.cards_due(conn, today, topic=topic)
+    else:
+        powtorki = []
+    nowe = db.cards_new(conn, today, topic=topic) if mode in ("both", "new") else []
+    queue = flashcards.build_queue(powtorki, nowe, limit)
     out = []
     for item in queue:
         source = _load_source(item.source_kind, item.source_id)
@@ -688,7 +701,9 @@ def cards_session(lang: str = Query(default="pl"),
             "leech": flashcards.is_leech(db.card_unknown_count(conn, item.card_id)),
             **_card_content(card),
         })
-    return {"cards": out, "progress": _cards_progress()}
+    # Tryb wraca do klienta, bo pusty ekran musi powiedzieć PRAWDĘ o tym, czego zabrakło:
+    # brak nowych kart to co innego niż brak powtórek na dziś.
+    return {"cards": out, "mode": mode, "progress": _cards_progress()}
 
 
 def _apply_grade(card: dict, grade: str) -> dict:

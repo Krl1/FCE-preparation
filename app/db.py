@@ -1051,6 +1051,36 @@ def card_unknown_count(conn: sqlite3.Connection, card_id: int) -> int:
     return int(row["n"])
 
 
+def _seen_cards(conn: sqlite3.Connection, *, topic: Optional[str],
+                today: Optional[str]) -> list[dict]:
+    """Karty PRZEROBIONE: przygotowane, z żywym źródłem i z co najmniej jedną oceną.
+
+    `today` ogranicza wynik do kart zaplanowanych na dziś lub wcześniej; `None` znosi
+    to ograniczenie. Oba tryby sesji stoją na tym samym zapytaniu, żeby warunki
+    „ma treść", „ma źródło" i „była oceniana" nie rozjechały się między nimi —
+    rozjazd tej klasy raz już zatkał kolejkę kartami po skasowanych źródłach."""
+    # `c.id AS card_id`, bo `flashcards.build_queue` czyta właśnie ten klucz —
+    # gołe `c.*` dałoby kolumnę `id` i wysypało składanie kolejki na KeyError.
+    sql = (
+        "SELECT c.*, c.id AS card_id, COALESCE(e.topic, g.topic) AS topic "
+        "FROM cards c "
+        "LEFT JOIN errors e ON c.source_kind = 'error' AND e.id = c.source_id "
+        "LEFT JOIN error_groups g ON c.source_kind = 'group' AND g.id = c.source_id "
+        "WHERE c.prepared_at IS NOT NULL "
+        "  AND COALESCE(e.id, g.id) IS NOT NULL "
+        "  AND EXISTS (SELECT 1 FROM card_reviews r WHERE r.card_id = c.id)"
+    )
+    params: list = []
+    if today is not None:
+        sql += " AND c.due_on <= ?"
+        params.append(today)
+    if topic:
+        sql += " AND COALESCE(e.topic, g.topic) = ?"
+        params.append(topic)
+    sql += " ORDER BY c.due_on, c.id"
+    return [dict(r) for r in conn.execute(sql, params).fetchall()]
+
+
 @_synchronized
 def cards_due(conn: sqlite3.Connection, today: str,
               topic: Optional[str] = None) -> list[dict]:
@@ -1064,23 +1094,18 @@ def cards_due(conn: sqlite3.Connection, today: str,
 
     Warunek `COALESCE(e.id, g.id) IS NOT NULL` — patrz `cards_new`: karta bez
     żywego źródła nie ma czego pokazać i nie może wejść do żadnej kolejki."""
-    # `c.id AS card_id`, bo `flashcards.build_queue` czyta właśnie ten klucz —
-    # gołe `c.*` dałoby kolumnę `id` i wysypało składanie kolejki na KeyError.
-    sql = (
-        "SELECT c.*, c.id AS card_id, COALESCE(e.topic, g.topic) AS topic "
-        "FROM cards c "
-        "LEFT JOIN errors e ON c.source_kind = 'error' AND e.id = c.source_id "
-        "LEFT JOIN error_groups g ON c.source_kind = 'group' AND g.id = c.source_id "
-        "WHERE c.due_on <= ? AND c.prepared_at IS NOT NULL "
-        "  AND COALESCE(e.id, g.id) IS NOT NULL "
-        "  AND EXISTS (SELECT 1 FROM card_reviews r WHERE r.card_id = c.id)"
-    )
-    params: list = [today]
-    if topic:
-        sql += " AND COALESCE(e.topic, g.topic) = ?"
-        params.append(topic)
-    sql += " ORDER BY c.due_on, c.id"
-    return [dict(r) for r in conn.execute(sql, params).fetchall()]
+    return _seen_cards(conn, topic=topic, today=today)
+
+
+@_synchronized
+def cards_reviewed(conn: sqlite3.Connection,
+                   topic: Optional[str] = None) -> list[dict]:
+    """Wszystkie karty, które uczeń już przerabiał — BEZ względu na termin powtórki.
+
+    Zbiór dla trybu „powtórz wszystko": różni się od `cards_due` dokładnie jednym
+    warunkiem, brakiem ograniczenia daty. Karta bez ani jednej oceny jest NOWA i tu
+    nie wchodzi — to właśnie obecność oceny odróżnia materiał przerobiony od nowego."""
+    return _seen_cards(conn, topic=topic, today=None)
 
 
 @_synchronized

@@ -152,7 +152,14 @@ does not — it is parsed locally).
   you tomorrow" would fit `call`, `text` and `see` equally well, so the card would test
   guesswork rather than grammar. The back carries the correct form and one sentence on why. Content is
   generated once, when you click **Prepare cards**; after that flipping is instant and costs
-  nothing. If a card comes out weak, **Regenerate** rebuilds it — you can add a note first
+  You start a session with one of four buttons: **Repetitions + new**, **Repetitions only**,
+  **New only** or **Review everything** — the last one takes all the material you have
+  practised, whatever its due date. A session ends only once you have been through
+  everything correctly: a card you grade "I don't know" comes back in the next round, and
+  again after that if needed. What decides when the card returns on later days is your
+  **first** answer in the session — the extra rounds are pure drilling and leave the
+  schedule alone.
+  If a card comes out weak, **Regenerate** rebuilds it — you can add a note first
   ("too long", "use a different example") and the model receives it together with the card
   it is replacing. Without a note it is simply another roll of the dice. You reveal the answer and
   grade it **I know it** or **I don't** — with the space bar and `n`, without reaching for the

@@ -175,9 +175,13 @@
             <input id="cards-new-limit" type="number" min="0" max="200" />
           </label>
           <button id="cards-prepare" data-i18n="cards.prepare">Przygotuj karty</button>
-          <button id="cards-start" class="primary" data-i18n="cards.start">Zacznij sesję</button>
+          <button id="cards-start" class="primary" data-i18n="cards.startBoth">Powtórki + nowe</button>
+          <button id="cards-start-due" data-i18n="cards.startDue">Tylko powtórki</button>
+          <button id="cards-start-new" data-i18n="cards.startNew">Tylko nowe</button>
+          <button id="cards-start-all" data-i18n="cards.startAll">Powtórz wszystko</button>
         </div>
         <div class="goal-bar"><span id="cards-progress-bar"></span></div>
+        <div id="cards-round" class="cards-round hidden"></div>
       </div>
 
       <div id="cards-error"></div>

@@ -322,6 +322,13 @@ const routes = {
   "/api/cards/7/grade": { card_id: 7, interval_days: 1, due_on: "2026-09-19",
     leech: false, progress: { done_today: 1, overdue: 0, due_now: 1, new_limit: 20,
                               total_sources: 2, unprepared: 0 } },
+  // Karty 11 i 12 obsługują scenariusz rund: 11 zostaje pomylona i musi wrócić.
+  "/api/cards/11/grade": { card_id: 11, interval_days: 0, due_on: "2026-09-18",
+    leech: false, progress: { done_today: 1, overdue: 0, due_now: 1, new_limit: 20,
+                              total_sources: 2, unprepared: 0 } },
+  "/api/cards/12/grade": { card_id: 12, interval_days: 1, due_on: "2026-09-19",
+    leech: false, progress: { done_today: 2, overdue: 0, due_now: 0, new_limit: 20,
+                              total_sources: 2, unprepared: 0 } },
   "/api/cards/progress": { done_today: 0, overdue: 0, due_now: 1, new_limit: 20,
                            total_sources: 2, unprepared: 0 },
   // „Przegeneruj" to jedyny przycisk w sesji wołający płatny model. Odpowiedź ma
@@ -924,6 +931,84 @@ const setInput = (id, value) => {
       }
       if (!nodes.get("#cards-hint").__classes.has("hidden")) {
         failures.push("pusta podpowiedź nie została ukryta");
+      }
+    }],
+    ["Fiszki: karta \u201enie umiem\u201d wraca w kolejnej rundzie", async () => {
+      routes["/api/cards/session"] = {
+        cards: [
+          { card_id: 11, source_kind: "error", source_id: 11, topic: "prepositions",
+            topic_label: "Przyimki", front: "pomylona", back: "b11",
+            shape: "translate", hint: "", leech: false },
+          { card_id: 12, source_kind: "error", source_id: 12, topic: "prepositions",
+            topic_label: "Przyimki", front: "umiana", back: "b12",
+            shape: "translate", hint: "", leech: false },
+        ],
+        mode: "both",
+        progress: { done_today: 0, overdue: 0, due_now: 2, new_limit: 20,
+                   total_sources: 2, unprepared: 0 },
+      };
+      await fire(".tab:cards"); await settle();
+      const before = calls.length;
+      await fire("#cards-start"); await settle();
+
+      const szerokosc = () => parseInt(nodes.get("#cards-progress-bar").style.width) || 0;
+      await fire("#cards-reveal"); await settle();
+      await fire("#cards-unknown"); await settle();   // karta 11 do poprawki
+      const poPomylce = szerokosc();
+      await fire("#cards-reveal"); await settle();
+      await fire("#cards-known"); await settle();     // karta 12 opanowana
+
+      // Pasek liczy opanowane karty z całej sesji, nie postęp w bieżącej rundzie —
+      // gdyby liczył rundę, druga runda cofnęłaby go na zero i wyglądałby na błąd.
+      if (szerokosc() < poPomylce) {
+        failures.push("pasek postępu cofnął się przy nowej rundzie: "
+          + poPomylce + "% -> " + szerokosc() + "%");
+      }
+
+      // Runda pierwsza się skończyła, ale karta 11 czeka — sesja ma trwać dalej.
+      if (nodeText("#cards-front") !== "pomylona") {
+        failures.push("karta \u201enie umiem\u201d nie wróciła w drugiej rundzie: "
+          + nodeText("#cards-front"));
+      }
+      if (nodes.get("#cards-round").__classes.has("hidden")) {
+        failures.push("licznik rundy nie pokazał się w drugiej rundzie");
+      }
+      if (!nodeText("#cards-round").includes("Runda 2")) {
+        failures.push("licznik rundy nie mówi, która to runda: " + nodeText("#cards-round"));
+      }
+
+      await fire("#cards-reveal"); await settle();
+      await fire("#cards-known"); await settle();
+
+      // Liczy się PIERWSZA odpowiedź: powtórka nie może wysłać drugiej oceny, bo
+      // przeliczyłaby odstęp i zbliżyła kartę do oznaczenia \u201euparta\u201d.
+      const oceny = calls.slice(before).filter((c) => c.includes("/grade"));
+      if (oceny.length !== 2) {
+        failures.push("oczekiwano 2 ocen (po jednej na kartę), było " + oceny.length
+          + ": " + oceny.join(" | "));
+      }
+      // Po czystym przejściu sesja się kończy.
+      if (nodes.get("#cards-empty").__classes.has("hidden")) {
+        failures.push("sesja nie zakończyła się po poprawnym przejściu wszystkich kart");
+      }
+      if (!nodes.get("#cards-round").__classes.has("hidden")) {
+        failures.push("licznik rundy został po zakończeniu sesji");
+      }
+    }],
+    ["Fiszki: cztery przyciski startu wysyłają swój tryb", async () => {
+      routes["/api/cards/session"] = {
+        cards: [], mode: "due",
+        progress: { done_today: 0, overdue: 0, due_now: 0, new_limit: 20,
+                   total_sources: 2, unprepared: 0 },
+      };
+      await fire(".tab:cards"); await settle();
+      for (const [sel, tryb] of [["#cards-start", "both"], ["#cards-start-due", "due"],
+                                 ["#cards-start-new", "new"], ["#cards-start-all", "all"]]) {
+        const before = calls.length;
+        await fire(sel); await settle();
+        if (!calls.slice(before).some((c) => c.includes("mode=" + tryb))) {
+          failures.push(sel + " nie wysłał trybu " + tryb);
+        }
       }
     }],
     ["Fiszki: dwa szybkie naciśnięcia spacji oceniają kartę raz", async () => {

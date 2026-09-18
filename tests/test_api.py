@@ -1382,3 +1382,73 @@ def test_regenerate_returns_the_hint(app_ctx, monkeypatch):
     cid = client.get("/api/cards/session").json()["cards"][0]["card_id"]
     _stub_llm(main_mod, monkeypatch, _gap_payload([f"error:{eid}"], hint="nowa podpowiedź"))
     assert client.post(f"/api/cards/{cid}/regenerate").json()["hint"] == "nowa podpowiedź"
+
+
+# --- Cztery tryby startu sesji ------------------------------------------------
+
+def _session_ids(client, mode=None):
+    q = f"?mode={mode}" if mode else ""
+    return [c["card_id"] for c in client.get(f"/api/cards/session{q}").json()["cards"]]
+
+
+def _three_kinds_of_card(client, main_mod, monkeypatch):
+    """Trzy karty w trzech stanach: zaległa, przerobiona z terminem w przyszłości, nowa.
+
+    Zwraca (zaległa, przyszła, nowa) — na nich rozróżniają się wszystkie cztery tryby."""
+    ids = {}
+    for nazwa, student in (("zalegla", "a"), ("przyszla", "b"), ("nowa", "c")):
+        eid = _card_error(client, student=student)
+        _stub_llm(main_mod, monkeypatch, _cards_payload([f"error:{eid}"]))
+        client.post("/api/cards/prepare")
+        ids[nazwa] = main_mod.db.get_card_by_source(main_mod.conn, "error", eid)["id"]
+    # Ocena robi z karty „przerobioną"; bez niej zostaje nowa.
+    for nazwa, due in (("zalegla", "2026-09-01"), ("przyszla", "2026-12-31")):
+        main_mod.db.insert_card_review(main_mod.conn, card_id=ids[nazwa], grade="known")
+        main_mod.db.update_card_schedule(main_mod.conn, ids[nazwa],
+                                         interval_days=7, due_on=due)
+    return ids["zalegla"], ids["przyszla"], ids["nowa"]
+
+
+def test_mode_both_is_the_default(app_ctx, monkeypatch):
+    client, main_mod = app_ctx
+    zalegla, przyszla, nowa = _three_kinds_of_card(client, main_mod, monkeypatch)
+    assert _session_ids(client) == _session_ids(client, "both")
+    assert sorted(_session_ids(client, "both")) == sorted([zalegla, nowa])
+    assert przyszla not in _session_ids(client, "both")
+
+
+def test_mode_due_skips_new_cards(app_ctx, monkeypatch):
+    client, main_mod = app_ctx
+    zalegla, _przyszla, nowa = _three_kinds_of_card(client, main_mod, monkeypatch)
+    assert _session_ids(client, "due") == [zalegla]
+    assert nowa not in _session_ids(client, "due")
+
+
+def test_mode_new_skips_repetitions(app_ctx, monkeypatch):
+    client, main_mod = app_ctx
+    zalegla, _przyszla, nowa = _three_kinds_of_card(client, main_mod, monkeypatch)
+    assert _session_ids(client, "new") == [nowa]
+    assert zalegla not in _session_ids(client, "new")
+
+
+def test_mode_all_takes_every_card_already_practised(app_ctx, monkeypatch):
+    """„Powtórz wszystko" ignoruje termin, ale NIE wciąga kart nigdy nieocenionych —
+    te są nowe, a nie przerobione."""
+    client, main_mod = app_ctx
+    zalegla, przyszla, nowa = _three_kinds_of_card(client, main_mod, monkeypatch)
+    wszystkie = _session_ids(client, "all")
+    assert sorted(wszystkie) == sorted([zalegla, przyszla])
+    assert nowa not in wszystkie
+
+
+def test_unknown_mode_is_rejected(app_ctx, monkeypatch):
+    """Serwer nie ufa klientowi — tak samo jak przy ocenie karty."""
+    client, _ = app_ctx
+    assert client.get("/api/cards/session?mode=wymyslony").status_code == 422
+
+
+def test_session_echoes_the_mode(app_ctx, monkeypatch):
+    """Frontend dobiera komunikat pustego ekranu do trybu, więc musi go dostać z powrotem."""
+    client, _ = app_ctx
+    assert client.get("/api/cards/session").json()["mode"] == "both"
+    assert client.get("/api/cards/session?mode=all").json()["mode"] == "all"

@@ -149,6 +149,12 @@ Uwaga: pliki tekstowe idą przez model, więc ich import **kosztuje wywołania s
   tomorrow" pasowałoby równie dobrze do `call`, `text` i `see`, więc karta sprawdzałaby
   zgadywanie, a nie gramatykę. Na odwrocie poprawna forma i jedno zdanie, dlaczego tak. Treść powstaje raz, po
   kliknięciu **Przygotuj karty**; potem przewracanie jest natychmiastowe i nic nie kosztuje.
+  Sesję zaczynasz jednym z czterech przycisków: **Powtórki + nowe**, **Tylko powtórki**,
+  **Tylko nowe** albo **Powtórz wszystko** — ten ostatni bierze cały przerobiony materiał
+  bez względu na termin powtórki. Sesja kończy się dopiero wtedy, gdy przejdziesz przez
+  wszystko poprawnie: karta oceniona „nie umiem" wraca w kolejnej rundzie, do skutku.
+  O tym, kiedy karta wróci w następnych dniach, decyduje **pierwsza** odpowiedź w sesji —
+  kolejne rundy są czystym ćwiczeniem i nie ruszają harmonogramu.
   Gdy któraś karta wyjdzie słabo, **Przegeneruj** układa ją od nowa — możesz przy tym
   dopisać uwagi („za długie", „daj inny przykład"), a model dostanie je razem z kartą,
   którą zastępuje. Bez uwag jest to po prostu kolejne losowanie. Odkrywasz odpowiedź

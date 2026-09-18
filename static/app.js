@@ -144,7 +144,11 @@ const I18N = {
     "cards.topic": "Temat",
     "cards.allTopics": "Wszystkie tematy",
     "cards.newLimit": "Nowe dziennie",
-    "cards.start": "Zacznij sesję",
+    "cards.startBoth": "Powtórki + nowe",
+    "cards.startDue": "Tylko powtórki",
+    "cards.startNew": "Tylko nowe",
+    "cards.startAll": "Powtórz wszystko",
+    "cards.round": "Runda {r} — do poprawienia: {n}",
     "cards.prepare": "Przygotuj karty",
     "cards.regenerate": "Przegeneruj",
     "cards.regenerateNotesPh": "Co poprawić w tej karcie? (opcjonalnie)",
@@ -157,6 +161,9 @@ const I18N = {
     "cards.prepared": "Przygotowano: {n}, nieudanych: {u}, zostało: {r}",
     "cards.needPrepare": "Żadna karta nie ma jeszcze treści — kliknij „Przygotuj karty”.",
     "cards.noneToday": "Na dziś nic. Wróć jutro — albo dołóż nowych kart, podnosząc limit.",
+    "cards.noneDue": "Nie ma dziś nic do powtórki. Możesz wziąć nowe karty.",
+    "cards.noneNew": "Nie ma nowych kart — limit na dziś wyczerpany albo wszystko już zaczęte.",
+    "cards.noneAll": "Nie masz jeszcze przerobionej ani jednej karty. Zacznij od nowych.",
     "cards.noSources": "Nie ma z czego robić fiszek — dziennik błędów jest pusty.",
     "cards.done": "Gotowe. Przerobione karty: {n}.",
     "cards.leech": "Ta reguła wraca uparcie — przerób ją w „Ćwicz błędy”.",
@@ -303,7 +310,11 @@ const I18N = {
     "cards.topic": "Topic",
     "cards.allTopics": "All topics",
     "cards.newLimit": "New per day",
-    "cards.start": "Start session",
+    "cards.startBoth": "Repetitions + new",
+    "cards.startDue": "Repetitions only",
+    "cards.startNew": "New only",
+    "cards.startAll": "Review everything",
+    "cards.round": "Round {r} — left to get right: {n}",
     "cards.prepare": "Prepare cards",
     "cards.regenerate": "Regenerate",
     "cards.regenerateNotesPh": "What should change on this card? (optional)",
@@ -316,6 +327,9 @@ const I18N = {
     "cards.prepared": "Prepared: {n}, failed: {u}, left: {r}",
     "cards.needPrepare": "No card has content yet — click \"Prepare cards\".",
     "cards.noneToday": "Nothing due today. Come back tomorrow — or raise the limit for more new cards.",
+    "cards.noneDue": "Nothing to repeat today. You can still take new cards.",
+    "cards.noneNew": "No new cards — today's limit is used up, or everything has been started.",
+    "cards.noneAll": "You haven't practised a single card yet. Start with new ones.",
     "cards.noSources": "Nothing to make flashcards from — your mistake log is empty.",
     "cards.done": "Done. Cards reviewed: {n}.",
     "cards.leech": "This rule keeps coming back — practise it in \"Practice mistakes\".",
@@ -1704,8 +1718,24 @@ function renderUsage(d) {
 
 // --- Fiszki -------------------------------------------------------------------
 
-let cardsQueue = [];
+let cardsQueue = [];          // bieżąca RUNDA, nie cała sesja
 let cardsIndex = 0;
+let cardsPending = [];        // karty do poprawienia w następnej rundzie
+let cardsRound = 1;
+let cardsSessionSize = 0;     // ile kart miała sesja na starcie
+let cardsMastered = 0;        // ile z nich przeszło już poprawnie
+// Karty, za które POSZŁA już ocena do serwera. Liczy się pierwsza odpowiedź w sesji:
+// powtórki w kolejnych rundach są czystym ćwiczeniem i nie mogą przeliczać harmonogramu.
+let cardsGraded = new Set();
+let cardsMode = "both";
+
+// Pusty ekran musi powiedzieć prawdę o tym, czego zabrakło: brak nowych kart to co innego
+// niż brak powtórek na dziś, a przy „powtórz wszystko" pusto znaczy „nic jeszcze nie
+// przerabiałeś".
+const CARDS_EMPTY_BY_MODE = {
+  both: "cards.noneToday", due: "cards.noneDue",
+  new: "cards.noneNew", all: "cards.noneAll",
+};
 let cardsDone = 0;
 let cardsTotalSources = 0;
 // Ile kart wciąż czeka na treść — `showCard()` tego potrzebuje, by odróżnić „nic na dziś"
@@ -1761,15 +1791,27 @@ function loadCardsProgress() {
   });
 }
 
-function loadCardsSession() {
-  return withBusy("loader.loading", $("#cards-start"), async () => {
+const CARDS_START_BUTTON = {
+  both: "#cards-start", due: "#cards-start-due",
+  new: "#cards-start-new", all: "#cards-start-all",
+};
+
+function loadCardsSession(mode) {
+  return withBusy("loader.loading", $(CARDS_START_BUTTON[mode] || "#cards-start"), async () => {
     try {
       const topic = $("#cards-topic").value;
-      const qs = `/api/cards/session?lang=${LANG}` + (topic ? `&topic=${topic}` : "");
+      const qs = `/api/cards/session?lang=${LANG}&mode=${mode}`
+        + (topic ? `&topic=${topic}` : "");
       const body = await api(qs);
       cardsQueue = body.cards;
       cardsIndex = 0;
       cardsDone = 0;
+      cardsPending = [];
+      cardsRound = 1;
+      cardsSessionSize = body.cards.length;
+      cardsMastered = 0;
+      cardsGraded = new Set();
+      cardsMode = body.mode || mode;
       renderCardsCounter(body.progress);
       showCard();
     } catch (e) {
@@ -1781,6 +1823,30 @@ function loadCardsSession() {
   });
 }
 
+// Licznik rundy pojawia się dopiero od drugiej — w pierwszej nie ma o czym informować,
+// a stały napis „Runda 1" tylko zaśmiecałby ekran.
+function renderCardsRound() {
+  const box = $("#cards-round");
+  const zostalo = cardsPending.length + Math.max(0, cardsQueue.length - cardsIndex);
+  const widoczny = cardsRound > 1 && zostalo > 0;
+  box.textContent = widoczny
+    ? t("cards.round").replace("{r}", cardsRound).replace("{n}", zostalo) : "";
+  box.classList.toggle("hidden", !widoczny);
+}
+
+// Przejście do następnej karty. Gdy runda się kończy, a są karty do poprawienia,
+// stają się one nową rundą — sesja trwa do skutku, czyli aż przejdziesz czysto.
+function advanceCard() {
+  cardsIndex += 1;
+  if (cardsIndex >= cardsQueue.length && cardsPending.length) {
+    cardsQueue = cardsPending;
+    cardsPending = [];
+    cardsIndex = 0;
+    cardsRound += 1;
+  }
+  showCard();
+}
+
 function showCard() {
   const card = cardsQueue[cardsIndex];
   // Banner błędu należy do POPRZEDNIEJ karty. `#cards-area` to statyczny markup, którego
@@ -1788,8 +1854,11 @@ function showCard() {
   $("#cards-error").innerHTML = "";
   $("#cards-error").classList.add("hidden");
   const bar = $("#cards-progress-bar");
-  bar.style.width = cardsQueue.length
-    ? Math.round((cardsIndex / cardsQueue.length) * 100) + "%" : "0%";
+  // Postęp liczymy do OPANOWANIA całej sesji, nie do końca bieżącej rundy — inaczej
+  // pasek cofałby się na zero przy każdej nowej rundzie i wyglądał jak błąd.
+  bar.style.width = cardsSessionSize
+    ? Math.round((cardsMastered / cardsSessionSize) * 100) + "%" : "0%";
+  renderCardsRound();
 
   if (!card) {
     $("#cards-area").classList.add("hidden");
@@ -1800,7 +1869,7 @@ function showCard() {
       // Źródła są, ale żadne nie ma jeszcze treści — bez tego uczeń widziałby to samo,
       // co przy „nic na dziś", i nie wiedziałby, że trzeba kliknąć „Przygotuj karty".
       : cardsTotalSources > 0 && cardsUnprepared >= cardsTotalSources ? t("cards.needPrepare")
-      : t("cards.noneToday");
+      : t(CARDS_EMPTY_BY_MODE[cardsMode] || "cards.noneToday");
     return;
   }
   $("#cards-empty").classList.add("hidden");
@@ -1865,15 +1934,23 @@ function gradeCard(grade) {
     try {
       // Każda karta w kolejce ma teraz `card_id` — endpoint dla kart „bez wiersza w bazie"
       // (`grade-new`) zniknął z backendu razem z tamtym stanem przejściowym.
-      const out = await api(`/api/cards/${card.card_id}/grade`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ grade }),
-      });
-      cardsDone += 1;
-      renderCardsCounter(out.progress);
-      cardsIndex += 1;
-      showCard();
+      // Do serwera idzie TYLKO pierwsza odpowiedź na daną kartę w tej sesji. Gdyby
+      // każda runda zapisywała przegląd, karta minięta cztery razy w jedno posiedzenie
+      // zostałaby oznaczona jako uparta, a pomyłka poprawiona minutę później dałaby jej
+      // awans po drabince odstępów. Kolejne rundy są czystym ćwiczeniem.
+      if (!cardsGraded.has(card.card_id)) {
+        const out = await api(`/api/cards/${card.card_id}/grade`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ grade }),
+        });
+        cardsGraded.add(card.card_id);
+        cardsDone += 1;
+        renderCardsCounter(out.progress);
+      }
+      if (grade === "known") cardsMastered += 1;
+      else cardsPending.push(card);
+      advanceCard();
     } catch (e) {
       // NIE `#cards-area` — to statyczny markup, który `showCard()` tylko nadpisuje
       // polami; doklejony banner zostawałby pod każdą następną kartą.
@@ -1884,7 +1961,8 @@ function gradeCard(grade) {
   });
 }
 
-$("#cards-start").addEventListener("click", loadCardsSession);
+Object.entries(CARDS_START_BUTTON).forEach(([mode, sel]) =>
+  $(sel).addEventListener("click", () => loadCardsSession(mode)));
 $("#cards-reveal").addEventListener("click", revealCard);
 $("#cards-known").addEventListener("click", () => gradeCard("known"));
 $("#cards-unknown").addEventListener("click", () => gradeCard("unknown"));
