@@ -256,7 +256,11 @@ const routes = {
   "/api/stats/usage": {
     total: { calls: 2, input_tokens: 4, output_tokens: 100, cache_creation_input_tokens: 20,
              cache_read_input_tokens: 10, est_input_tokens: 300, cost_usd: 0.5, avg_duration_ms: 3000 },
-    by_kind: [{ kind: "generate", calls: 1, cost_usd: 0.3 }], by_model: [], by_day: [],
+    // `kind: "cards"` to nazwa, którą naprawdę wysyła `llm_client.generate_cards` —
+    // rozliczenie kosztów musi mieć dla niej etykietę, a nie surowy klucz.
+    by_kind: [{ kind: "generate", calls: 1, cost_usd: 0.3 },
+              { kind: "cards", calls: 3, cost_usd: 0.2 }],
+    by_model: [], by_day: [],
     lean: { used_model: 0.03, sonnet: 0.02, assumed_models: ["claude-opus-5"] },
   },
   "/api/dispute": {
@@ -280,13 +284,19 @@ const routes = {
                             emptied_group_rule: "depend + on" },
   "/api/groups/assign": { assigned: 1, created: 1, unassigned: 0 },
   "/api/groups/regroup": { assigned: 0, created: 1, unassigned: 0 },
+  // Dziedzina zna DWA kształty: "translate" i "gap" — żadnego "cloze". Przód karty
+  // tłumaczeniowej to zdanie POLSKIE, a forma błędna ucznia ("depends from") nie ma
+  // prawa pojawić się na żadnej stronie karty; żyje wyłącznie w `source`, czyli we
+  // wpisie z dziennika. Fikstura z formą błędną na przodzie dokumentowałaby dokładnie
+  // to, czego zakazuje prompt.
   // Kształt `source` odpowiada realnej odpowiedzi backendu: dla `source_kind: "error"`
   // to pełny wpis z dziennika, dla `"group"` — pełny obiekt grupy. Atrapa BEZ tego pola
   // ukrywałaby błędy w gałęzi pijawki (`revealCard` czyta `card.source` dopiero po kliknięciu
   // „Ćwicz ten błąd/tę grupę”).
   "/api/cards/session": { cards: [
     { card_id: 1, source_kind: "error", source_id: 1, topic: "prepositions",
-      topic_label: "Przyimki", front: "depends from", back: "depends on\n\nkalka",
+      topic_label: "Przyimki", front: "To zależy od pogody.",
+      back: "It depends on the weather.\n\nkalka z polskiego",
       shape: "translate", leech: false,
       source: { id: 1, created_at: "2026-09-17T10:00:00+02:00", source: "external",
                 exercise_type: "external", topic: "prepositions", topic_label: "Przyimki",
@@ -294,8 +304,8 @@ const routes = {
                 explanation: "kalka z polskiego", severity: "minor", group_id: null } },
     // Karta-pijawka: reguła wraca uparcie, więc backend proponuje skok do grupy.
     { card_id: 9, source_kind: "group", source_id: 1, topic: "prepositions",
-      topic_label: "Przyimki", front: "depend ___ on", back: "depend on",
-      shape: "cloze", leech: true,
+      topic_label: "Przyimki", front: "You can ______ on him.", back: "depend",
+      shape: "gap", leech: true,
       source: { id: 1, rule: "depend + on", explanation: "kalka z polskiego",
                 topic: "prepositions", topic_label: "Przyimki", member_count: 2 } },
   ],
@@ -309,9 +319,18 @@ const routes = {
                               total_sources: 2, unprepared: 0 } },
   "/api/cards/progress": { done_today: 0, overdue: 0, due_now: 1, new_limit: 20,
                            total_sources: 2, unprepared: 0 },
+  // „Przegeneruj" to jedyny przycisk w sesji wołający płatny model. Odpowiedź ma
+  // kształt `_card_content`: front/back/shape i nic więcej.
+  "/api/cards/1/regenerate": { front: "Wszystko zależy od ciebie.",
+                               back: "It all depends on you.\n\nkalka z polskiego",
+                               shape: "translate" },
 };
 
 const calls = [];
+// Ścieżki, które mają ODPOWIEDZIEĆ BŁĘDEM (klucz jak w `routes`: „METODA ścieżka"
+// albo sama ścieżka). Bez tego nie da się sprawdzić, co interfejs robi PO nieudanej
+// operacji — a właśnie tam mieszka stan „część się zapisała, część nie".
+const failing = new Map();
 global.fetch = async (url, options) => {
   const method = (options && options.method) || "GET";
   const body = options && options.body;
@@ -320,6 +339,11 @@ global.fetch = async (url, options) => {
   calls.push(method + " " + url + (body ? " " + body : ""));
   const p = url.split("?")[0];
   // Klucz „METODA ścieżka" ma pierwszeństwo — POST /api/errors zwraca coś innego niż GET.
+  const broken = [method + " " + p, p].find((k) => failing.has(k));
+  if (broken) {
+    const detail = failing.get(broken);
+    return { ok: false, statusText: detail, json: async () => ({ detail }) };
+  }
   const key = [method + " " + p, p].find((k) => k in routes);
   if (!key) failures.push("nieznana ścieżka API: " + method + " " + p);
   return { ok: true, json: async () => (key ? routes[key] : {}) };
@@ -741,6 +765,34 @@ const setInput = (id, value) => {
           nodeText("#cards-counter"));
       }
     }],
+    ["Fiszki: nieudane przygotowanie odświeża licznik", async () => {
+      // Partie zapisują się po kolei, więc błąd którejkolwiek zostawia CZĘŚĆ kart już
+      // przygotowanych. Licznik sprzed operacji kłamałby wtedy o stanie bazy.
+      created.length = 0;
+      const progressBefore = routes["/api/cards/progress"];
+      routes["/api/cards/progress"] = { done_today: 0, overdue: 0, due_now: 1,
+                                        new_limit: 20, total_sources: 9, unprepared: 7 };
+      failing.set("POST /api/cards/prepare", "model padł w połowie");
+      await fire(".tab:cards"); await settle();
+      const before = calls.length;
+      await fire("#cards-prepare"); await settle();
+      if (!calls.slice(before).some((c) => c.startsWith("GET /api/cards/progress"))) {
+        failures.push("nieudane przygotowanie nie odświeżyło licznika");
+      }
+      if (!nodeText("#cards-counter").includes("Nieprzygotowanych: 7")) {
+        failures.push("licznik został z treścią sprzed nieudanego przygotowania: " +
+          nodeText("#cards-counter"));
+      }
+      // Banner jest DOKLEJANYM węzłem, a atrapa nie sumuje treści dzieci w `textContent`
+      // rodzica — szukamy go więc wśród elementów utworzonych dynamicznie.
+      if (!created.some((n) => String(n.className || "").includes("error-banner") &&
+                               String(n.textContent || "").includes("model padł w połowie"))) {
+        failures.push("nieudane przygotowanie nie pokazało bannera z błędem");
+      }
+      failing.clear();
+      routes["/api/cards/progress"] = progressBefore;
+      await fire(".tab:cards"); await settle();
+    }],
     ["Fiszki: sesja → odkrycie → ocena karty", async () => {
       await fire(".tab:cards"); await settle();
       await fire("#cards-start"); await settle();
@@ -828,7 +880,8 @@ const setInput = (id, value) => {
       routes["/api/cards/session"] = {
         cards: [
           { card_id: 1, source_kind: "error", source_id: 1, topic: "prepositions",
-            topic_label: "Przyimki", front: "depends from", back: "depends on\n\nkalka",
+            topic_label: "Przyimki", front: "To zależy od pogody.",
+      back: "It depends on the weather.\n\nkalka z polskiego",
             shape: "translate", leech: false }],
         progress: { done_today: 0, overdue: 0, due_now: 1, new_limit: 20, total_sources: 1,
                    unprepared: 0 },
@@ -872,13 +925,43 @@ const setInput = (id, value) => {
       routes["/api/cards/session"] = {
         cards: [
           { card_id: 1, source_kind: "error", source_id: 1, topic: "prepositions",
-            topic_label: "Przyimki", front: "depends from", back: "depends on\n\nkalka",
+            topic_label: "Przyimki", front: "To zależy od pogody.",
+      back: "It depends on the weather.\n\nkalka z polskiego",
             shape: "translate", leech: false }],
         progress: { done_today: 0, overdue: 0, due_now: 1, new_limit: 20, total_sources: 1,
                    unprepared: 0 },
       };
     }],
-    ["Statystyki", async () => fire(".tab:stats")],
+    ["Fiszki: „Przegeneruj” podmienia treść karty w miejscu", async () => {
+      await fire(".tab:cards"); await settle();
+      await fire("#cards-start"); await settle();
+      await fire("#cards-reveal"); await settle();
+      const before = calls.length;
+      await fire("#cards-regenerate"); await settle();
+      if (!calls.slice(before).some((c) => c.startsWith("POST /api/cards/1/regenerate"))) {
+        failures.push("„Przegeneruj” nie wysłał żądania do API");
+      }
+      // Nowa treść ma wejść na obie strony karty OD RAZU — bez tego uczeń zapłacił za
+      // wywołanie modelu i dalej patrzy na starą, odrzuconą kartę.
+      if (nodeText("#cards-front") !== "Wszystko zależy od ciebie.") {
+        failures.push("przód karty nie przyjął przegenerowanej treści: " +
+          nodeText("#cards-front"));
+      }
+      if (!nodeText("#cards-back").startsWith("It all depends on you.")) {
+        failures.push("rewers karty nie przyjął przegenerowanej treści: " +
+          nodeText("#cards-back"));
+      }
+    }],
+    ["Statystyki: rozliczenie kosztów tłumaczy rodzaj wywołania", async () => {
+      created.length = 0;
+      await fire(".tab:stats"); await settle();
+      const labels = created.filter((n) => String(n.className || "").includes("sl-label"))
+                            .map((n) => String(n.textContent || ""));
+      if (!labels.includes("Przygotowanie fiszek (3×)")) {
+        failures.push("rozliczenie kosztów nie przetłumaczyło rodzaju „cards”: " +
+          labels.join(" | "));
+      }
+    }],
     ["zmiana języka EN → PL", async () => { await fire(".lang:en"); await fire(".lang:pl"); }],
   ];
 

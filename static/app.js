@@ -114,7 +114,7 @@ const I18N = {
     "kind.drill": "Ćwiczenia do błędów",
     "kind.explain": "Wyjaśnienia",
     "kind.extract": "Import (ekstrakcja)",
-    "kind.card": "Ulepszanie fiszek",
+    "kind.cards": "Przygotowanie fiszek",
     "kind.group": "Grupowanie błędów",
     "kind.dispute": "Zastrzeżenia",
     "kind.other": "Inne",
@@ -271,7 +271,7 @@ const I18N = {
     "kind.drill": "Mistake drills",
     "kind.explain": "Explanations",
     "kind.extract": "Import (extraction)",
-    "kind.card": "Flashcard improvements",
+    "kind.cards": "Flashcard preparation",
     "kind.group": "Mistake grouping",
     "kind.dispute": "Disputes",
     "kind.other": "Other",
@@ -1902,6 +1902,11 @@ $("#cards-prepare").addEventListener("click", () =>
         .replace("{n}", out.prepared).replace("{u}", out.unprepared)
         .replace("{r}", out.remaining);
     } catch (e) {
+      // Partie idą po kolei i każda zapisuje się osobno, więc błąd którejś z nich NIE
+      // cofa poprzednich: część kart ma już treść. Licznik sprzed operacji kłamałby,
+      // więc odświeżamy go także tu — dopiero potem banner, żeby ewentualny błąd
+      // samego odświeżenia nie przykrył prawdziwej przyczyny.
+      await loadCardsProgress();
       showError("#cards-error", e.message);
     }
   }));
