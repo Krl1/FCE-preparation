@@ -467,6 +467,47 @@ def test_group_material_carries_no_forbidden_form(monkeypatch):
     assert "Przedimek przed rzeczownikiem" in seen["prompt"]
 
 
+def test_translate_front_is_polish_even_with_english_interface(monkeypatch):
+    """Przód karty tłumaczeniowej to zdanie POLSKIE — z definicji kształtu, nie z
+    przełącznika PL/EN interfejsu. Przy `lang="en"` prompt kazałby inaczej zbudować przód
+    „po English", który uczeń ma powiedzieć po angielsku; karta traci sens. Treść zapisuje
+    się w kolumnach na stałe, a cofnąć da się tylko po jednej karcie („Przegeneruj").
+
+    `lang_name` ma w tym prompcie DRUGĄ, poprawną rolę: język krótkiego wyjaśnienia na
+    rewersie. Ta zostaje."""
+    seen = {}
+
+    def fake_call(prompt, kind="other"):
+        seen["prompt"] = prompt
+        return {"cards": []}
+
+    monkeypatch.setattr(llm_client, "_call_json", fake_call)
+    llm_client.generate_cards([_card_item()], lang="en")
+    front_line = next(l for l in seen["prompt"].splitlines() if "'translate'" in l)
+    assert "POLSKU" in front_line
+    assert "English" not in front_line
+    # Wyjaśnienie na rewersie nadal idzie w języku interfejsu — tej roli `lang_name`
+    # nie ruszamy.
+    back_line = next(l for l in seen["prompt"].splitlines() if "dopisz na końcu" in l)
+    assert "English" in back_line
+
+
+def test_card_material_keeps_long_explanations(monkeypatch):
+    """Na prawdziwej bazie 17 z 219 wyjaśnień przekraczało 180 znaków (najdłuższe 246).
+    Ucięcie zabierało modelowi właśnie tę część, dla której wyjaśnienie było długie."""
+    seen = {}
+
+    def fake_call(prompt, kind="other"):
+        seen["prompt"] = prompt
+        return {"cards": []}
+
+    monkeypatch.setattr(llm_client, "_call_json", fake_call)
+    item = _card_item()
+    item["explanation"] = "a" * 240 + "PUENTA"
+    llm_client.generate_cards([item], lang="pl")
+    assert "PUENTA" in seen["prompt"]
+
+
 def test_generate_cards_with_no_items_skips_the_model(monkeypatch):
     def explode(prompt, kind="other"):
         raise AssertionError("pusta partia nie może wołać modelu")

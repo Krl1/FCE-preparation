@@ -839,7 +839,10 @@ def _card_line(item: dict) -> str:
             f"| poprawnie: {item.get('correct_text', '')}")
     if wrong:
         line += f" | NIE POKAZUJ: {wrong}"
-    return line + f" | uwaga: {str(item.get('explanation') or '')[:180]}"
+    # 300, nie 180: na prawdziwej bazie 17 z 219 wyjaśnień było dłuższych niż 180 znaków,
+    # najdłuższe miało 246. Ucięcie w połowie zdania zabierało modelowi właśnie tę część,
+    # dla której wyjaśnienie w ogóle było długie.
+    return line + f" | uwaga: {str(item.get('explanation') or '')[:300]}"
 
 
 def generate_cards(items: list[dict], lang: str = "pl") -> dict:
@@ -872,7 +875,11 @@ def generate_cards(items: list[dict], lang: str = "pl") -> dict:
         "poprawnej formy, a nie sprawdzać, czy rozpozna swoją pomyłkę.\n\n"
         f"MATERIAŁ:\n{listing}\n\n"
         "Dla KAŻDEJ pozycji zwróć dokładnie jedną kartę w jednym z dwóch kształtów:\n"
-        f"- 'translate' — 'front' to naturalne zdanie po {lang_name}, które uczeń ma "
+        # Przód karty tłumaczeniowej jest POLSKI z definicji kształtu — to zdanie, które
+        # uczeń ma powiedzieć po angielsku. `lang_name` (język interfejsu) rządzi tylko
+        # językiem wyjaśnienia na rewersie; przy lang="en" kazałby tu zrobić przód
+        # „po English", który uczeń ma powiedzieć po angielsku — karta bez sensu.
+        "- 'translate' — 'front' to naturalne zdanie po POLSKU, które uczeń ma "
         "powiedzieć po angielsku; 'back' to angielska wersja.\n"
         f"- 'gap' — 'front' to krótkie angielskie zdanie z luką zapisaną jako "
         f"{flashcards.GAP_MARK}; 'back' to sama forma wpisywana w lukę.\n"
