@@ -432,6 +432,47 @@ def test_migration_adds_group_id_to_legacy_errors_table(tmp_path):
         conn.close()
 
 
+def test_migration_adds_content_columns_to_a_legacy_cards_table(tmp_path):
+    """Migracja pięciu kolumn treści na ŻYWEJ bazie sprzed przebudowy fiszek.
+
+    `_SCHEMA` leci przez `executescript` PRZED `_migrate` przy KAŻDYM otwarciu, a
+    `CREATE TABLE IF NOT EXISTS` na tabeli, która już istnieje, jest no-opem — samo
+    dopisanie kolumny do `CREATE TABLE` w `_SCHEMA` nic nie da na istniejącej bazie,
+    trzeba jej dodać w `_migrate` przez `ALTER TABLE`. Fixture `conn` tego nie łapie,
+    bo zawsze tworzy pusty plik, w którym `cards` powstaje już z nowym schematem —
+    ścieżka `ALTER TABLE` nigdy się tam nie wykonuje. Ten test odtwarza dokładnie
+    kształt tabeli `cards` sprzed tej zmiany (taki, jaki ma dziś prawdziwa baza)."""
+    path = tmp_path / "legacy_cards.db"
+    legacy = sqlite3.connect(path)
+    legacy.executescript(
+        "CREATE TABLE cards ("
+        " id INTEGER PRIMARY KEY AUTOINCREMENT, created_at TEXT NOT NULL,"
+        " updated_at TEXT NOT NULL, source_kind TEXT NOT NULL, source_id INTEGER NOT NULL,"
+        " due_on TEXT NOT NULL, interval_days INTEGER NOT NULL,"
+        " front_override TEXT, back_override TEXT,"
+        " UNIQUE (source_kind, source_id));"
+    )
+    legacy.execute(
+        "INSERT INTO cards (created_at, updated_at, source_kind, source_id, due_on,"
+        " interval_days) VALUES"
+        " ('2026-01-01T10:00:00', '2026-01-01T10:00:00', 'error', 1, '2026-09-18', 0)"
+    )
+    legacy.commit()
+    legacy.close()
+
+    conn = db.get_connection(path)  # nie może rzucić OperationalError: no such column
+    try:
+        cols = {r["name"] for r in conn.execute("PRAGMA table_info(cards)")}
+        assert {"front", "back", "shape", "shape_reason", "prepared_at"} <= cols
+        rows = list(conn.execute("SELECT * FROM cards WHERE source_id = 1"))
+        assert len(rows) == 1  # wiersz przetrwał migrację
+        assert rows[0]["prepared_at"] is None
+        # Ponowne otwarcie nie może próbować dodać kolumn drugi raz.
+        db.get_connection(path).close()
+    finally:
+        conn.close()
+
+
 # --- Fiszki -------------------------------------------------------------------
 
 def _card_err(conn, topic="prepositions", student="depends from"):

@@ -177,7 +177,6 @@ CREATE TABLE IF NOT EXISTS cards (
 );
 
 CREATE INDEX IF NOT EXISTS idx_cards_due ON cards(due_on);
-CREATE INDEX IF NOT EXISTS idx_cards_prepared ON cards(prepared_at);
 
 CREATE TABLE IF NOT EXISTS card_reviews (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
