@@ -165,19 +165,20 @@ def test_garbage_rows_do_not_raise():
     assert fc.plan_cards(out, _sent()).unprepared == ("error:1",)
 
 
+def test_garbage_top_level_output_does_not_raise():
+    """Odpowiedź modelu nie jest nigdzie wcześniej sprawdzana pod kątem typu, więc
+    `plan_cards` musi znieść dowolny kształt — i zwrócić czysty plan, nie wyjątek."""
+    for bad in ("śmieci", [1, 2, 3], 42, {"cards": 42}, None):
+        plan = fc.plan_cards(bad, _sent())
+        assert plan.prepared == ()
+        assert plan.unprepared == ("error:1",)
+
+
 def test_unprepared_keeps_the_order_sent():
     sent = [{"ref": "error:3", "suggested_shape": "translate"},
             {"ref": "error:1", "suggested_shape": "translate"}]
     assert fc.plan_cards({"cards": []}, sent).unprepared == ("error:3", "error:1")
 
-
-def test_queue_keeps_card_ids_for_new_cards_too():
-    """Po przeprojektowaniu nowa karta JEST już w bazie — bez jej id nie dałoby się
-    jej ocenić, bo ścieżka „oceń źródło bez karty" znika."""
-    due = [{"source_kind": "error", "source_id": 1, "card_id": 11}]
-    new = [{"source_kind": "error", "source_id": 2, "card_id": 22}]
-    q = fc.build_queue(due, new, new_limit=20)
-    assert [(i.source_id, i.card_id) for i in q] == [(1, 11), (2, 22)]
 ```
 
 Zamień też trzy istniejące testy `build_queue`, które budowały nowe pozycje bez `card_id`
@@ -267,7 +268,18 @@ def plan_cards(model_output: dict | None, sent: list[dict]) -> CardPlan:
     order = [str(item["ref"]) for item in sent]
     accepted: dict[str, PreparedCard] = {}
 
-    for row in (model_output or {}).get("cards") or []:
+    # `model_output` przychodzi wprost od modelu i NIE jest nigdzie wcześniej sprawdzane
+    # pod kątem typu: `llm_client._extract_json` kończy się gołym `json.loads`, mimo
+    # adnotacji `-> dict`. Model mógł więc zwrócić literał, liczbę albo listę, a pod
+    # kluczem `cards` cokolwiek nie-listowego. Nie-słownik traktujemy jak brak odpowiedzi,
+    # nie-listę pod `cards` jak listę pustą.
+    if not isinstance(model_output, dict):
+        model_output = {}
+    cards = model_output.get("cards")
+    if not isinstance(cards, list):
+        cards = []
+
+    for row in cards:
         if not isinstance(row, dict):
             continue
         ref = str(row.get("ref") or "")
