@@ -124,7 +124,19 @@ def plan_cards(model_output: dict | None, sent: list[dict]) -> CardPlan:
     order = [str(item["ref"]) for item in sent]
     accepted: dict[str, PreparedCard] = {}
 
-    for row in (model_output or {}).get("cards") or []:
+    # `model_output` przychodzi wprost od modelu i nie jest nigdzie wcześniej sprawdzane
+    # pod kątem typu (`app/llm_client.py::_extract_json` robi gołe `json.loads`, mimo
+    # adnotacji `-> dict`), więc model mógł zwrócić cokolwiek: literał, liczbę, listę —
+    # a pod kluczem `cards` cokolwiek nie-listowego. Nie-słownik traktujemy jak brak
+    # odpowiedzi, a nie-listę pod `cards` jak listę pustą — reszta walidacji niżej
+    # już zakłada, że iterujemy po czymkolwiek sensownym.
+    if not isinstance(model_output, dict):
+        model_output = {}
+    cards = model_output.get("cards")
+    if not isinstance(cards, list):
+        cards = []
+
+    for row in cards:
         if not isinstance(row, dict):
             continue
         ref = str(row.get("ref") or "")

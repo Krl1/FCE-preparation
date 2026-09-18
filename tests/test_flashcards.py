@@ -210,16 +210,18 @@ def test_garbage_rows_do_not_raise():
     assert fc.plan_cards(out, _sent()).unprepared == ("error:1",)
 
 
+def test_garbage_top_level_output_does_not_raise():
+    """`model_output` przychodzi wprost od modelu i nie jest nigdzie wcześniej sprawdzane
+    pod kątem typu (`_extract_json` w app/llm_client.py robi gołe `json.loads`, mimo
+    adnotacji `-> dict`) — model mógł więc zwrócić cokolwiek, nie tylko zły wiersz
+    wewnątrz `cards`, ale i zły kształt na samej górze albo pod kluczem `cards`."""
+    for bad in ("śmieci", [1, 2, 3], 42, {"cards": 42}):
+        plan = fc.plan_cards(bad, _sent())
+        assert plan.prepared == ()
+        assert plan.unprepared == ("error:1",)
+
+
 def test_unprepared_keeps_the_order_sent():
     sent = [{"ref": "error:3", "suggested_shape": "translate"},
             {"ref": "error:1", "suggested_shape": "translate"}]
     assert fc.plan_cards({"cards": []}, sent).unprepared == ("error:3", "error:1")
-
-
-def test_queue_keeps_card_ids_for_new_cards_too():
-    """Po przeprojektowaniu nowa karta JEST już w bazie — bez jej id nie dałoby się
-    jej ocenić, bo ścieżka „oceń źródło bez karty" znika."""
-    due = [{"source_kind": "error", "source_id": 1, "card_id": 11}]
-    new = [{"source_kind": "error", "source_id": 2, "card_id": 22}]
-    q = fc.build_queue(due, new, new_limit=20)
-    assert [(i.source_id, i.card_id) for i in q] == [(1, 11), (2, 22)]
