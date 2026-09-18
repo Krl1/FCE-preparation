@@ -365,6 +365,16 @@ def insert_error(conn: sqlite3.Connection, *, source: str, exercise_type: str, t
 def delete_errors_by_source(conn: sqlite3.Connection, source: str) -> int:
     """Usuwa wszystkie błędy o danym źródle. Zwraca liczbę usuniętych wierszy.
     Używane do idempotentnego importu strategią 'zastąp' (source = 'import:<plik>')."""
+    # Kaskada RĘCZNA, jak w `delete_error` — PRAGMA foreign_keys jest wyłączone i w
+    # schemacie nie ma ani jednej klauzuli ON DELETE. Bez tego karty zostałyby bez
+    # źródła i zatkały kolejkę: nigdy nieoceniane, wracające każdego dnia.
+    conn.execute("DELETE FROM card_reviews WHERE card_id IN ("
+                 "  SELECT id FROM cards WHERE source_kind = 'error' AND source_id IN ("
+                 "    SELECT id FROM errors WHERE source = ?))",
+                 (source,))
+    conn.execute("DELETE FROM cards WHERE source_kind = 'error' AND source_id IN ("
+                 "  SELECT id FROM errors WHERE source = ?)",
+                 (source,))
     cur = conn.execute("DELETE FROM errors WHERE source = ?", (source,))
     conn.commit()
     return cur.rowcount
@@ -788,6 +798,12 @@ def count_ungrouped_errors(conn: sqlite3.Connection) -> int:
 @_synchronized
 def clear_all_groups(conn: sqlite3.Connection) -> None:
     """Czyści grupy i przypisania przed pełnym przegrupowaniem. Zaliczenia zostają."""
+    # Kaskada RĘCZNA, jak w `delete_group` — znikają WSZYSTKIE grupy, więc znikają
+    # też wszystkie karty grupowe. Karta bez źródła nie ma czego pokazać, a zostawiona
+    # blokowałaby slot w dziennym limicie nowych kart bez szansy na ocenę.
+    conn.execute("DELETE FROM card_reviews WHERE card_id IN ("
+                 "  SELECT id FROM cards WHERE source_kind = 'group')")
+    conn.execute("DELETE FROM cards WHERE source_kind = 'group'")
     conn.execute("UPDATE errors SET group_id = NULL")
     conn.execute("DELETE FROM error_groups")
     conn.commit()
@@ -856,14 +872,30 @@ def group_topic_counts(conn: sqlite3.Connection) -> list[dict]:
 @_synchronized
 def create_card(conn: sqlite3.Connection, *, source_kind: str, source_id: int,
                 due_on: str, interval_days: int) -> int:
+    """Zakłada kartę dla źródła i zwraca jej id. Gdy karta już jest, zwraca jej id
+    i NICZEGO nie zmienia — terminu istniejącej karty nie wolno cofać.
+
+    `INSERT OR IGNORE`, a nie gołe `INSERT`, bo „Przygotuj karty" sprawdza brakujące
+    źródła i zakłada dla nich wiersze w dwóch osobnych wywołaniach bazy. Dwa równoległe
+    kliknięcia mieszczą się między nimi: gołe `INSERT` wywracałoby drugie żądanie
+    na `UNIQUE (source_kind, source_id)` błędem 500, po opłaceniu już wysłanych partii."""
     now = _now()
     cur = conn.execute(
-        "INSERT INTO cards (created_at, updated_at, source_kind, source_id, due_on, interval_days) "
+        "INSERT OR IGNORE INTO cards "
+        "(created_at, updated_at, source_kind, source_id, due_on, interval_days) "
         "VALUES (?, ?, ?, ?, ?, ?)",
         (now, now, source_kind, source_id, due_on, interval_days),
     )
     conn.commit()
-    return int(cur.lastrowid)
+    if cur.rowcount:
+        return int(cur.lastrowid)
+    # Nic nie wstawiliśmy — `lastrowid` niesie wtedy id z POPRZEDNIEGO wstawienia na tym
+    # połączeniu, więc id istniejącej karty trzeba odczytać wprost.
+    row = conn.execute(
+        "SELECT id FROM cards WHERE source_kind = ? AND source_id = ?",
+        (source_kind, source_id),
+    ).fetchone()
+    return int(row["id"])
 
 
 @_synchronized
@@ -964,13 +996,19 @@ def cards_new(conn: sqlite3.Connection, today: str,
     """Karty przygotowane, których uczeń nie widział ani razu.
 
     `today` nie filtruje nowych kart — przyjmujemy go dla symetrii z `cards_due`
-    i żeby wywołujący nie musiał pamiętać, która z dwóch funkcji go potrzebuje."""
+    i żeby wywołujący nie musiał pamiętać, która z dwóch funkcji go potrzebuje.
+
+    `COALESCE(e.id, g.id) IS NOT NULL` odsiewa karty osierocone — tak samo jak
+    w `_UNPREPARED_SQL`. Bez tego karta bez żywego źródła zjadałaby slot dziennego
+    limitu nowych kart, a sesja pomijałaby ją po cichu: nigdy nieoceniona, wracałaby
+    każdego kolejnego dnia i zatykała kolejkę na stałe."""
     sql = (
         "SELECT c.*, c.id AS card_id, COALESCE(e.topic, g.topic) AS topic "
         "FROM cards c "
         "LEFT JOIN errors e ON c.source_kind = 'error' AND e.id = c.source_id "
         "LEFT JOIN error_groups g ON c.source_kind = 'group' AND g.id = c.source_id "
         "WHERE c.prepared_at IS NOT NULL "
+        "  AND COALESCE(e.id, g.id) IS NOT NULL "
         "  AND NOT EXISTS (SELECT 1 FROM card_reviews r WHERE r.card_id = c.id)"
     )
     params: list = []
@@ -1008,7 +1046,10 @@ def cards_due(conn: sqlite3.Connection, today: str,
     źródłowymi — wpis w dzienniku ma temat w `errors.topic`, grupa w `error_groups.topic`.
 
     Zwraca tylko karty PRZYGOTOWANE (mają już treść) i już OCENIONE choć raz —
-    karta bez oceny jest „nowa" i należy do `cards_new`, nie do tej kolejki."""
+    karta bez oceny jest „nowa" i należy do `cards_new`, nie do tej kolejki.
+
+    Warunek `COALESCE(e.id, g.id) IS NOT NULL` — patrz `cards_new`: karta bez
+    żywego źródła nie ma czego pokazać i nie może wejść do żadnej kolejki."""
     # `c.id AS card_id`, bo `flashcards.build_queue` czyta właśnie ten klucz —
     # gołe `c.*` dałoby kolumnę `id` i wysypało składanie kolejki na KeyError.
     sql = (
@@ -1017,6 +1058,7 @@ def cards_due(conn: sqlite3.Connection, today: str,
         "LEFT JOIN errors e ON c.source_kind = 'error' AND e.id = c.source_id "
         "LEFT JOIN error_groups g ON c.source_kind = 'group' AND g.id = c.source_id "
         "WHERE c.due_on <= ? AND c.prepared_at IS NOT NULL "
+        "  AND COALESCE(e.id, g.id) IS NOT NULL "
         "  AND EXISTS (SELECT 1 FROM card_reviews r WHERE r.card_id = c.id)"
     )
     params: list = [today]

@@ -493,12 +493,32 @@ def test_create_and_get_card(conn):
 
 
 def test_one_card_per_source(conn):
+    """Drugie założenie karty dla tego samego źródła NIE wywraca się i NIE tworzy
+    duplikatu: zwraca istniejącą kartę i zostawia jej termin w spokoju.
+
+    „Przygotuj karty" pyta o źródła bez karty i zakłada wiersze w dwóch osobnych
+    wywołaniach; dwa równoległe kliknięcia mieszczą się między nimi. Wyjątek oznaczałby
+    tam błąd 500 po opłaceniu już wysłanych partii."""
     eid = _card_err(conn)
-    db.create_card(conn, source_kind="error", source_id=eid,
-                   due_on="2026-09-17", interval_days=1)
-    with pytest.raises(sqlite3.IntegrityError):
-        db.create_card(conn, source_kind="error", source_id=eid,
-                       due_on="2026-09-18", interval_days=3)
+    first = db.create_card(conn, source_kind="error", source_id=eid,
+                           due_on="2026-09-17", interval_days=1)
+    again = db.create_card(conn, source_kind="error", source_id=eid,
+                           due_on="2026-09-18", interval_days=3)
+    assert again == first
+    assert conn.execute("SELECT COUNT(*) FROM cards").fetchone()[0] == 1
+    card = db.get_card(conn, first)
+    assert (card["due_on"], card["interval_days"]) == ("2026-09-17", 1)
+
+
+def test_creating_a_card_for_a_second_source_still_gets_a_fresh_id(conn):
+    """`INSERT OR IGNORE` nie może po cichu zwracać id z poprzedniego wstawienia."""
+    a, b = _card_err(conn, student="a"), _card_err(conn, student="b")
+    first = db.create_card(conn, source_kind="error", source_id=a,
+                           due_on="2026-09-17", interval_days=1)
+    second = db.create_card(conn, source_kind="error", source_id=b,
+                            due_on="2026-09-17", interval_days=1)
+    assert first != second
+    assert db.get_card(conn, second)["source_id"] == b
 
 
 def test_get_card_by_source(conn):
@@ -676,6 +696,16 @@ def test_cards_do_not_touch_the_streak(conn):
 
 # --- Treść fiszki -------------------------------------------------------------
 
+def _orphaned_cards(conn) -> int:
+    """Karty, których źródło już nie istnieje — po masowym kasowaniu ma być ich zero."""
+    return conn.execute(
+        "SELECT COUNT(*) FROM cards c "
+        "LEFT JOIN errors e ON c.source_kind = 'error' AND e.id = c.source_id "
+        "LEFT JOIN error_groups g ON c.source_kind = 'group' AND g.id = c.source_id "
+        "WHERE COALESCE(e.id, g.id) IS NULL"
+    ).fetchone()[0]
+
+
 def _prep_err(conn, topic="collocations", student="in home", correct="at home"):
     return db.insert_error(conn, source="test", exercise_type="imported", topic=topic,
                            student_text=student, correct_text=correct,
@@ -762,6 +792,83 @@ def test_a_reviewed_card_becomes_due_not_new(conn):
     db.insert_card_review(conn, card_id=cid, grade="known")
     assert [r["card_id"] for r in db.cards_due(conn, "2026-09-18")] == [cid]
     assert db.cards_new(conn, "2026-09-18") == []
+
+
+def test_a_card_without_a_live_source_stays_out_of_both_queues(conn):
+    """BLOKER, gdy tego zabraknie: karta-widmo wchodzi do kolejki, zjada slot dziennego
+    limitu nowych kart, a sesja pomija ją po cichu (brak źródła → brak treści). Nigdy
+    nieoceniona, wraca nazajutrz i każdego kolejnego dnia — kolejka zostaje zatkana,
+    a uczeń widzi „na dziś nic" mimo setek gotowych kart."""
+    eid = _prep_err(conn)
+    cid = db.create_card(conn, source_kind="error", source_id=eid,
+                         due_on="2026-09-01", interval_days=1)
+    db.set_card_content(conn, cid, front="f", back="b", shape="translate", shape_reason="")
+    assert [r["card_id"] for r in db.cards_new(conn, "2026-09-18")] == [cid]
+
+    # Źródło znika BEZ kaskady (surowy DELETE) — dokładnie tak wygląda wiersz osierocony
+    # przez starszą wersję kodu, który został w bazie użytkownika.
+    conn.execute("DELETE FROM errors WHERE id = ?", (eid,))
+    conn.commit()
+    assert db.cards_new(conn, "2026-09-18") == []
+
+    db.insert_card_review(conn, card_id=cid, grade="known")
+    assert db.cards_due(conn, "2026-09-18") == []
+
+
+def test_a_group_card_without_its_group_stays_out_of_both_queues(conn):
+    gid = db.insert_group(conn, rule="depend + on", explanation="e", topic="prepositions")
+    cid = db.create_card(conn, source_kind="group", source_id=gid,
+                         due_on="2026-09-01", interval_days=1)
+    db.set_card_content(conn, cid, front="f", back="b", shape="gap", shape_reason="")
+    conn.execute("DELETE FROM error_groups WHERE id = ?", (gid,))
+    conn.commit()
+    assert db.cards_new(conn, "2026-09-18") == []
+    db.insert_card_review(conn, card_id=cid, grade="known")
+    assert db.cards_due(conn, "2026-09-18") == []
+
+
+def test_replacing_an_import_takes_the_cards_with_it(conn):
+    """Import strategią „zastąp" woła `delete_errors_by_source`. Kaskada jest RĘCZNA —
+    PRAGMA foreign_keys jest wyłączone i w schemacie nie ma żadnego ON DELETE."""
+    doomed = db.insert_error(conn, source="import:plik.md", exercise_type="imported",
+                             topic="collocations", student_text="in home",
+                             correct_text="at home", explanation="e", severity="minor")
+    kept = db.insert_error(conn, source="import:inny.md", exercise_type="imported",
+                           topic="collocations", student_text="on the end",
+                           correct_text="in the end", explanation="e", severity="minor")
+    doomed_card = db.create_card(conn, source_kind="error", source_id=doomed,
+                                 due_on="2026-09-18", interval_days=0)
+    kept_card = db.create_card(conn, source_kind="error", source_id=kept,
+                               due_on="2026-09-18", interval_days=0)
+    db.insert_card_review(conn, card_id=doomed_card, grade="known")
+
+    db.delete_errors_by_source(conn, "import:plik.md")
+
+    assert db.get_card(conn, doomed_card) is None
+    assert conn.execute("SELECT COUNT(*) FROM card_reviews WHERE card_id = ?",
+                        (doomed_card,)).fetchone()[0] == 0
+    assert db.get_card(conn, kept_card) is not None
+    assert _orphaned_cards(conn) == 0
+
+
+def test_regrouping_everything_takes_the_group_cards_with_it(conn):
+    """„Przegrupuj wszystko" woła `clear_all_groups`: znikają WSZYSTKIE grupy, więc muszą
+    zniknąć wszystkie karty grupowe. Karty wpisów zostają — ich źródła nikt nie ruszał."""
+    gid = db.insert_group(conn, rule="depend + on", explanation="e", topic="prepositions")
+    group_card = db.create_card(conn, source_kind="group", source_id=gid,
+                                due_on="2026-09-18", interval_days=0)
+    db.insert_card_review(conn, card_id=group_card, grade="unknown")
+    eid = _prep_err(conn)
+    error_card = db.create_card(conn, source_kind="error", source_id=eid,
+                                due_on="2026-09-18", interval_days=0)
+
+    db.clear_all_groups(conn)
+
+    assert db.get_card(conn, group_card) is None
+    assert conn.execute("SELECT COUNT(*) FROM card_reviews WHERE card_id = ?",
+                        (group_card,)).fetchone()[0] == 0
+    assert db.get_card(conn, error_card) is not None
+    assert _orphaned_cards(conn) == 0
 
 
 def test_cards_new_filters_by_topic(conn):
